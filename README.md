@@ -50,7 +50,7 @@ Migrations run automatically on API start. To load demo content after the stack 
 docker compose run --rm api python -m app.scripts.seed
 ```
 
-Demo credentials: `student@studyos.local` / `Studyos123`.
+Demo credentials: `student@studyos.dev` / `Studyos123`.
 
 To stop the stack and delete all data:
 

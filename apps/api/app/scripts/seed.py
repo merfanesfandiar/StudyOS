@@ -25,7 +25,7 @@ from app.models.enums import (
     WorkspaceRole,
 )
 
-DEMO_EMAIL = "student@studyos.local"
+DEMO_EMAIL = "student@studyos.dev"
 DEMO_PASSWORD = "Studyos123"
 
 

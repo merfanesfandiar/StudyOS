@@ -134,6 +134,8 @@ Each run registers a new account, so the spec is safe to repeat against the same
 - Frontend: use `SubmitButton` for form submission. It stays disabled until hydration completes,
   which prevents an unhydrated click from triggering a native form GET.
 - Both: no secrets in code, and no manual comments explaining what the code already says.
+- `apps/web/next-env.d.ts` is generated. `next dev` and `next build` rewrite its type references, so
+  restore it with `git checkout apps/web/next-env.d.ts` rather than committing a dev-only variant.
 
 ## Troubleshooting
 
@@ -145,6 +147,10 @@ db` and confirm the data volume is not owned by a different UID.
 
 **Cookie is not stored.** `COOKIE_SECURE=true` over plain HTTP makes the browser drop the cookie. Use
 `https` in that case.
+
+**Login works but every request returns 401.** The app and the API are on different hostnames. Cookies
+are scoped by host and ignore ports, so `localhost:3000` talking to `127.0.0.1:8000` (or the reverse)
+drops the session. Pick one host and use it in both `NEXT_PUBLIC_API_URL` and the address bar.
 
 **E2E fails to reach the API.** The web app bakes `NEXT_PUBLIC_API_URL` in at build time, so changing
 it after a build has no effect. Rebuild the app after changing the variable.
