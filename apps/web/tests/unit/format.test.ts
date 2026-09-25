@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { formatDate, formatFileSize, statusLabel, toLocalDateTime, toUtcDateTime } from "@/lib/format";
+import {
+  formatDate,
+  formatFileSize,
+  formatWeight,
+  statusLabel,
+  toLocalDateTime,
+  toUtcDateTime,
+} from "@/lib/format";
 import type { AssignmentStatus } from "@/lib/types";
 
 const pad = (value: number) => String(value).padStart(2, "0");
@@ -31,6 +38,10 @@ describe("formatFileSize", () => {
 describe("statusLabel", () => {
   const cases: [AssignmentStatus, string][] = [
     ["DRAFT", "Draft"],
+    ["INCOMPLETE", "Incomplete"],
+    ["READY_FOR_ANALYSIS", "Ready for analysis"],
+    ["ANALYSIS_IN_PROGRESS", "Analysis in progress"],
+    ["ANALYZED", "Analyzed"],
     ["ACTIVE", "Active"],
     ["COMPLETED", "Completed"],
     ["ARCHIVED", "Archived"],
@@ -38,6 +49,23 @@ describe("statusLabel", () => {
 
   it.each(cases)("turns %s into %s", (status, expected) => {
     expect(statusLabel(status)).toBe(expected);
+  });
+});
+
+describe("formatWeight", () => {
+  it.each([
+    ["100", "100%"],
+    ["100.00", "100%"],
+    ["33.33", "33.33%"],
+    ["0.50", "0.5%"],
+    ["0", "0%"],
+    ["10", "10%"],
+  ])("renders %s as %s without losing significant digits", (value, expected) => {
+    expect(formatWeight(value)).toBe(expected);
+  });
+
+  it("accepts a numeric score", () => {
+    expect(formatWeight(100)).toBe("100%");
   });
 });
 

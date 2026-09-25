@@ -70,7 +70,7 @@ export default function SettingsPage() {
           <section className="card mt-5 p-6">
             <h2 className="section-title">Workspace</h2>
             <p className="mt-3 text-sm leading-6 text-slate-600">
-              You are the owner of a private workspace. Courses, assignments, and documents are visible only to you in Phase 1.
+              You are the owner of a private workspace. Courses, assignments, and documents are visible only to you.
             </p>
           </section>
         </aside>

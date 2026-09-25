@@ -110,13 +110,16 @@ npm run build
 
 ### End-to-end tests
 
-The Playwright specs drive two paths:
+The Playwright specs drive four paths:
 
-1. The full student journey: register, create a course, create an assignment, add a requirement, a
-   constraint, weighted criteria, upload a PDF, download it, read the review summary, delete the
-   document, re-upload it, edit the details, finalize, confirm the assignment in the dashboard's
-   upcoming deadlines, then mark it complete and confirm the completion percentage.
-2. Tenant isolation: a second student signs up in a separate browser context, is refused the first
+1. The readiness gate: an incomplete assignment cannot be marked ready, the blocking checks are named,
+   and completing the specification releases it.
+2. The specification stays in step: requirements, weighted criteria, and a PDF resource are added, the
+   document is downloaded and deleted, the activity feed and version snapshots reflect every change, and
+   a reopened gate survives a page reload.
+3. The dashboard reports readiness: counts, the average readiness score, and the ready/incomplete filters
+   agree with the assignments list.
+4. Tenant isolation: a second student signs up in a separate browser context, is refused the first
    student's assignment, and sees empty course and assignment lists.
 
 ```bash
@@ -139,7 +142,9 @@ Each run registers a new account, so the spec is safe to repeat against the same
 
 `.github/workflows/ci.yml` runs three jobs on every push and pull request:
 
-- `api`: ruff, mypy, pytest, and `alembic upgrade head` against PostgreSQL.
+- `api`: ruff, mypy, pytest, `alembic upgrade head` against PostgreSQL, a full downgrade/upgrade round
+  trip, and a check that the specification migration preserves a populated Phase 1 database, including
+  mapping a legacy `ACTIVE` assignment to `READY_FOR_ANALYSIS`.
 - `web`: install, lint, typecheck, unit tests, and a production build.
 - `e2e`: builds the Compose stack, waits for API health, and runs the Playwright spec.
 
@@ -172,3 +177,14 @@ drops the session. Pick one host and use it in both `NEXT_PUBLIC_API_URL` and th
 
 **E2E fails to reach the API.** The web app bakes `NEXT_PUBLIC_API_URL` in at build time, so changing
 it after a build has no effect. Rebuild the app after changing the variable.
+
+**Local API returns 503 `DATABASE_UNAVAILABLE` right after pulling.** The local `studyos.db` is a file
+that survives pulls, so it can sit on an older revision than the code expects. Bring it forward:
+
+```bash
+cd apps/api && alembic upgrade head
+```
+
+**The dashboard shows a readiness score that looks stale.** Readiness is recomputed and stored on every
+specification change, so a score that disagrees with the editor means a change was made without going
+through the API, or the local database predates that behavior. Re-run `alembic upgrade head`.

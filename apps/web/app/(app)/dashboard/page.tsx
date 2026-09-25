@@ -32,11 +32,17 @@ export default function DashboardPage() {
   if (error) return <Alert>{error}</Alert>;
   if (!data) return <LoadingState label="Loading dashboard" />;
 
-  const stats = [
+  const tiles = [
+    { label: "In progress", value: data.in_progress_assignments_count, hint: "Drafts and open work" },
+    { label: "Ready for analysis", value: data.ready_assignments_count, hint: "Gate passed" },
+    { label: "Incomplete", value: data.incomplete_assignments_count, hint: "Blocking checks failing" },
+    { label: "Completed", value: data.completed_assignments_count, hint: "Handed in" },
+  ];
+  const glance = [
     { label: "Courses", value: data.courses_count },
-    { label: "Active assignments", value: data.active_assignments_count },
-    { label: "Completed", value: data.completed_assignments_count },
+    { label: "Assignments", value: data.assignments_count },
     { label: "Completion", value: `${data.completion_percentage}%` },
+    { label: "Average readiness", value: `${data.average_readiness_score}%` },
   ];
 
   return (
@@ -50,13 +56,26 @@ export default function DashboardPage() {
         description="See what needs attention and keep every brief moving forward."
         title="Dashboard"
       />
-      <section aria-label="Workspace summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map((stat) => (
-          <div className="card p-5" key={stat.label}>
-            <p className="text-sm font-medium text-slate-500">{stat.label}</p>
-            <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">{stat.value}</p>
-          </div>
-        ))}
+      <section aria-label="Workspace summary" className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {tiles.map((tile) => (
+            <div className="card p-5" key={tile.label}>
+              <p className="text-sm font-medium text-slate-500">{tile.label}</p>
+              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">{tile.value}</p>
+              <p className="mt-1 text-xs text-slate-400">{tile.hint}</p>
+            </div>
+          ))}
+        </div>
+        <dl className="card grid gap-4 p-5 sm:grid-cols-4">
+          {glance.map((item) => (
+            <div key={item.label}>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                {item.label}
+              </dt>
+              <dd className="mt-1 text-xl font-bold text-slate-900">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
       </section>
       <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <section>
@@ -96,7 +115,11 @@ export default function DashboardPage() {
                 >
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-slate-900">{assignment.title}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">{assignment.course_code}</p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      {assignment.course_code} · {assignment.readiness_score}% ready ·{" "}
+                      {assignment.completed_requirements_count}/{assignment.requirements_count}{" "}
+                      requirements
+                    </p>
                   </div>
                   <span className="shrink-0 text-xs text-slate-500">{formatDate(assignment.deadline)}</span>
                 </Link>

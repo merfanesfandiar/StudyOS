@@ -12,9 +12,8 @@ from app.core.errors import AppError
 from app.db.session import get_db
 from app.models import Document, User
 from app.models.enums import AuditEventType
-from app.modules.assignments.service import load_owned_assignment
+from app.modules.assignments.service import load_owned_assignment, record_specification_change
 from app.schemas.documents import DocumentResponse
-from app.services.events import record_audit
 from app.services.file_validation import validate_upload
 from app.storage import get_storage
 
@@ -73,7 +72,7 @@ async def upload_document(
             413, "FILE_TOO_LARGE", "The uploaded file exceeds the maximum allowed size."
         ) from exc
     document = Document(
-        assignment_id=assignment.id,
+        assignment=assignment,
         filename=filename,
         storage_key=storage_key,
         mime_type=mime_type,
@@ -82,13 +81,17 @@ async def upload_document(
     db.add(document)
     try:
         await db.flush()
-        await record_audit(
+        # Resources take part in the readiness checklist, so an upload is a
+        # specification change: the stored score, audit trail, and version
+        # history all have to move with it.
+        await record_specification_change(
             db,
+            assignment=assignment,
             user_id=user.id,
-            workspace_id=assignment.workspace_id,
             event_type=AuditEventType.DOCUMENT_UPLOADED,
             entity_type="Document",
             entity_id=document.id,
+            change_summary=f"Uploaded {filename}",
             metadata={"filename": filename, "size": size},
         )
         await db.commit()
@@ -147,14 +150,22 @@ async def delete_document(
 ) -> None:
     document = await get_owned_document(document_id, user, db)
     assignment = await load_owned_assignment(document.assignment_id, user.id, db)
-    await record_audit(
+    filename = document.filename
+    await db.delete(document)
+    # Reload the graph from the database so the recomputed score reflects the
+    # assignment as it looks once the delete is committed. Disassociating the
+    # document from the collection instead would null its foreign key and make
+    # the DELETE match no rows.
+    await db.flush()
+    await db.refresh(assignment, ["documents"])
+    await record_specification_change(
         db,
+        assignment=assignment,
         user_id=user.id,
-        workspace_id=assignment.workspace_id,
         event_type=AuditEventType.DOCUMENT_DELETED,
         entity_type="Document",
         entity_id=document.id,
+        change_summary=f"Deleted {filename}",
     )
-    await db.delete(document)
     await db.commit()
     await run_in_threadpool(get_storage().delete, document.storage_key)

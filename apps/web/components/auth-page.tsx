@@ -31,7 +31,7 @@ export function AuthPage({ mode }: { mode: "login" | "register" }) {
             Keep courses, assignment briefs, requirements, documents, and grading criteria organized in one focused workspace.
           </p>
         </div>
-        <p className="text-sm text-slate-400">Phase 1 · Your workspace, your workflow.</p>
+        <p className="text-sm text-slate-400">Your workspace, your workflow.</p>
       </section>
       <section className="flex items-center justify-center bg-slate-50 px-5 py-12 sm:px-8">
         <div className="w-full max-w-md">

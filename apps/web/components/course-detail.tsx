@@ -6,12 +6,12 @@ import { FormEvent, useEffect, useState } from "react";
 import { AssignmentCard } from "./assignment-card";
 import { Alert, EmptyState, LoadingState, PageHeader, SubmitButton } from "./ui";
 import { ApiError, api } from "@/lib/api";
-import type { Assignment, Course } from "@/lib/types";
+import type { AssignmentListItem, Course } from "@/lib/types";
 
 export function CourseDetail({ courseId }: { courseId: string }) {
   const router = useRouter();
   const [course, setCourse] = useState<Course | null>(null);
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [assignments, setAssignments] = useState<AssignmentListItem[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [pending, setPending] = useState(false);
@@ -19,13 +19,11 @@ export function CourseDetail({ courseId }: { courseId: string }) {
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.course(courseId), api.assignments()])
+    Promise.all([api.course(courseId), api.assignments({ course_id: courseId, page_size: 50 })])
       .then(([courseResult, assignmentResults]) => {
         if (!active) return;
         setCourse(courseResult);
-        setAssignments(
-          assignmentResults.filter((assignment) => assignment.course_id === courseId),
-        );
+        setAssignments(assignmentResults.items);
       })
       .catch((caught: unknown) => {
         if (active) {

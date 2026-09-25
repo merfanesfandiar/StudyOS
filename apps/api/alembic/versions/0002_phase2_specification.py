@@ -72,7 +72,10 @@ def _backfill_position_columns() -> None:
     # mark must start above the highest one so no number is ever handed out
     # twice after the upgrade.
     connection.execute(
-        sa.text("UPDATE assignments SET requirement_sequence = 0 WHERE requirement_sequence IS NULL")
+        sa.text(
+            "UPDATE assignments SET requirement_sequence = 0"
+            " WHERE requirement_sequence IS NULL"
+        )
     )
     connection.execute(
         sa.text(

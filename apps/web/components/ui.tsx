@@ -1,8 +1,8 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import type { AssignmentStatus } from "@/lib/types";
-import { statusLabel } from "@/lib/format";
+import type { AssignmentStatus, CheckStatus } from "@/lib/types";
+import { CHECK_LABELS, statusLabel } from "@/lib/format";
 
 const subscribeToNothing = () => () => {};
 const clientHydrated = () => true;
@@ -28,19 +28,59 @@ export function PageHeader({
   );
 }
 
+const STATUS_STYLES: Record<AssignmentStatus, string> = {
+  DRAFT: "bg-slate-100 text-slate-700 ring-slate-200",
+  INCOMPLETE: "bg-orange-50 text-orange-800 ring-orange-200",
+  READY_FOR_ANALYSIS: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  ANALYSIS_IN_PROGRESS: "bg-cyan-50 text-cyan-800 ring-cyan-200",
+  ANALYZED: "bg-teal-50 text-teal-800 ring-teal-200",
+  COMPLETED: "bg-blue-50 text-blue-700 ring-blue-200",
+  ARCHIVED: "bg-amber-50 text-amber-800 ring-amber-200",
+  // Rows migrated from the previous phase can still hold this value.
+  ACTIVE: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+};
+
 export function StatusBadge({ status }: { status: AssignmentStatus }) {
-  const styles: Record<AssignmentStatus, string> = {
-    DRAFT: "bg-slate-100 text-slate-700 ring-slate-200",
-    ACTIVE: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-    COMPLETED: "bg-blue-50 text-blue-700 ring-blue-200",
-    ARCHIVED: "bg-amber-50 text-amber-800 ring-amber-200",
-  };
+  const styles = STATUS_STYLES;
   return (
     <span
       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles[status]}`}
     >
       {statusLabel(status)}
     </span>
+  );
+}
+
+const CHECK_STYLES: Record<CheckStatus, string> = {
+  PASS: "bg-emerald-100 text-emerald-800",
+  WARNING: "bg-amber-100 text-amber-900",
+  FAIL: "bg-red-100 text-red-800",
+};
+
+export function CheckDot({ status }: { status: CheckStatus }) {
+  return (
+    <span
+      aria-label={CHECK_LABELS[status]}
+      className={`inline-flex size-2.5 shrink-0 rounded-full ${CHECK_STYLES[status]}`}
+      title={CHECK_LABELS[status]}
+    />
+  );
+}
+
+export function ReadinessMeter({ score, bar = 90 }: { score: number; bar?: number }) {
+  const tone =
+    score >= bar ? "bg-emerald-500" : score >= bar / 2 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div
+      aria-label={`Readiness ${score} percent`}
+      aria-valuemax={100}
+      aria-valuemin={0}
+      aria-valuenow={score}
+      className="h-2 w-full overflow-hidden rounded-full bg-slate-100"
+      role="progressbar"
+    >
+      <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
+    </div>
   );
 }
 

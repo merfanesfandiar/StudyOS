@@ -1,8 +1,9 @@
 # StudyOS
 
-StudyOS is a workspace for students who juggle multiple courses and assignment briefs. Phase 1 turns a
+StudyOS is a workspace for students who juggle multiple courses and assignment briefs. It turns a
 scattered pile of PDFs and notes into one structured plan: courses, assignments, requirements,
-constraints, grading criteria, and reference documents in a single private workspace.
+dependencies, constraints, grading criteria, and reference documents in a single private workspace, and
+it tells you when a brief is specific enough to act on.
 
 ## Features
 
@@ -10,8 +11,12 @@ constraints, grading criteria, and reference documents in a single private works
 - A private workspace per account, with a personal workspace created on registration.
 - Courses scoped to a workspace, each with a unique code.
 - Assignments linked to a course with a local-timezone deadline that is stored in UTC.
-- Structured assignment specifications: requirements, constraints, and weighted evaluation criteria.
-- Finalization rules that keep plans honest: a deadline is required and criteria must total exactly 100%.
+- Structured assignment specifications: requirements with hierarchy, dependencies, and a derived
+  execution order, plus constraints, weighted evaluation criteria, deliverables, technologies, and tags.
+- A deterministic readiness check: a score out of 100, the specific checks that are failing, and a gate
+  that only opens once the deadline, requirements, and weighted criteria are in place.
+- Immutable version snapshots and a human-readable activity feed, so every edit to a brief is
+  attributable and reversible.
 - Document attachments per assignment (PDF, DOCX, MD, TXT, ZIP, and images up to 10 MB) with private
   download URLs.
 - A dashboard with upcoming deadlines, progress counts, and in-app notifications.
@@ -157,12 +162,13 @@ Copy `.env.example` to `.env`. Every value has a working default for local devel
 
 ## Current phase
 
-This repository implements **Phase 1 only**: the foundation. A student can register, sign in, create a
-course, create an assignment, specify a deadline, requirements, constraints and weighted evaluation
-criteria, attach documents, review the specification, and edit or delete it, with ownership enforced
-on the server for every resource.
+The foundation and the structured specification are implemented. A student can register, sign in,
+create a course, create an assignment, build a specification out of requirements, dependencies,
+constraints, weighted criteria, deliverables, and documents, watch the readiness score respond to every
+edit, mark the assignment ready for analysis, and page through the version history and activity feed,
+with ownership enforced on the server for every resource.
 
-Not implemented in Phase 1, by design: LLM calls, agents, planning, code generation or execution, RAG
+Deliberately not implemented yet: LLM calls, agents, planning, code generation or execution, RAG
 and vector storage, mastery mode, presentation generation, payment, social features, and
 collaboration between students. See
 [docs/architecture/future-ai.md](docs/architecture/future-ai.md) for how that layer is meant to attach
@@ -170,12 +176,13 @@ to the current domain.
 
 ## Future roadmap
 
-- **Phase 2, analysis and planning.** An analyzer agent reads a finalized assignment specification
-  and produces a plan that stops for human approval. Introduces `ai_runs`, an orchestrator state
-  machine, and approval notifications. Additive only: no Phase 1 write path changes.
-- **Phase 3, execution with checkpoints.** Executors run approved steps, pausing at checkpoints, with
-  every step recorded as an audit event and every artifact written through `StorageService`.
-- **Phase 4, verification and learning.** Artifacts are evaluated against the existing
+- **Analysis and planning.** An analyzer agent reads a `READY_FOR_ANALYSIS` specification and produces
+  a plan that stops for human approval. Introduces `ai_runs`, an orchestrator state machine, and
+  approval notifications. The two analysis statuses are already reserved in the enum and are not
+  client-settable, so only a run can own that transition.
+- **Execution with checkpoints.** Executors run approved steps, pausing at checkpoints, with every
+  step recorded as an audit event and every artifact written through `StorageService`.
+- **Verification and learning.** Artifacts are evaluated against the existing
   `EvaluationCriterion` weights, then surfaced for study and presentation preparation.
 
 Collaboration, multiple workspaces per user, and object storage remain out of scope; the seams for

@@ -46,6 +46,52 @@ async def test_document_upload_list_download_and_delete(client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
+async def test_documents_are_specification_changes(client: AsyncClient) -> None:
+    """Resources take part in the readiness checklist.
+
+    Uploading and deleting a document has to move the stored readiness score,
+    show up in the assignment change feed, and leave no orphaned row behind.
+    """
+    await register_user(client, "documents-spec@example.com")
+    course = (
+        await client.post("/api/v1/courses", json={"name": "Docs", "code": "DOC2"})
+    ).json()
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={"course_id": course["id"], "title": "Resource assignment"},
+        )
+    ).json()
+    assignment_id = assignment["id"]
+
+    async def stored_score() -> str:
+        response = await client.get(f"/api/v1/assignments/{assignment_id}")
+        return response.json()["readiness_score"]
+
+    empty_score = await stored_score()
+    uploaded = await client.post(
+        f"/api/v1/assignments/{assignment_id}/documents",
+        files={"file": ("brief.pdf", b"%PDF-1.4 brief", "application/pdf")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    document_id = uploaded.json()["id"]
+    assert await stored_score() != empty_score
+
+    activity = (await client.get(f"/api/v1/assignments/{assignment_id}/activity")).json()
+    summaries = [item["change_summary"] for item in activity["items"]]
+    assert "Uploaded brief.pdf" in summaries
+
+    assert (await client.delete(f"/api/v1/documents/{document_id}")).status_code == 204
+    assert await stored_score() == empty_score
+    listed = await client.get(f"/api/v1/assignments/{assignment_id}/documents")
+    assert listed.json() == []
+
+    activity = (await client.get(f"/api/v1/assignments/{assignment_id}/activity")).json()
+    summaries = [item["change_summary"] for item in activity["items"]]
+    assert "Deleted brief.pdf" in summaries
+
+
+@pytest.mark.asyncio
 async def test_upload_rejects_wrong_type_and_naive_deadline(client: AsyncClient) -> None:
     await register_user(client, "validation@example.com")
     course = (

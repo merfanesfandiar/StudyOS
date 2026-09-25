@@ -1,9 +1,13 @@
 # Future AI layer
 
-This document describes how the AI platform described in the product context attaches to the Phase 1
-codebase. **Nothing in this document exists yet.** Phase 1 ships no LLM calls, no agents, no
-tooling, and no vector storage. The purpose is to record the intended shape so that Phase 2 and later
-phases extend the domain instead of rewriting it.
+This document describes how the AI platform described in the product context attaches to the
+codebase. **Nothing in this document exists yet.** The product ships no LLM calls, no agents, no
+tooling, and no vector storage. The purpose is to record the intended shape so the AI phase extends
+the domain instead of rewriting it.
+
+The structured specification phase landed first and is what makes this seam possible: an assignment is
+now a validated artifact with requirements, dependencies, weighted criteria, and resources, and
+`READY_FOR_ANALYSIS` is only reachable once that artifact is complete.
 
 ## The rule
 
@@ -46,18 +50,22 @@ Supporting pieces live outside `modules/ai/`, because they are not AI-specific:
 | `Notification` / `NotificationType` | Approval requests, run failures, and deadline reminders extend the existing in-app channel |
 | `StorageService` | Artifacts, patches, and generated reports are stored without new filesystem code |
 | Module-level ownership helpers | Every tool call reuses the assignment ownership check, so tenant isolation is inherited |
-| `AuditEventType` | Phase 1 already records the same event names the future engine will emit, so the vocabulary exists before any producer does |
+| `AuditEventType` | The same event names the future engine will emit are already recorded, so the vocabulary exists before any producer does |
+| `AssignmentSpecificationResponse` and the readiness gate | The engine receives a specification that has already passed every blocking check, instead of re-validating free text |
+| `AssignmentVersion` | An immutable, ordered snapshot exists, so a run can pin the exact specification it planned against |
 
 ## Domain events
 
-Phase 1 records domain state changes as audit rows through `services/events.py`, using the names
-`ASSIGNMENT_CREATED`, `ASSIGNMENT_UPDATED`, `DOCUMENT_UPLOADED`, and so on. That is deliberately the
-only event surface in Phase 1: an append-only record that already names every state change, without
-an invented bus or subscriber framework.
+Domain state changes are recorded as audit rows through `services/events.py`, using the names
+`ASSIGNMENT_CREATED`, `REQUIREMENT_CREATED`, `DOCUMENT_UPLOADED`, and so on. That is deliberately the
+only event surface: an append-only record that already names every state change, without an invented
+bus or subscriber framework. Every specification change, including a document upload or delete, goes
+through the single `record_specification_change` choke point, which is what keeps the readiness score,
+the audit row, and the version snapshot in step.
 
-Phase 2 introduces a typed in-process hook and maps the same names onto it, so an event can fan out
-to notifications today and to agent runs later without touching the write paths. The rule is that a
-handler calling `record_audit` remains the single way domain changes are announced.
+The AI phase introduces a typed in-process hook and maps the same names onto it, so an event can fan
+out to notifications and to agent runs without touching the write paths. The rule is that a handler
+calling the domain's record function remains the single way domain changes are announced.
 
 ## Deliberately deferred to later phases
 
@@ -66,14 +74,17 @@ handler calling `record_audit` remains the single way domain changes are announc
 - Code execution sandboxes
 - Any UI for agent activity, checkpoints, verification, or mastery
 
-The assignment detail page reserves the navigation slots for these sections so the information
-architecture is reviewable now, but the slots render an explicit "not available in Phase 1" state
-rather than placeholder data.
+The assignment detail page shows no placeholder slots for these sections. They will appear when the
+feature exists, rather than shipping empty navigation that implies a capability the backend cannot
+serve.
 
-## Phase 2 shape
+## The AI phase
 
-Phase 2 adds the analyzer and planner as the first real consumers of the domain model: read an
-assignment, produce a plan, and stop for human approval. It introduces `ai_runs` and the orchestrator
-state machine, wires the first tools to existing assignment services, and extends
-`NotificationType` for approval requests. Nothing in Phase 1 needs to be modified to make this
-possible beyond additive changes.
+The AI phase adds the analyzer and planner as the first real consumers of the domain model: read a
+`READY_FOR_ANALYSIS` assignment, produce a plan, and stop for human approval. It introduces `ai_runs`
+and the orchestrator state machine, wires the first tools to existing assignment services, and extends
+`NotificationType` for approval requests.
+
+Two states are already reserved for it: `ANALYSIS_IN_PROGRESS` and `ANALYZED` are part of the status
+enum but are not client-settable, so a run can own the transition and a client cannot fake it. Nothing
+shipped so far needs to be modified to make this possible beyond additive changes.

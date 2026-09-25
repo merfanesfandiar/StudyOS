@@ -2,614 +2,136 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChangeEvent, FormEvent, useEffect, useState } from "react";
-import { Alert, LoadingState, PageHeader, StatusBadge, SubmitButton } from "./ui";
+import { useEffect, useState } from "react";
+import { AssignmentBrief } from "@/components/assignment/assignment-brief";
+import { ConstraintsSection, CriteriaSection } from "@/components/assignment/content-sections";
+import { HistorySection } from "@/components/assignment/history-section";
+import { ReadinessPanel } from "@/components/assignment/readiness-panel";
+import { RequirementsSection } from "@/components/assignment/requirements-section";
+import { ResourcesSection } from "@/components/assignment/resources-section";
+import { SummarySection } from "@/components/assignment/summary-section";
+import { DeliverablesSection, TaxonomySection } from "@/components/assignment/taxonomy-section";
+import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
-import { formatDate, formatFileSize, toLocalDateTime, toUtcDateTime } from "@/lib/format";
-import type { Assignment, AssignmentStatus, Course, RequirementPriority, RequirementType } from "@/lib/types";
+import type { Course } from "@/lib/types";
+import { useSpecification } from "@/lib/use-specification";
 
-type PendingAction = "assignment" | "finalize" | "requirement" | "constraint" | "criterion" | "document" | "delete" | null;
-
-const assignmentStatuses: AssignmentStatus[] = ["DRAFT", "ACTIVE", "COMPLETED", "ARCHIVED"];
-
-const phaseTwoSections = [
-  "AI plan",
-  "Agent activity",
-  "Checkpoints",
-  "Verification",
-  "Mastery",
-  "Presentation",
+const SECTIONS = [
+  { href: "#brief", label: "Brief" },
+  { href: "#readiness", label: "Readiness" },
+  { href: "#requirements", label: "Requirements" },
+  { href: "#constraints", label: "Constraints" },
+  { href: "#criteria", label: "Criteria" },
+  { href: "#deliverables", label: "Deliverables" },
+  { href: "#stack", label: "Tools" },
+  { href: "#resources", label: "Resources" },
+  { href: "#summary", label: "Summary" },
+  { href: "#history", label: "History" },
 ];
-
-const requirementTypes: RequirementType[] = [
-  "FUNCTIONAL",
-  "TECHNICAL",
-  "DESIGN",
-  "DOCUMENTATION",
-  "CONSTRAINT",
-  "OTHER",
-];
-
-const requirementPriorities: RequirementPriority[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
 
 export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
   const router = useRouter();
-  const [assignment, setAssignment] = useState<Assignment | null>(null);
+  const { specification, graph, loading, error, refresh } = useSpecification(assignmentId);
   const [courses, setCourses] = useState<Course[]>([]);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const [pending, setPending] = useState<PendingAction>(null);
-  const [editing, setEditing] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
 
   useEffect(() => {
     let active = true;
-    Promise.all([api.assignment(assignmentId), api.courses()])
-      .then(([assignmentResult, courseResults]) => {
-        if (!active) return;
-        setAssignment(assignmentResult);
-        setCourses(courseResults);
+    api
+      .courses()
+      .then((result) => {
+        if (active) setCourses(result);
       })
-      .catch((caught: unknown) => {
-        if (active) {
-          setError(caught instanceof ApiError ? caught.message : "Could not load this assignment.");
-        }
+      .catch(() => {
+        // The course list only powers the edit form; the brief still renders.
+        if (active) setCourses([]);
       });
     return () => {
       active = false;
     };
-  }, [assignmentId]);
-
-  async function updateAssignment(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!assignment) return;
-    const form = new FormData(event.currentTarget);
-    setPending("assignment");
-    setError("");
-    setSuccess("");
-    try {
-      setAssignment(
-        await api.updateAssignment(assignment.id, {
-          course_id: String(form.get("course_id") ?? assignment.course_id),
-          title: String(form.get("title") ?? ""),
-          description: String(form.get("description") ?? "") || null,
-          deadline: toUtcDateTime(String(form.get("deadline") ?? "")),
-          status: String(form.get("status") ?? assignment.status) as AssignmentStatus,
-        }),
-      );
-      setEditing(false);
-      setSuccess("Assignment details updated.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not update the assignment.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function finalize() {
-    if (!assignment || !window.confirm("Finalize this assignment and lock its grading total at 100%?")) return;
-    setPending("finalize");
-    setError("");
-    setSuccess("");
-    try {
-      setAssignment(await api.finalizeAssignment(assignment.id));
-      setSuccess("Assignment finalized and now active.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not finalize the assignment.");
-    } finally {
-      setPending(null);
-    }
-  }
+  }, []);
 
   async function deleteAssignment() {
-    if (!assignment || !window.confirm(`Delete ${assignment.title} and all of its documents?`)) return;
-    setPending("delete");
-    setError("");
+    if (!specification) return;
+    if (!window.confirm(`Delete ${specification.assignment.title} and all of its documents?`)) return;
+    setDeleteError("");
     try {
-      await api.deleteAssignment(assignment.id);
+      await api.deleteAssignment(specification.assignment.id);
       router.push("/assignments");
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not delete the assignment.");
-      setPending(null);
+      setDeleteError(
+        caught instanceof ApiError ? caught.message : "Could not delete the assignment.",
+      );
     }
   }
 
-  async function addRequirement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!assignment) return;
-    const element = event.currentTarget;
-    const form = new FormData(element);
-    setPending("requirement");
-    setError("");
-    setSuccess("");
-    try {
-      await api.createRequirement(assignment.id, {
-        title: String(form.get("title") ?? ""),
-        description: String(form.get("description") ?? "") || null,
-        priority: String(form.get("priority") ?? "MEDIUM") as RequirementPriority,
-        type: String(form.get("type") ?? "OTHER") as RequirementType,
-      });
-      setAssignment(await api.assignment(assignment.id));
-      element.reset();
-      setSuccess("Requirement added.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not add the requirement.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function removeRequirement(id: string) {
-    if (!assignment || !window.confirm("Delete this requirement?")) return;
-    setPending("requirement");
-    setError("");
-    try {
-      await api.deleteRequirement(assignment.id, id);
-      setAssignment(await api.assignment(assignment.id));
-      setSuccess("Requirement deleted.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not delete the requirement.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function addConstraint(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!assignment) return;
-    const element = event.currentTarget;
-    const form = new FormData(element);
-    setPending("constraint");
-    setError("");
-    setSuccess("");
-    try {
-      await api.createConstraint(assignment.id, {
-        title: String(form.get("title") ?? ""),
-        description: String(form.get("description") ?? ""),
-        value: String(form.get("value") ?? "") || null,
-      });
-      setAssignment(await api.assignment(assignment.id));
-      element.reset();
-      setSuccess("Constraint added.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not add the constraint.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function removeConstraint(id: string) {
-    if (!assignment || !window.confirm("Delete this constraint?")) return;
-    setPending("constraint");
-    setError("");
-    try {
-      await api.deleteConstraint(assignment.id, id);
-      setAssignment(await api.assignment(assignment.id));
-      setSuccess("Constraint deleted.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not delete the constraint.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function addCriterion(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!assignment) return;
-    const element = event.currentTarget;
-    const form = new FormData(element);
-    setPending("criterion");
-    setError("");
-    setSuccess("");
-    try {
-      await api.createCriterion(assignment.id, {
-        title: String(form.get("title") ?? ""),
-        description: String(form.get("description") ?? "") || null,
-        weight: String(form.get("weight") ?? "0"),
-      });
-      setAssignment(await api.assignment(assignment.id));
-      element.reset();
-      setSuccess("Evaluation criterion added.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not add the criterion.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function removeCriterion(id: string) {
-    if (!assignment || !window.confirm("Delete this evaluation criterion?")) return;
-    setPending("criterion");
-    setError("");
-    try {
-      await api.deleteCriterion(assignment.id, id);
-      setAssignment(await api.assignment(assignment.id));
-      setSuccess("Evaluation criterion deleted.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not delete the criterion.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  async function uploadDocument(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file || !assignment) return;
-    setPending("document");
-    setError("");
-    setSuccess("");
-    try {
-      await api.uploadDocument(assignment.id, file);
-      setAssignment(await api.assignment(assignment.id));
-      setSuccess(`${file.name} uploaded.`);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not upload the document.");
-    } finally {
-      event.target.value = "";
-      setPending(null);
-    }
-  }
-
-  async function downloadDocument(id: string, filename: string) {
-    setError("");
-    try {
-      await api.downloadDocument(id, filename);
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not download the document.");
-    }
-  }
-
-  async function removeDocument(id: string) {
-    if (!assignment || !window.confirm("Delete this document?")) return;
-    setPending("document");
-    setError("");
-    try {
-      await api.deleteDocument(id);
-      setAssignment(await api.assignment(assignment.id));
-      setSuccess("Document deleted.");
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not delete the document.");
-    } finally {
-      setPending(null);
-    }
-  }
-
-  if (!assignment) {
-    if (error) return <Alert>{error}</Alert>;
+  if (loading && !specification) {
     return <LoadingState label="Loading assignment" />;
   }
 
-  const progress = Math.min(assignment.criteria_total, 100);
-  const criteriaReady = assignment.criteria_total === 100;
-  const deadlineReady = assignment.deadline !== null;
-  const readiness = [
-    { label: "Title and brief", ready: assignment.title.trim().length > 0 },
-    { label: "Deadline set", ready: deadlineReady },
-    { label: "Criteria total exactly 100%", ready: criteriaReady },
-    { label: "At least one requirement", ready: assignment.requirements.length > 0 },
-    { label: "At least one constraint", ready: assignment.constraints.length > 0 },
-    { label: "At least one document", ready: assignment.documents.length > 0 },
-  ];
+  if (!specification) {
+    return <Alert>{error || "Could not load this assignment."}</Alert>;
+  }
 
   return (
     <div id="main-content">
       <PageHeader
         action={
-          <div className="flex flex-wrap justify-end gap-2">
-            <button className="btn-secondary" onClick={() => setEditing((value) => !value)} type="button">
-              {editing ? "Cancel edit" : "Edit details"}
-            </button>
-            {assignment.status === "DRAFT" ? (
-              <button className="btn-primary" disabled={pending !== null} onClick={() => void finalize()} type="button">
-                {pending === "finalize" ? "Finalizing…" : "Finalize assignment"}
-              </button>
-            ) : null}
-          </div>
+          <nav aria-label="Specification sections" className="flex flex-wrap justify-end gap-1">
+            {SECTIONS.map((section) => (
+              <a
+                className="rounded-md px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                href={section.href}
+                key={section.href}
+              >
+                {section.label}
+              </a>
+            ))}
+          </nav>
         }
-        description={`${assignment.course_code} · ${assignment.course_name}`}
-        title={assignment.title}
+        description={`${specification.assignment.course_code} · ${specification.assignment.course_name}`}
+        title={specification.assignment.title}
       />
+
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <Link className="text-sm font-semibold text-indigo-700" href="/assignments">
           ← Back to assignments
         </Link>
-        <StatusBadge status={assignment.status} />
+        <StatusBadge status={specification.assignment.status} />
       </div>
-      {error ? <div className="mb-5"><Alert>{error}</Alert></div> : null}
-      {success ? <div className="mb-5"><Alert tone="success">{success}</Alert></div> : null}
-      {editing ? (
-        <form className="card mb-8 grid gap-5 p-6 md:grid-cols-2" onSubmit={updateAssignment}>
-          <label className="field">
-            <span>Course</span>
-            <select defaultValue={assignment.course_id} name="course_id">
-              {courses.map((course) => (
-                <option key={course.id} value={course.id}>{course.code} · {course.name}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Deadline</span>
-            <input defaultValue={toLocalDateTime(assignment.deadline)} name="deadline" type="datetime-local" />
-          </label>
-          <label className="field">
-            <span>Status</span>
-            <select defaultValue={assignment.status} name="status">
-              {assignmentStatuses.map((status) => (
-                <option key={status} value={status}>{status}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>Title</span>
-            <input defaultValue={assignment.title} maxLength={240} name="title" required type="text" />
-          </label>
-          <label className="field md:col-span-2">
-            <span>Brief</span>
-            <textarea defaultValue={assignment.description ?? ""} maxLength={20000} name="description" />
-          </label>
-          <p className="text-sm text-slate-500 md:col-span-2">
-            A draft becomes active through Finalize assignment once its deadline is set and its criteria
-            total 100%. Status changes here are for marking finished or archived work.
-          </p>
-          <div className="flex justify-end gap-3 md:col-span-2">
-            <button className="btn-danger" onClick={() => void deleteAssignment()} type="button">
-              Delete assignment
-            </button>
-            <SubmitButton
-              className="btn-primary"
-              pending={pending === "assignment"}
-              pendingLabel="Saving…"
-            >
-              Save changes
-            </SubmitButton>
-          </div>
-        </form>
-      ) : (
-        <section className="card mb-8 p-6 sm:p-8">
-          <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]">
-            <div>
-              <h2 className="section-title">Assignment brief</h2>
-              <p className="mt-4 whitespace-pre-wrap leading-7 text-slate-700">
-                {assignment.description || "No brief has been added yet. Use Edit details to add one."}
-              </p>
-            </div>
-            <dl className="space-y-4 rounded-xl bg-slate-50 p-4 text-sm">
-              <div>
-                <dt className="font-medium text-slate-500">Deadline</dt>
-                <dd className="mt-1 font-semibold text-slate-900">{formatDate(assignment.deadline)}</dd>
-              </div>
-              <div>
-                <dt className="font-medium text-slate-500">Grading total</dt>
-                <dd className="mt-1 font-semibold text-slate-900">{assignment.criteria_total}%</dd>
-              </div>
-            </dl>
-          </div>
-        </section>
-      )}
-      <div className="grid gap-6 xl:grid-cols-2">
-        <section className="card p-6" data-testid="review-panel" id="review">
-          <div>
-            <h2 className="section-title">Review</h2>
-            <p className="mt-1 text-sm text-slate-500">The specification as a reader will see it.</p>
-          </div>
-          <dl className="mt-5 grid gap-4 sm:grid-cols-2">
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Course</dt>
-              <dd className="mt-1 font-semibold text-slate-900">{assignment.course_code} · {assignment.course_name}</dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deadline</dt>
-              <dd className="mt-1 font-semibold text-slate-900">
-                {assignment.deadline ? formatDate(assignment.deadline) : "Not set"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Specification size</dt>
-              <dd className="mt-1 font-semibold text-slate-900">
-                {assignment.requirements.length} requirements · {assignment.constraints.length} constraints · {assignment.criteria.length} criteria · {assignment.documents.length} documents
-              </dd>
-            </div>
-            <div>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Grading total</dt>
-              <dd className={`mt-1 font-semibold ${criteriaReady ? "text-emerald-700" : "text-amber-700"}`}>
-                {assignment.criteria_total}% {criteriaReady ? "of 100%" : `of 100% — ${(100 - assignment.criteria_total).toFixed(2)}% still to allocate`}
-              </dd>
-            </div>
-          </dl>
-          <h3 className="mt-6 text-sm font-semibold text-slate-900">Readiness</h3>
-          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
-            {readiness.map((item) => (
-              <li className="flex items-center gap-2 text-sm" key={item.label}>
-                <span
-                  aria-hidden="true"
-                  className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${item.ready ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
-                >
-                  {item.ready ? "✓" : "–"}
-                </span>
-                <span className={item.ready ? "text-slate-700" : "text-slate-500"}>{item.label}</span>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-4 text-xs text-slate-500">
-            Finalization only requires a deadline and a criteria total of 100%. The remaining checks are
-            guidance.
-          </p>
-        </section>
-        <section className="card p-6" data-testid="phase-two-sections">
-          <div>
-            <h2 className="section-title">Available in Phase 2</h2>
-            <p className="mt-1 text-sm text-slate-500">
-              These sections are reserved in the information architecture. StudyOS Phase 1 ships no AI
-              features, so they are intentionally empty.
-            </p>
-          </div>
-          <ul className="mt-5 grid gap-2">
-            {phaseTwoSections.map((section) => (
-              <li
-                className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500"
-                key={section}
-              >
-                <span>{section}</span>
-                <span className="shrink-0 text-xs font-semibold uppercase tracking-wide">Not available in Phase 1</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      </div>
-      <div className="mt-6 grid gap-6 xl:grid-cols-2">
-        <section className="card p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="section-title">Requirements</h2>
-              <p className="mt-1 text-sm text-slate-500">What the finished work must accomplish.</p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{assignment.requirements.length}</span>
-          </div>
-          <div className="mt-5 space-y-3">
-            {assignment.requirements.map((requirement) => (
-              <article className="rounded-xl border border-slate-200 p-4" key={requirement.id}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-semibold text-slate-950">{requirement.title}</h3>
-                      <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[0.68rem] font-bold text-indigo-700">{requirement.priority}</span>
-                    </div>
-                    <p className="mt-1 text-xs font-semibold text-slate-400">{requirement.type.replaceAll("_", " ")}</p>
-                    {requirement.description ? <p className="mt-2 text-sm leading-6 text-slate-600">{requirement.description}</p> : null}
-                  </div>
-                  <button aria-label={`Delete ${requirement.title}`} className="text-sm font-semibold text-red-600 hover:text-red-800" onClick={() => void removeRequirement(requirement.id)} type="button">Delete</button>
-                </div>
-              </article>
-            ))}
-          </div>
-          <form className="mt-5 grid gap-3 border-t border-slate-100 pt-5" onSubmit={addRequirement}>
-            <label className="field"><span>Requirement title</span><input maxLength={240} name="title" required type="text" /></label>
-            <label className="field"><span>Description</span><textarea maxLength={5000} name="description" /></label>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="field"><span>Type</span><select name="type">{requirementTypes.map((type) => <option key={type} value={type}>{type.replaceAll("_", " ")}</option>)}</select></label>
-              <label className="field"><span>Priority</span><select defaultValue="MEDIUM" name="priority">{requirementPriorities.map((priority) => <option key={priority} value={priority}>{priority}</option>)}</select></label>
-            </div>
-            <SubmitButton
-              className="btn-secondary"
-              pending={pending === "requirement"}
-              pendingLabel="Adding…"
-            >
-              Add requirement
-            </SubmitButton>
-          </form>
-        </section>
-        <section className="card p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="section-title">Constraints</h2>
-              <p className="mt-1 text-sm text-slate-500">Technical and delivery boundaries.</p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{assignment.constraints.length}</span>
-          </div>
-          <div className="mt-5 space-y-3">
-            {assignment.constraints.map((constraint) => (
-              <article className="rounded-xl border border-slate-200 p-4" key={constraint.id}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold text-slate-950">{constraint.title}</h3>
-                    {constraint.value ? <span className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs text-slate-700">{constraint.value}</span> : null}
-                    <p className="mt-2 text-sm leading-6 text-slate-600">{constraint.description}</p>
-                  </div>
-                  <button aria-label={`Delete ${constraint.title}`} className="text-sm font-semibold text-red-600 hover:text-red-800" onClick={() => void removeConstraint(constraint.id)} type="button">Delete</button>
-                </div>
-              </article>
-            ))}
-          </div>
-          <form className="mt-5 grid gap-3 border-t border-slate-100 pt-5" onSubmit={addConstraint}>
-            <label className="field"><span>Constraint title</span><input maxLength={240} name="title" required type="text" /></label>
-            <label className="field"><span>Constraint</span><textarea maxLength={5000} name="description" required /></label>
-            <label className="field"><span>Value or version</span><input maxLength={500} name="value" placeholder="Optional" type="text" /></label>
-            <SubmitButton
-              className="btn-secondary"
-              pending={pending === "constraint"}
-              pendingLabel="Adding…"
-            >
-              Add constraint
-            </SubmitButton>
-          </form>
-        </section>
-        <section className="card p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="section-title">Evaluation criteria</h2>
-              <p className="mt-1 text-sm text-slate-500">Weights must total exactly 100% to finalize.</p>
-            </div>
-            <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${assignment.criteria_total === 100 ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-800"}`}>{assignment.criteria_total}%</span>
-          </div>
-          <div className="mt-4 h-2 overflow-hidden rounded-full bg-slate-100" aria-label={`Criteria total ${progress}%`} role="progressbar" aria-valuemax={100} aria-valuemin={0} aria-valuenow={progress}>
-            <div className="h-full rounded-full bg-indigo-600 transition-all" style={{ width: `${progress}%` }} />
-          </div>
-          <div className="mt-5 space-y-3">
-            {assignment.criteria.map((criterion) => (
-              <article className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-4" key={criterion.id}>
-                <div>
-                  <h3 className="font-semibold text-slate-950">{criterion.title}</h3>
-                  {criterion.description ? <p className="mt-1 text-sm text-slate-600">{criterion.description}</p> : null}
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-black text-indigo-700">{criterion.weight}%</span>
-                  <button aria-label={`Delete ${criterion.title}`} className="text-sm font-semibold text-red-600 hover:text-red-800" onClick={() => void removeCriterion(criterion.id)} type="button">Delete</button>
-                </div>
-              </article>
-            ))}
-          </div>
-          <form className="mt-5 grid gap-3 border-t border-slate-100 pt-5" onSubmit={addCriterion}>
-            <label className="field"><span>Criterion title</span><input maxLength={240} name="title" required type="text" /></label>
-            <label className="field"><span>Description</span><textarea maxLength={5000} name="description" /></label>
-            <label className="field"><span>Weight percentage</span><input max={100} min={0} name="weight" required step="0.01" type="number" /></label>
-            <SubmitButton
-              className="btn-secondary"
-              pending={pending === "criterion"}
-              pendingLabel="Adding…"
-            >
-              Add criterion
-            </SubmitButton>
-          </form>
-        </section>
-        <section className="card p-6">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h2 className="section-title">Documents</h2>
-              <p className="mt-1 text-sm text-slate-500">PDF, DOCX, MD, TXT, ZIP, and images up to 10 MB.</p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{assignment.documents.length}</span>
-          </div>
-          <div className="mt-5 space-y-3">
-            {assignment.documents.map((document) => (
-              <article className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4" data-testid="document-item" key={document.id}>
-                <div className="min-w-0">
-                  <p className="truncate font-semibold text-slate-950">{document.filename}</p>
-                  <p className="mt-1 text-xs text-slate-500">{formatFileSize(document.size)} · {document.mime_type}</p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <button className="btn-secondary" onClick={() => void downloadDocument(document.id, document.filename)} type="button">Download</button>
-                  <button aria-label={`Delete ${document.filename}`} className="text-sm font-semibold text-red-600" onClick={() => void removeDocument(document.id)} type="button">Delete</button>
-                </div>
-              </article>
-            ))}
-            {assignment.documents.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
-                No documents attached yet.
-              </p>
-            ) : null}
-          </div>
-          <label className="btn-secondary mt-5 w-full">
-            {pending === "document" ? "Uploading…" : "Upload document"}
-            <input
-              accept=".pdf,.txt,.docx,.md,.zip,.png,.jpg,.jpeg"
-              className="sr-only"
-              data-testid="document-upload"
-              disabled={pending !== null}
-              onChange={(event) => void uploadDocument(event)}
-              type="file"
-            />
-          </label>
-        </section>
+
+      {error || deleteError ? (
+        <div className="mb-5">
+          <Alert>{error || deleteError}</Alert>
+        </div>
+      ) : null}
+
+      <div className="space-y-6">
+        <AssignmentBrief
+          courses={courses}
+          onChanged={refresh}
+          onDelete={() => void deleteAssignment()}
+          specification={specification}
+        />
+        <ReadinessPanel onChanged={refresh} specification={specification} />
+        <RequirementsSection
+          graph={graph}
+          onChanged={refresh}
+          specification={specification}
+        />
+        <div className="grid gap-6 xl:grid-cols-2">
+          <ConstraintsSection onChanged={refresh} specification={specification} />
+          <CriteriaSection onChanged={refresh} specification={specification} />
+          <DeliverablesSection onChanged={refresh} specification={specification} />
+          <TaxonomySection onChanged={refresh} specification={specification} />
+        </div>
+        <ResourcesSection onChanged={refresh} specification={specification} />
+        <SummarySection specification={specification} />
+        <HistorySection
+          assignmentId={assignmentId}
+          refreshToken={specification.specification_version}
+        />
       </div>
     </div>
   );

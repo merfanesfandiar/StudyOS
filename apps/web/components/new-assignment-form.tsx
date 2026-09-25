@@ -61,7 +61,7 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
   return (
     <div className="mx-auto max-w-3xl" id="main-content">
       <PageHeader
-        description="Start with the course, brief, and deadline. You can add grading details next."
+        description="Start with the course, brief, and deadline. Add requirements and grading criteria next to reach readiness."
         title="New assignment"
       />
       <Link className="mb-5 inline-block text-sm font-semibold text-indigo-700" href="/assignments">

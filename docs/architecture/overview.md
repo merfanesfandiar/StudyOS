@@ -2,7 +2,7 @@
 
 ## Shape
 
-StudyOS Phase 1 is a modular monolith: one FastAPI service and one Next.js application, plus
+StudyOS is a modular monolith: one FastAPI service and one Next.js application, plus
 PostgreSQL and a filesystem volume. The backend is organized by domain module, not by technical
 layer, so a feature can be read end to end in one directory.
 
@@ -134,8 +134,8 @@ removed.
 A session cookie carries a signed JWT with the user ID. The dependency layer resolves the caller's
 workspace from their memberships, and every handler filters queries by `workspace_id`. Resources are
 loaded through ownership helpers, so an ID from another workspace returns 404 rather than leaking
-existence. Multi-workspace selection is deliberately out of scope for Phase 1, but the dependency is
-the single seam where it would be introduced.
+existence. Multi-workspace selection is deliberately out of scope, but the dependency is the single
+seam where it would be introduced.
 
 Registration creates the user, a workspace, and an owner membership in one transaction, so a new
 account is immediately usable.
@@ -143,12 +143,19 @@ account is immediately usable.
 ## Data integrity rules
 
 - Course codes are unique per workspace (`uq_courses_workspace_code`).
-- Criterion weights are stored as `NUMERIC(5,2)` and summed server side. The API serializes
-  `criteria_total` as a JSON number.
-- Finalizing an assignment requires a deadline and criteria totalling exactly 100. Anything else
-  returns a structured 422 (`DEADLINE_REQUIRED`, `CRITERIA_TOTAL_INVALID`). The rule guards the
-  `ACTIVE` state specifically, so drafts stay freely editable and unfinished work can still be
-  archived.
+- Criterion weights are stored as `NUMERIC(5,2)` and summed server side with `Decimal`. Weights and
+  `criteria_total` are serialized as **strings** (`"25.50"`, `"100.00"`) so no binary float rounding can
+  make a balanced 100 look wrong. More than two decimal places is a 422
+  (`INVALID_WEIGHT_PRECISION`) rather than a silent rounding.
+- Requirement codes come from a per-assignment high-water sequence allocated in the same transaction as
+  the insert, so two concurrent creates cannot be handed the same number (409
+  `REQUIREMENT_SEQUENCE_CONFLICT`). Numbers are never reused after a delete, which keeps an old
+  `REQ-002` unambiguously referring to the same work in the audit trail.
+- Readiness is derived, never trusted. A blocking check failing demotes a ready assignment to
+  `INCOMPLETE`; promoting back to `READY_FOR_ANALYSIS` always requires an explicit request, so a silent
+  background edit can never hand a student a green light they did not confirm.
+- Dependencies may not form cycles, and self-dependency is rejected; the graph read reports `has_cycles`
+  rather than failing outright so a bad link can still be inspected and repaired.
 - Deleting a course that still has assignments is rejected rather than cascading.
 - Timestamps are stored as timezone-aware UTC. The frontend converts to and from `datetime-local`
   strings so students always see their own local time.
@@ -184,7 +191,7 @@ structured JSON logs alongside method, path, status, and duration. Domain errors
 {
   "error": {
     "code": "CRITERIA_TOTAL_INVALID",
-    "message": "Evaluation criteria must total exactly 100% before finalizing an assignment.",
+    "message": "Evaluation criteria must total exactly 100% before marking an assignment ready.",
     "details": { "total": "80.00" }
   }
 }
@@ -209,10 +216,13 @@ API, and the API runs `alembic upgrade head` before serving. Data lives in two n
 
 ## Future phases
 
-Phase 1 deliberately contains no AI code. The seams that later phases plug into are already in place:
-domain modules own their write paths, `services/audit.py` records state changes, `StorageService`
-isolates file IO, and `Notification` plus `AuditEventType` define the vocabulary a future engine can
-publish. How that engine is expected to attach is described in [future-ai.md](future-ai.md).
+There is deliberately no AI code yet. The seams a later engine plugs into are already in place: domain
+modules own their write paths, `services/audit.py` records state changes, `StorageService` isolates file
+IO, and `Notification` plus `AuditEventType` define the vocabulary an engine can publish. The
+specification model is the important one here: because a `READY_FOR_ANALYSIS` assignment already carries
+validated requirements, constraints, weighted criteria, deliverables, and technologies, a future engine
+consumes a checked artifact instead of parsing free text. How that engine is expected to attach is
+described in [future-ai.md](future-ai.md).
 
 ## Decisions
 
