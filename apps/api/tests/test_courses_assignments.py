@@ -42,6 +42,35 @@ async def test_course_crud(client: AsyncClient) -> None:
     assert (await client.get(f"/api/v1/courses/{course['id']}")).status_code == 404
 
 
+LONG_DESCRIPTION = (
+    "Design and implement a small turn-based strategy game in Java. The game must support "
+    "unit movement, resource gathering and a simple combat loop, and it must be delivered "
+    "as a runnable project together with a written report explaining your design decisions."
+)
+
+
+async def build_ready_specification(
+    client: AsyncClient, course_id: str, title: str = "Notified assignment"
+) -> dict:
+    """Create an assignment whose blocking checks all pass."""
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={
+                "course_id": course_id,
+                "title": title,
+                "description": LONG_DESCRIPTION,
+                "deadline": (datetime.now(UTC) + timedelta(days=7)).isoformat(),
+            },
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/assignments/{assignment['id']}/requirements",
+        json={"title": "Implement authentication", "priority": "HIGH", "type": "FUNCTIONAL"},
+    )
+    return assignment
+
+
 @pytest.mark.asyncio
 async def test_assignment_crud_and_nested_specification(client: AsyncClient) -> None:
     await register_user(client)
@@ -70,6 +99,7 @@ async def test_assignment_crud_and_nested_specification(client: AsyncClient) -> 
         },
     )
     assert requirement.status_code == 201
+    assert requirement.json()["code"] == "REQ-001"
     constraint = await client.post(
         f"/api/v1/assignments/{assignment['id']}/constraints",
         json={"title": "Java version", "description": "Use Java 17 only.", "value": "17"},
@@ -86,10 +116,11 @@ async def test_assignment_crud_and_nested_specification(client: AsyncClient) -> 
     assert first_criterion.status_code == 201
     assert second_criterion.status_code == 201
 
-    finalized = await client.post(f"/api/v1/assignments/{assignment['id']}/finalize")
-    assert finalized.status_code == 200
-    assert finalized.json()["status"] == "ACTIVE"
-    assert finalized.json()["criteria_total"] == 100
+    ready = await client.post(f"/api/v1/assignments/{assignment['id']}/readiness/mark-ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["status"] == "READY_FOR_ANALYSIS"
+    assert ready.json()["criteria_total"] == 100
+    assert ready.json()["ready_for_analysis_at"] is not None
 
     detail = await client.get(f"/api/v1/assignments/{assignment['id']}")
     assert detail.status_code == 200
@@ -103,55 +134,41 @@ async def test_assignment_crud_and_nested_specification(client: AsyncClient) -> 
 
 
 @pytest.mark.asyncio
-async def test_criteria_total_is_checked_at_finalization(client: AsyncClient) -> None:
+async def test_criteria_total_blocks_the_readiness_gate(client: AsyncClient) -> None:
     await register_user(client)
     course = await create_course(client)
-    assignment = (
-        await client.post(
-            "/api/v1/assignments",
-            json={
-                "course_id": course["id"],
-                "title": "Draft assignment",
-                "deadline": (datetime.now(UTC) + timedelta(days=2)).isoformat(),
-            },
-        )
-    ).json()
+    assignment = await build_ready_specification(client, course["id"], title="Draft assignment")
     await client.post(
         f"/api/v1/assignments/{assignment['id']}/criteria",
         json={"title": "Partial", "weight": "50"},
     )
-    response = await client.post(f"/api/v1/assignments/{assignment['id']}/finalize")
+    response = await client.post(f"/api/v1/assignments/{assignment['id']}/readiness/mark-ready")
     assert response.status_code == 422
-    assert response.json()["error"]["code"] == "CRITERIA_TOTAL_INVALID"
+    body = response.json()
+    assert body["error"]["code"] == "ASSIGNMENT_NOT_READY"
+    assert "evaluation_criteria" in body["error"]["details"]["failing_checks"]
 
 
 @pytest.mark.asyncio
-async def test_finalizing_creates_a_notification(client: AsyncClient) -> None:
+async def test_marking_ready_creates_a_notification(client: AsyncClient) -> None:
     await register_user(client)
     course = await create_course(client)
-    assignment = (
-        await client.post(
-            "/api/v1/assignments",
-            json={
-                "course_id": course["id"],
-                "title": "Notified assignment",
-                "deadline": (datetime.now(UTC) + timedelta(days=2)).isoformat(),
-            },
-        )
-    ).json()
+    assignment = await build_ready_specification(client, course["id"])
     await client.post(
         f"/api/v1/assignments/{assignment['id']}/criteria",
         json={"title": "Everything", "weight": "100"},
     )
-    finalized = await client.post(f"/api/v1/assignments/{assignment['id']}/finalize")
-    assert finalized.status_code == 200, finalized.text
-    assert finalized.json()["status"] == "ACTIVE"
+    ready = await client.post(f"/api/v1/assignments/{assignment['id']}/readiness/mark-ready")
+    assert ready.status_code == 200, ready.text
+    assert ready.json()["status"] == "READY_FOR_ANALYSIS"
 
     notifications = (await client.get("/api/v1/notifications")).json()
     titles = [item["title"] for item in notifications]
-    assert "Assignment finalized" in titles
+    assert "Assignment ready for analysis" in titles
 
-    notification = next(item for item in notifications if item["title"] == "Assignment finalized")
+    notification = next(
+        item for item in notifications if item["title"] == "Assignment ready for analysis"
+    )
     assert notification["read_at"] is None
     assert "Notified assignment" in notification["message"]
 

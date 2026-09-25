@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -22,9 +24,15 @@ from sqlalchemy.types import Uuid
 from app.db.base import Base
 from app.models.enums import (
     AssignmentStatus,
+    ConstraintSeverity,
+    ConstraintType,
+    DeliverableStatus,
+    DeliverableType,
     NotificationType,
     RequirementPriority,
+    RequirementStatus,
     RequirementType,
+    TechnologyCategory,
     WorkspaceRole,
 )
 
@@ -50,7 +58,7 @@ class User(TimestampMixin, Base):
     memberships: Mapped[list[WorkspaceMember]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-    owned_workspaces: Mapped[list[Workspace]] = relationship(
+    owned_workspaces: Mapped[Workspace] = relationship(
         back_populates="owner", cascade="all, delete-orphan"
     )
     notifications: Mapped[list[Notification]] = relationship(
@@ -76,6 +84,10 @@ class Workspace(TimestampMixin, Base):
         back_populates="workspace", cascade="all, delete-orphan"
     )
     assignments: Mapped[list[Assignment]] = relationship(
+        back_populates="workspace", cascade="all, delete-orphan"
+    )
+    tags: Mapped[list[Tag]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
+    technologies: Mapped[list[Technology]] = relationship(
         back_populates="workspace", cascade="all, delete-orphan"
     )
 
@@ -125,6 +137,7 @@ class Assignment(TimestampMixin, Base):
         Index("ix_assignments_workspace_id", "workspace_id"),
         Index("ix_assignments_course_id", "course_id"),
         Index("ix_assignments_deadline", "deadline"),
+        Index("ix_assignments_workspace_status", "workspace_id", "status"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -136,9 +149,13 @@ class Assignment(TimestampMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=True)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=AssignmentStatus.DRAFT.value, index=True
+        String(30), nullable=False, default=AssignmentStatus.DRAFT.value, index=True
+    )
+    readiness_score: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ready_for_analysis_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     workspace: Mapped[Workspace] = relationship(back_populates="assignments")
@@ -146,31 +163,60 @@ class Assignment(TimestampMixin, Base):
     requirements: Mapped[list[AssignmentRequirement]] = relationship(
         back_populates="assignment",
         cascade="all, delete-orphan",
-        order_by="AssignmentRequirement.created_at",
+        order_by="(AssignmentRequirement.position, AssignmentRequirement.sequence)",
     )
     constraints: Mapped[list[AssignmentConstraint]] = relationship(
         back_populates="assignment",
         cascade="all, delete-orphan",
-        order_by="AssignmentConstraint.created_at",
+        order_by="(AssignmentConstraint.position, AssignmentConstraint.created_at)",
     )
     criteria: Mapped[list[EvaluationCriterion]] = relationship(
         back_populates="assignment",
         cascade="all, delete-orphan",
-        order_by="EvaluationCriterion.created_at",
+        order_by="(EvaluationCriterion.position, EvaluationCriterion.created_at)",
+    )
+    deliverables: Mapped[list[Deliverable]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="(Deliverable.position, Deliverable.created_at)",
     )
     documents: Mapped[list[Document]] = relationship(
         back_populates="assignment", cascade="all, delete-orphan", order_by="Document.created_at"
     )
+    technologies: Mapped[list[AssignmentTechnology]] = relationship(
+        back_populates="assignment", cascade="all, delete-orphan"
+    )
+    tags: Mapped[list[AssignmentTag]] = relationship(
+        back_populates="assignment", cascade="all, delete-orphan"
+    )
+    versions: Mapped[list[AssignmentVersion]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AssignmentVersion.version",
+    )
 
 
 class AssignmentRequirement(TimestampMixin, Base):
+    """One thing the finished work must accomplish.
+
+    ``sequence`` is the stable, immutable identity behind the public
+    ``REQ-001`` reference; it is assigned once and never reused, even after the
+    requirement is deleted. ``position`` is the mutable display order.
+    """
+
     __tablename__ = "assignment_requirements"
-    __table_args__ = (Index("ix_assignment_requirements_assignment_id", "assignment_id"),)
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "sequence", name="uq_requirement_assignment_sequence"),
+        Index("ix_assignment_requirements_assignment_id", "assignment_id"),
+        Index("ix_assignment_requirements_status", "status"),
+        Index("ix_assignment_requirements_priority", "priority"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     assignment_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
     )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     priority: Mapped[str] = mapped_column(
@@ -179,13 +225,81 @@ class AssignmentRequirement(TimestampMixin, Base):
     type: Mapped[str] = mapped_column(
         String(30), nullable=False, default=RequirementType.OTHER.value
     )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=RequirementStatus.TODO.value
+    )
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    parent_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_requirements.id", name="fk_requirement_parent", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     assignment: Mapped[Assignment] = relationship(back_populates="requirements")
+    parent: Mapped[AssignmentRequirement | None] = relationship(
+        back_populates="children", remote_side="AssignmentRequirement.id"
+    )
+    children: Mapped[list[AssignmentRequirement]] = relationship(back_populates="parent")
+    dependencies: Mapped[list[RequirementDependency]] = relationship(
+        back_populates="requirement",
+        cascade="all, delete-orphan",
+        foreign_keys="RequirementDependency.requirement_id",
+    )
+    dependents: Mapped[list[RequirementDependency]] = relationship(
+        back_populates="depends_on",
+        cascade="all, delete-orphan",
+        foreign_keys="RequirementDependency.depends_on_id",
+    )
+
+
+class RequirementDependency(Base):
+    """``requirement`` needs ``depends_on`` to exist first.
+
+    A row means: "the requirement cannot start before its dependency is done".
+    """
+
+    __tablename__ = "requirement_dependencies"
+    __table_args__ = (
+        UniqueConstraint("requirement_id", "depends_on_id", name="uq_requirement_dependency_pair"),
+        Index("ix_requirement_dependencies_requirement_id", "requirement_id"),
+        Index("ix_requirement_dependencies_depends_on_id", "depends_on_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    depends_on_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    assignment: Mapped[Assignment] = relationship()
+    requirement: Mapped[AssignmentRequirement] = relationship(
+        back_populates="dependencies", foreign_keys=[requirement_id]
+    )
+    depends_on: Mapped[AssignmentRequirement] = relationship(
+        back_populates="dependents", foreign_keys=[depends_on_id]
+    )
 
 
 class AssignmentConstraint(TimestampMixin, Base):
     __tablename__ = "assignment_constraints"
-    __table_args__ = (Index("ix_assignment_constraints_assignment_id", "assignment_id"),)
+    __table_args__ = (
+        Index("ix_assignment_constraints_assignment_id", "assignment_id"),
+        Index("ix_assignment_constraints_position", "position"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     assignment_id: Mapped[UUID] = mapped_column(
@@ -194,13 +308,23 @@ class AssignmentConstraint(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     value: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=ConstraintType.OTHER.value
+    )
+    severity: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ConstraintSeverity.WARNING.value
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     assignment: Mapped[Assignment] = relationship(back_populates="constraints")
 
 
 class EvaluationCriterion(TimestampMixin, Base):
     __tablename__ = "evaluation_criteria"
-    __table_args__ = (Index("ix_evaluation_criteria_assignment_id", "assignment_id"),)
+    __table_args__ = (
+        Index("ix_evaluation_criteria_assignment_id", "assignment_id"),
+        Index("ix_evaluation_criteria_position", "position"),
+    )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     assignment_id: Mapped[UUID] = mapped_column(
@@ -208,9 +332,160 @@ class EvaluationCriterion(TimestampMixin, Base):
     )
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    weight: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False)
+    weight: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     assignment: Mapped[Assignment] = relationship(back_populates="criteria")
+
+
+class Deliverable(TimestampMixin, Base):
+    """Something the student has to hand in."""
+
+    __tablename__ = "deliverables"
+    __table_args__ = (
+        Index("ix_deliverables_assignment_id", "assignment_id"),
+        Index("ix_deliverables_status", "status"),
+        Index("ix_deliverables_position", "position"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=DeliverableType.DOCUMENT.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=DeliverableStatus.PENDING.value
+    )
+    is_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    assignment: Mapped[Assignment] = relationship(back_populates="deliverables")
+
+
+class Technology(TimestampMixin, Base):
+    """Workspace-scoped technology, reused across assignments.
+
+    Deliberately not a global marketplace: technologies are normalised inside a
+    workspace so assignment specifications stay portable without StudyOS owning a
+    public technology database.
+    """
+
+    __tablename__ = "technologies"
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id", "normalized_name", "version", name="uq_technology_workspace_identity"
+        ),
+        Index("ix_technologies_workspace_id", "workspace_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    version: Mapped[str] = mapped_column(String(50), nullable=False, default="")
+    category: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=TechnologyCategory.OTHER.value
+    )
+
+    workspace: Mapped[Workspace] = relationship(back_populates="technologies")
+    assignments: Mapped[list[AssignmentTechnology]] = relationship(
+        back_populates="technology", cascade="all, delete-orphan"
+    )
+
+
+class AssignmentTechnology(Base):
+    __tablename__ = "assignment_technologies"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "technology_id", name="uq_assignment_technology"),
+        Index("ix_assignment_technologies_assignment_id", "assignment_id"),
+    )
+
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), primary_key=True
+    )
+    technology_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("technologies.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    assignment: Mapped[Assignment] = relationship(back_populates="technologies")
+    technology: Mapped[Technology] = relationship(back_populates="assignments")
+
+
+class Tag(TimestampMixin, Base):
+    __tablename__ = "tags"
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "normalized_name", name="uq_tag_workspace_name"),
+        Index("ix_tags_workspace_id", "workspace_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(60), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(60), nullable=False)
+
+    workspace: Mapped[Workspace] = relationship(back_populates="tags")
+    assignments: Mapped[list[AssignmentTag]] = relationship(
+        back_populates="tag", cascade="all, delete-orphan"
+    )
+
+
+class AssignmentTag(Base):
+    __tablename__ = "assignment_tags"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "tag_id", name="uq_assignment_tag"),
+        Index("ix_assignment_tags_assignment_id", "assignment_id"),
+        Index("ix_assignment_tags_tag_id", "tag_id"),
+    )
+
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+    )
+
+    assignment: Mapped[Assignment] = relationship(back_populates="tags")
+    tag: Mapped[Tag] = relationship(back_populates="assignments")
+
+
+class AssignmentVersion(Base):
+    """Immutable point-in-time snapshot of one specification state.
+
+    The relational tables remain the source of truth. This is an audit trail:
+    rows are never mutated and are only read to show history or to diff what
+    changed, so storing the snapshot as JSON is deliberate.
+    """
+
+    __tablename__ = "assignment_versions"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "version", name="uq_assignment_version"),
+        Index("ix_assignment_versions_assignment_id", "assignment_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    assignment: Mapped[Assignment] = relationship(back_populates="versions")
+    created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_id])
 
 
 class Document(Base):
@@ -261,6 +536,7 @@ class AuditLog(Base):
     __table_args__ = (
         Index("ix_audit_logs_user_id_created_at", "user_id", "created_at"),
         Index("ix_audit_logs_workspace_id_created_at", "workspace_id", "created_at"),
+        Index("ix_audit_logs_assignment_id", "assignment_id"),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -269,6 +545,11 @@ class AuditLog(Base):
     )
     workspace_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="SET NULL"), nullable=True
+    )
+    assignment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignments.id", name="fk_audit_logs_assignment_id", ondelete="SET NULL"),
+        nullable=True,
     )
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
