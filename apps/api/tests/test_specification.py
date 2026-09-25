@@ -742,3 +742,55 @@ async def test_every_enum_value_is_accepted_by_the_api(client: AsyncClient) -> N
         assert response.status_code == 201, (value, response.text)
 
     assert len(NotificationType) >= 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_reports_readiness_progress(client: AsyncClient) -> None:
+    """The dashboard answers "how far along is my work", not just open/closed."""
+    await register_user(client)
+    course = await create_course(client)
+    await create_assignment(client, course["id"])
+
+    ready = (
+        await client.post(
+            "/api/v1/assignments",
+            json={
+                "course_id": course["id"],
+                "title": "Ready to go",
+                "description": (
+                    "Implement the ordering routines described in the lecture notes and compare "
+                    "them on random inputs, reporting the crossover points you measure."
+                ),
+                "deadline": (datetime.now(UTC) + timedelta(days=14)).isoformat(),
+            },
+        )
+    ).json()
+    await add_requirement(client, ready["id"], "Do it")
+    await add_criterion(client, ready["id"], "Everything", "100.00")
+    assert (
+        await client.post(f"/api/v1/assignments/{ready['id']}/readiness/mark-ready")
+    ).status_code == 200
+
+    dashboard = (await client.get("/api/v1/dashboard")).json()
+    assert dashboard["assignments_count"] == 2
+    assert dashboard["in_progress_assignments_count"] == 2
+    assert dashboard["ready_assignments_count"] == 1
+    assert dashboard["incomplete_assignments_count"] == 1
+    assert dashboard["completed_assignments_count"] == 0
+
+    listed = {item["title"]: item for item in dashboard["upcoming_assignments"]}
+    assert set(listed) == {"Graph Algorithms Project", "Ready to go"}
+    # Readiness depends on the blocking checks only, so an assignment with no
+    # constraints, deliverables, technologies or resources is still ready; the
+    # score shows what is missing.
+    assert listed["Ready to go"]["readiness_state"] == "READY_FOR_ANALYSIS"
+    assert 80 <= listed["Ready to go"]["readiness_score"] < 100
+    assert listed["Ready to go"]["requirements_count"] == 1
+    assert listed["Graph Algorithms Project"]["readiness_state"] == "DRAFT"
+    assert (
+        listed["Ready to go"]["readiness_score"]
+        > listed["Graph Algorithms Project"]["readiness_score"]
+    )
+    assert dashboard["average_readiness_score"] > 0
+    # The dashboard payload is the list row, not the whole nested assignment.
+    assert "requirements" not in listed["Ready to go"]
