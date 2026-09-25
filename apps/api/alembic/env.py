@@ -1,13 +1,24 @@
 
+from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
 from sqlalchemy import engine_from_config, pool
-
-from alembic import context
+from sqlalchemy.engine import make_url
 
 config = context.config
 settings = get_settings()
-config.set_main_option("sqlalchemy.url", settings.database_url.replace("+asyncpg", ""))
+
+
+def sync_database_url(url: str) -> str:
+    parsed = make_url(url)
+    if parsed.drivername == "postgresql+asyncpg":
+        parsed = parsed.set(drivername="postgresql+psycopg")
+    elif parsed.drivername == "sqlite+aiosqlite":
+        parsed = parsed.set(drivername="sqlite")
+    return parsed.render_as_string(hide_password=False)
+
+
+config.set_main_option("sqlalchemy.url", sync_database_url(settings.database_url))
 target_metadata = Base.metadata
 
 

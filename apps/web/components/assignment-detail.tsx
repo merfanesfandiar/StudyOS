@@ -6,9 +6,20 @@ import { ChangeEvent, FormEvent, useEffect, useState } from "react";
 import { Alert, LoadingState, PageHeader, StatusBadge, SubmitButton } from "./ui";
 import { ApiError, api } from "@/lib/api";
 import { formatDate, formatFileSize, toLocalDateTime, toUtcDateTime } from "@/lib/format";
-import type { Assignment, Course, RequirementPriority, RequirementType } from "@/lib/types";
+import type { Assignment, AssignmentStatus, Course, RequirementPriority, RequirementType } from "@/lib/types";
 
 type PendingAction = "assignment" | "finalize" | "requirement" | "constraint" | "criterion" | "document" | "delete" | null;
+
+const assignmentStatuses: AssignmentStatus[] = ["DRAFT", "ACTIVE", "COMPLETED", "ARCHIVED"];
+
+const phaseTwoSections = [
+  "AI plan",
+  "Agent activity",
+  "Checkpoints",
+  "Verification",
+  "Mastery",
+  "Presentation",
+];
 
 const requirementTypes: RequirementType[] = [
   "FUNCTIONAL",
@@ -62,6 +73,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           title: String(form.get("title") ?? ""),
           description: String(form.get("description") ?? "") || null,
           deadline: toUtcDateTime(String(form.get("deadline") ?? "")),
+          status: String(form.get("status") ?? assignment.status) as AssignmentStatus,
         }),
       );
       setEditing(false);
@@ -268,6 +280,16 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
   }
 
   const progress = Math.min(assignment.criteria_total, 100);
+  const criteriaReady = assignment.criteria_total === 100;
+  const deadlineReady = assignment.deadline !== null;
+  const readiness = [
+    { label: "Title and brief", ready: assignment.title.trim().length > 0 },
+    { label: "Deadline set", ready: deadlineReady },
+    { label: "Criteria total exactly 100%", ready: criteriaReady },
+    { label: "At least one requirement", ready: assignment.requirements.length > 0 },
+    { label: "At least one constraint", ready: assignment.constraints.length > 0 },
+    { label: "At least one document", ready: assignment.documents.length > 0 },
+  ];
 
   return (
     <div id="main-content">
@@ -309,7 +331,15 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
             <span>Deadline</span>
             <input defaultValue={toLocalDateTime(assignment.deadline)} name="deadline" type="datetime-local" />
           </label>
-          <label className="field md:col-span-2">
+          <label className="field">
+            <span>Status</span>
+            <select defaultValue={assignment.status} name="status">
+              {assignmentStatuses.map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
             <span>Title</span>
             <input defaultValue={assignment.title} maxLength={240} name="title" required type="text" />
           </label>
@@ -317,6 +347,10 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
             <span>Brief</span>
             <textarea defaultValue={assignment.description ?? ""} maxLength={20000} name="description" />
           </label>
+          <p className="text-sm text-slate-500 md:col-span-2">
+            A draft becomes active through Finalize assignment once its deadline is set and its criteria
+            total 100%. Status changes here are for marking finished or archived work.
+          </p>
           <div className="flex justify-end gap-3 md:col-span-2">
             <button className="btn-danger" onClick={() => void deleteAssignment()} type="button">
               Delete assignment
@@ -353,6 +387,76 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
         </section>
       )}
       <div className="grid gap-6 xl:grid-cols-2">
+        <section className="card p-6" data-testid="review-panel" id="review">
+          <div>
+            <h2 className="section-title">Review</h2>
+            <p className="mt-1 text-sm text-slate-500">The specification as a reader will see it.</p>
+          </div>
+          <dl className="mt-5 grid gap-4 sm:grid-cols-2">
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Course</dt>
+              <dd className="mt-1 font-semibold text-slate-900">{assignment.course_code} · {assignment.course_name}</dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Deadline</dt>
+              <dd className="mt-1 font-semibold text-slate-900">
+                {assignment.deadline ? formatDate(assignment.deadline) : "Not set"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Specification size</dt>
+              <dd className="mt-1 font-semibold text-slate-900">
+                {assignment.requirements.length} requirements · {assignment.constraints.length} constraints · {assignment.criteria.length} criteria · {assignment.documents.length} documents
+              </dd>
+            </div>
+            <div>
+              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">Grading total</dt>
+              <dd className={`mt-1 font-semibold ${criteriaReady ? "text-emerald-700" : "text-amber-700"}`}>
+                {assignment.criteria_total}% {criteriaReady ? "of 100%" : `of 100% — ${(100 - assignment.criteria_total).toFixed(2)}% still to allocate`}
+              </dd>
+            </div>
+          </dl>
+          <h3 className="mt-6 text-sm font-semibold text-slate-900">Readiness</h3>
+          <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+            {readiness.map((item) => (
+              <li className="flex items-center gap-2 text-sm" key={item.label}>
+                <span
+                  aria-hidden="true"
+                  className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${item.ready ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+                >
+                  {item.ready ? "✓" : "–"}
+                </span>
+                <span className={item.ready ? "text-slate-700" : "text-slate-500"}>{item.label}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-4 text-xs text-slate-500">
+            Finalization only requires a deadline and a criteria total of 100%. The remaining checks are
+            guidance.
+          </p>
+        </section>
+        <section className="card p-6" data-testid="phase-two-sections">
+          <div>
+            <h2 className="section-title">Available in Phase 2</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              These sections are reserved in the information architecture. StudyOS Phase 1 ships no AI
+              features, so they are intentionally empty.
+            </p>
+          </div>
+          <ul className="mt-5 grid gap-2">
+            {phaseTwoSections.map((section) => (
+              <li
+                className="flex items-center justify-between gap-3 rounded-xl border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500"
+                key={section}
+              >
+                <span>{section}</span>
+                <span className="shrink-0 text-xs font-semibold uppercase tracking-wide">Not available in Phase 1</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      </div>
+      <div className="mt-6 grid gap-6 xl:grid-cols-2">
         <section className="card p-6">
           <div className="flex items-center justify-between gap-3">
             <div>
@@ -477,7 +581,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           </div>
           <div className="mt-5 space-y-3">
             {assignment.documents.map((document) => (
-              <article className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4" key={document.id}>
+              <article className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4" data-testid="document-item" key={document.id}>
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-slate-950">{document.filename}</p>
                   <p className="mt-1 text-xs text-slate-500">{formatFileSize(document.size)} · {document.mime_type}</p>
@@ -488,12 +592,18 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
                 </div>
               </article>
             ))}
+            {assignment.documents.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+                No documents attached yet.
+              </p>
+            ) : null}
           </div>
           <label className="btn-secondary mt-5 w-full">
             {pending === "document" ? "Uploading…" : "Upload document"}
             <input
-              accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.png,.jpg,.jpeg,.gif"
+              accept=".pdf,.txt,.docx,.md,.zip,.png,.jpg,.jpeg"
               className="sr-only"
+              data-testid="document-upload"
               disabled={pending !== null}
               onChange={(event) => void uploadDocument(event)}
               type="file"

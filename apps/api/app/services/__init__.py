@@ -1,3 +1,4 @@
-from app.services.events import DomainEvent, assignment_created_event, record_audit
+from app.services.events import record_audit
+from app.services.notifications import create_notification
 
-__all__ = ["DomainEvent", "assignment_created_event", "record_audit"]
+__all__ = ["create_notification", "record_audit"]

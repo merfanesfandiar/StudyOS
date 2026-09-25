@@ -121,12 +121,93 @@ async def seed() -> None:
         session.add(assignment)
         await session.flush()
 
+        coursework = Assignment(
+            workspace_id=workspace.id,
+            course_id=data_structures.id,
+            title="Graph traversal report",
+            description=(
+                "Compare breadth-first and depth-first search on the same dataset and "
+                "report the results."
+            ),
+            deadline=datetime.now(UTC) + timedelta(days=5),
+            status=AssignmentStatus.ACTIVE.value,
+            requirements=[
+                AssignmentRequirement(
+                    title="Documented results",
+                    description="Include input sizes, run times, and a short comparison.",
+                    priority=RequirementPriority.HIGH.value,
+                    type=RequirementType.DOCUMENTATION.value,
+                ),
+                AssignmentRequirement(
+                    title="Reproducible script",
+                    description="One command regenerates every measurement in the report.",
+                    priority=RequirementPriority.MEDIUM.value,
+                    type=RequirementType.TECHNICAL.value,
+                ),
+            ],
+            constraints=[
+                AssignmentConstraint(
+                    title="Dataset",
+                    description="Use the provided graph dataset without modification.",
+                    value="graphs-v2.csv",
+                ),
+            ],
+            criteria=[
+                EvaluationCriterion(
+                    title="Correctness",
+                    description="Traversals visit every reachable node exactly once.",
+                    weight=Decimal("50.00"),
+                ),
+                EvaluationCriterion(
+                    title="Analysis quality",
+                    description="The comparison explains when each traversal is preferable.",
+                    weight=Decimal("50.00"),
+                ),
+            ],
+        )
+        reflection = Assignment(
+            workspace_id=workspace.id,
+            course_id=programming.id,
+            title="Refactoring retrospective",
+            description=(
+                "Summarize the refactoring work from the strategy game and note what you "
+                "would change."
+            ),
+            deadline=datetime.now(UTC) - timedelta(days=2),
+            status=AssignmentStatus.DRAFT.value,
+            requirements=[
+                AssignmentRequirement(
+                    title="Written reflection",
+                    description=(
+                        "Describe one change that improved the design and one that did not."
+                    ),
+                    priority=RequirementPriority.MEDIUM.value,
+                    type=RequirementType.DOCUMENTATION.value,
+                ),
+            ],
+            constraints=[
+                AssignmentConstraint(
+                    title="Length",
+                    description="At most 500 words.",
+                    value="500 words",
+                ),
+            ],
+            criteria=[
+                EvaluationCriterion(
+                    title="Clarity",
+                    description="The reasoning is specific to this project, not generic advice.",
+                    weight=Decimal("100.00"),
+                ),
+            ],
+        )
+        session.add_all([coursework, reflection])
+
         session.add(
             Notification(
                 user_id=user.id,
                 type=NotificationType.INFO.value,
                 title="Welcome to StudyOS",
-                message="Your demo workspace is ready. Review the seeded assignment brief.",
+                message="Your demo workspace is ready with two courses and three assignments.",
             )
         )
         await session.commit()

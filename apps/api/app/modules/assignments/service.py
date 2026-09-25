@@ -65,7 +65,7 @@ def assignment_summary(assignment: Assignment) -> AssignmentSummary:
 
 
 def validate_assignment_state(assignment: Assignment) -> None:
-    if assignment.status == AssignmentStatus.DRAFT.value:
+    if assignment.status != AssignmentStatus.ACTIVE.value:
         return
     if assignment.deadline is None:
         raise AppError(

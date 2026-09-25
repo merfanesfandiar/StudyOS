@@ -12,6 +12,7 @@
 ```text
 apps/api    FastAPI service, Alembic migrations, pytest suite, seed script
 apps/web    Next.js app, Vitest tests, Playwright specs
+docs/       architecture (overview, ADRs, future AI), api reference, development guides
 ```
 
 ## Backend
@@ -36,6 +37,15 @@ Run PostgreSQL and apply migrations:
 docker compose up -d db
 alembic upgrade head
 ```
+
+Without a database server, the same migrations can build a local SQLite schema:
+
+```bash
+DATABASE_URL="sqlite+aiosqlite:///./studyos.db" alembic upgrade head
+```
+
+Migrations are always the schema source of truth; `create_all()` is never used. See
+[0005-local-development-database.md](../architecture/decisions/0005-local-development-database.md).
 
 Seed optional demo data:
 
@@ -83,8 +93,10 @@ ruff check app tests alembic
 mypy app
 ```
 
-The pytest suite runs against in-memory SQLite for speed. PostgreSQL-specific behavior is covered by
-the migration check in CI and by running the stack with Compose.
+The pytest suite runs against in-memory SQLite for speed. `tests/test_migrations.py` separately
+applies the real Alembic history to an empty database and compares it with the models, so migration
+drift fails the suite. PostgreSQL-specific behavior is covered by the migration check in CI and by
+running the stack with Compose.
 
 Frontend:
 
@@ -98,8 +110,14 @@ npm run build
 
 ### End-to-end tests
 
-The Playwright spec drives one full path: register, create a course, create an assignment, add a
-requirement, add criteria totalling 100%, and finalize.
+The Playwright specs drive two paths:
+
+1. The full student journey: register, create a course, create an assignment, add a requirement, a
+   constraint, weighted criteria, upload a PDF, download it, read the review summary, delete the
+   document, re-upload it, edit the details, finalize, confirm the assignment in the dashboard's
+   upcoming deadlines, then mark it complete and confirm the completion percentage.
+2. Tenant isolation: a second student signs up in a separate browser context, is refused the first
+   student's assignment, and sees empty course and assignment lists.
 
 ```bash
 cd apps/web

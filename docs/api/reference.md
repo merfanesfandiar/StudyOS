@@ -1,7 +1,8 @@
 # API reference
 
 Base URL: `http://localhost:8000/api/v1`. The interactive OpenAPI UI is at `/docs` and the raw schema at
-`/openapi.json`.
+`/openapi.json`. **OpenAPI is the primary reference**; this page is the readable summary and does not
+reproduce every field.
 
 All timestamps are ISO 8601 UTC strings. All IDs are UUIDs.
 
@@ -51,6 +52,22 @@ Course codes are unique per workspace. Deleting a course that still has assignme
 `criteria_total` is returned as a number and is recalculated on every read after a criteria change.
 Finalize returns 422 with `DEADLINE_REQUIRED` or `CRITERIA_TOTAL_INVALID` when the assignment is not
 ready.
+
+### Status and lifecycle
+
+`status` is a closed enum, never a free string: `DRAFT`, `ACTIVE`, `COMPLETED`, `ARCHIVED`.
+
+| From        | To                | How                                                   |
+| ----------- | ----------------- | ----------------------------------------------------- |
+| `DRAFT`     | `ACTIVE`          | `POST /assignments/{id}/finalize`                      |
+| any         | any other value   | `PATCH /assignments/{id}` with the new `status`        |
+
+Finalization requires a deadline and criteria totalling exactly 100. Those rules apply whenever an
+assignment becomes or stays `ACTIVE`; a `DRAFT` may be saved with any subset of its specification,
+which is what makes incremental planning possible. `COMPLETED` and `ARCHIVED` are terminal states a
+student sets on finished or abandoned work and are not subject to the readiness rules, so an
+unfinished draft can still be archived. The dashboard's completion percentage counts `COMPLETED`
+assignments, so a student has to mark an assignment complete explicitly.
 
 ### Requirements
 

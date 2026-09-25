@@ -60,7 +60,7 @@ docker compose down -v
 
 ## Local development
 
-See [docs/development.md](docs/development.md) for the full walkthrough. The short version:
+See [docs/development/setup.md](docs/development/setup.md) for the full walkthrough. The short version:
 
 ```bash
 # API
@@ -78,13 +78,33 @@ npm run dev
 ```
 
 PostgreSQL must be reachable. Either run `docker compose up -d db` or point `DATABASE_URL` at your own
-instance.
+instance. To work without a database server, set `DATABASE_URL=sqlite+aiosqlite:///./studyos.db` and run
+`alembic upgrade head` as shown; the same migrations build the SQLite schema.
+
+> Local hostnames must match. Serve the web app and call the API through the same host
+> (`localhost` or `127.0.0.1`). Cookies are scoped by host and ignore ports, so mixing them produces
+> a session that logs in and immediately returns 401.
+
+## Database
+
+PostgreSQL is the database. The schema is owned by Alembic; nothing calls `create_all()`.
+
+```bash
+cd apps/api
+alembic upgrade head                       # apply migrations
+alembic revision --autogenerate -m "..."   # create a migration after changing models
+alembic downgrade -1                       # roll back one revision
+```
+
+`tests/test_migrations.py` applies the migration history to an empty database and asserts that the
+result matches the SQLAlchemy models and can be rolled back, so a model change without a migration
+fails CI.
 
 ## Quality gates
 
 | Command                        | What it checks                     |
 | ------------------------------ | ---------------------------------- |
-| `pytest` (in `apps/api`)       | API behaviour and serialization    |
+| `pytest` (in `apps/api`)       | API behaviour, authorization, schema drift |
 | `ruff check` / `mypy`          | API lint and strict type checking  |
 | `npm test` (in `apps/web`)     | Frontend unit and component tests  |
 | `npm run lint` / `typecheck`   | Frontend lint and TypeScript       |
@@ -92,7 +112,7 @@ instance.
 | `npm run test:e2e`             | Playwright critical user flow      |
 
 `npm run test:e2e` expects the API and web app to be reachable, or it starts the web app itself. See
-[docs/development.md](docs/development.md#end-to-end-tests).
+[docs/development/setup.md](docs/development/setup.md#end-to-end-tests).
 
 ## Project layout
 
@@ -100,7 +120,10 @@ instance.
 apps/
   api/            FastAPI application, Alembic migrations, tests, seed script
   web/            Next.js application, Vitest unit tests, Playwright specs
-docs/             Architecture, API reference, development guides
+docs/
+  architecture/   Overview, data model, ADRs, future AI design
+  api/            Endpoint reference
+  development/    Local setup, testing, conventions
 infrastructure/   Dockerfiles and container entrypoints
 docker-compose.yml
 ```
@@ -126,12 +149,34 @@ Copy `.env.example` to `.env`. Every value has a working default for local devel
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [API reference](docs/api.md)
-- [Development guide](docs/development.md)
+- [Architecture overview and data model](docs/architecture/overview.md)
+- [Architecture decisions](docs/architecture/decisions/)
+- [Future AI layer design](docs/architecture/future-ai.md)
+- [API reference](docs/api/reference.md)
+- [Development guide](docs/development/setup.md)
 
-## Phase 1 scope
+## Current phase
 
-Deliberately excluded for now: real-time collaboration, notifications by email or push, cloud object
-storage, background jobs, caching layers, and any AI features. The storage service and module layout
-are designed so those can be added without reshaping the domain.
+This repository implements **Phase 1 only**: the foundation. A student can register, sign in, create a
+course, create an assignment, specify a deadline, requirements, constraints and weighted evaluation
+criteria, attach documents, review the specification, and edit or delete it, with ownership enforced
+on the server for every resource.
+
+Not implemented in Phase 1, by design: LLM calls, agents, planning, code generation or execution, RAG
+and vector storage, mastery mode, presentation generation, payment, social features, and
+collaboration between students. See
+[docs/architecture/future-ai.md](docs/architecture/future-ai.md) for how that layer is meant to attach
+to the current domain.
+
+## Future roadmap
+
+- **Phase 2, analysis and planning.** An analyzer agent reads a finalized assignment specification
+  and produces a plan that stops for human approval. Introduces `ai_runs`, an orchestrator state
+  machine, and approval notifications. Additive only: no Phase 1 write path changes.
+- **Phase 3, execution with checkpoints.** Executors run approved steps, pausing at checkpoints, with
+  every step recorded as an audit event and every artifact written through `StorageService`.
+- **Phase 4, verification and learning.** Artifacts are evaluated against the existing
+  `EvaluationCriterion` weights, then surfaced for study and presentation preparation.
+
+Collaboration, multiple workspaces per user, and object storage remain out of scope; the seams for
+each are recorded in the architecture decisions.

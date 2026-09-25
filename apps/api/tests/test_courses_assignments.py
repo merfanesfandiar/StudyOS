@@ -123,3 +123,60 @@ async def test_criteria_total_is_checked_at_finalization(client: AsyncClient) ->
     response = await client.post(f"/api/v1/assignments/{assignment['id']}/finalize")
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "CRITERIA_TOTAL_INVALID"
+
+
+@pytest.mark.asyncio
+async def test_finalizing_creates_a_notification(client: AsyncClient) -> None:
+    await register_user(client)
+    course = await create_course(client)
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={
+                "course_id": course["id"],
+                "title": "Notified assignment",
+                "deadline": (datetime.now(UTC) + timedelta(days=2)).isoformat(),
+            },
+        )
+    ).json()
+    await client.post(
+        f"/api/v1/assignments/{assignment['id']}/criteria",
+        json={"title": "Everything", "weight": "100"},
+    )
+    finalized = await client.post(f"/api/v1/assignments/{assignment['id']}/finalize")
+    assert finalized.status_code == 200, finalized.text
+    assert finalized.json()["status"] == "ACTIVE"
+
+    notifications = (await client.get("/api/v1/notifications")).json()
+    titles = [item["title"] for item in notifications]
+    assert "Assignment finalized" in titles
+
+    notification = next(item for item in notifications if item["title"] == "Assignment finalized")
+    assert notification["read_at"] is None
+    assert "Notified assignment" in notification["message"]
+
+    read = await client.post(f"/api/v1/notifications/{notification['id']}/read")
+    assert read.status_code == 200
+    assert read.json()["read_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_status_can_be_marked_complete(client: AsyncClient) -> None:
+    await register_user(client)
+    course = await create_course(client)
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={"course_id": course["id"], "title": "Finished assignment"},
+        )
+    ).json()
+    updated = await client.patch(
+        f"/api/v1/assignments/{assignment['id']}", json={"status": "COMPLETED"}
+    )
+    assert updated.status_code == 200
+    assert updated.json()["status"] == "COMPLETED"
+
+    dashboard = (await client.get("/api/v1/dashboard")).json()
+    assert dashboard["completed_assignments_count"] == 1
+    assert dashboard["completion_percentage"] == 100
+    assert dashboard["upcoming_assignments"] == []

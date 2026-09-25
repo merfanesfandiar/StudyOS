@@ -14,24 +14,120 @@ apps/api/app
   schemas/      Pydantic request and response contracts
   modules/      auth, courses, assignments, documents, dashboard, notifications
   storage/      StorageService abstraction and local implementation
+  services/     cross-module helpers (audit, file validation, events)
   scripts/      operational scripts such as the demo seed
 ```
 
+Deviations from the originally suggested layout, and why, are recorded in
+[decisions/0004-repository-layout.md](decisions/0004-repository-layout.md).
+
 ## Domain model
 
-```text
-User ──< WorkspaceMember >── Workspace ──< Course
-  │                                 │            │
-  │                                 └──< Assignment ──< AssignmentRequirement
-  │                                                  ├──< AssignmentConstraint
-  │                                                  ├──< EvaluationCriterion
-  │                                                  └──< Document
-  ├──< Notification
-  └──< AuditLog
+```mermaid
+erDiagram
+    User ||--o{ WorkspaceMember : "joins"
+    User ||--o{ Workspace : owns
+    Workspace ||--o{ WorkspaceMember : has
+    Workspace ||--o{ Course : contains
+    Workspace ||--o{ Assignment : contains
+    User ||--o{ Notification : receives
+    User ||--o{ AuditLog : acts
+    Course ||--o{ Assignment : "has (RESTRICT on delete)"
+    Assignment ||--o{ AssignmentRequirement : "has (CASCADE)"
+    Assignment ||--o{ AssignmentConstraint : "has (CASCADE)"
+    Assignment ||--o{ EvaluationCriterion : "has (CASCADE)"
+    Assignment ||--o{ Document : "has (CASCADE)"
+
+    User {
+        uuid id PK
+        string name
+        string email UK
+        string password_hash
+        timestamptz created_at
+        timestamptz updated_at
+    }
+    Workspace {
+        uuid id PK
+        string name
+        uuid owner_id FK
+    }
+    WorkspaceMember {
+        uuid workspace_id PK,FK
+        uuid user_id PK,FK
+        string role
+    }
+    Course {
+        uuid id PK
+        uuid workspace_id FK
+        string name
+        string code
+        text description
+    }
+    Assignment {
+        uuid id PK
+        uuid workspace_id FK
+        uuid course_id FK
+        string title
+        text description
+        timestamptz deadline
+        string status
+    }
+    AssignmentRequirement {
+        uuid id PK
+        uuid assignment_id FK
+        string title
+        string priority
+        string type
+    }
+    AssignmentConstraint {
+        uuid id PK
+        uuid assignment_id FK
+        string title
+        text description
+        string value
+    }
+    EvaluationCriterion {
+        uuid id PK
+        uuid assignment_id FK
+        string title
+        numeric weight
+    }
+    Document {
+        uuid id PK
+        uuid assignment_id FK
+        string filename
+        string storage_key UK
+        string mime_type
+        integer size
+    }
+    Notification {
+        uuid id PK
+        uuid user_id FK
+        string type
+        string title
+        text message
+        timestamptz read_at
+        timestamptz created_at
+    }
+    AuditLog {
+        uuid id PK
+        uuid user_id FK
+        uuid workspace_id FK
+        string event_type
+        string entity_type
+        uuid entity_id
+        json metadata_json
+        timestamptz created_at
+    }
 ```
 
 Every course, assignment, and document belongs to a workspace. Nested records (requirements,
 constraints, criteria, documents) inherit tenancy from their assignment.
+
+Deletion behaviour is deliberate and asymmetric: nested specification records cascade with their
+assignment, but a course with assignments is rejected (`RESTRICT`) rather than silently taking the
+student's work with it. Audit rows are detached, not deleted, when their user or workspace is
+removed.
 
 ## Tenancy enforcement
 
@@ -50,7 +146,9 @@ account is immediately usable.
 - Criterion weights are stored as `NUMERIC(5,2)` and summed server side. The API serializes
   `criteria_total` as a JSON number.
 - Finalizing an assignment requires a deadline and criteria totalling exactly 100. Anything else
-  returns a structured 422 (`DEADLINE_REQUIRED`, `CRITERIA_TOTAL_INVALID`).
+  returns a structured 422 (`DEADLINE_REQUIRED`, `CRITERIA_TOTAL_INVALID`). The rule guards the
+  `ACTIVE` state specifically, so drafts stay freely editable and unfinished work can still be
+  archived.
 - Deleting a course that still has assignments is rejected rather than cascading.
 - Timestamps are stored as timezone-aware UTC. The frontend converts to and from `datetime-local`
   strings so students always see their own local time.
@@ -108,3 +206,20 @@ browser ──> web (Next.js, port 3000) ──> api (FastAPI, port 8000) ──
 Compose orders startup with health checks: the API waits for PostgreSQL, the web app waits for the
 API, and the API runs `alembic upgrade head` before serving. Data lives in two named volumes, so
 `docker compose down` preserves state and `docker compose down -v` resets it.
+
+## Future phases
+
+Phase 1 deliberately contains no AI code. The seams that later phases plug into are already in place:
+domain modules own their write paths, `services/audit.py` records state changes, `StorageService`
+isolates file IO, and `Notification` plus `AuditEventType` define the vocabulary a future engine can
+publish. How that engine is expected to attach is described in [future-ai.md](future-ai.md).
+
+## Decisions
+
+Architecture decision records live next to this file:
+
+- [0001 Cookie-based session authentication](decisions/0001-cookie-session-auth.md)
+- [0002 Storage service abstraction](decisions/0002-storage-abstraction.md)
+- [0003 Workspace tenancy and ownership checks](decisions/0003-workspace-tenancy.md)
+- [0004 Repository layout](decisions/0004-repository-layout.md)
+- [0005 Local development database](decisions/0005-local-development-database.md)

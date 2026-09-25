@@ -21,6 +21,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             return response
         finally:
             duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            user_id = getattr(request.state, "user_id", None)
             logger.info(
                 "request_completed",
                 extra={
@@ -29,6 +30,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     "path": request.url.path,
                     "status_code": status_code,
                     "duration_ms": duration_ms,
+                    **({"user_id": user_id} if user_id else {}),
                 },
             )
             request_id_context.reset(token)

@@ -1,12 +1,22 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.common import APIModel
 
 
 class CourseCreate(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "Advanced Programming",
+                "code": "AP140",
+                "description": "Object-oriented design, testing, and maintainable Java.",
+            }
+        }
+    )
+
     name: str = Field(min_length=1, max_length=160)
     code: str = Field(min_length=1, max_length=32)
     description: str | None = Field(default=None, max_length=5000)

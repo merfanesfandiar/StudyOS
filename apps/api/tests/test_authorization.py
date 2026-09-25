@@ -53,3 +53,25 @@ async def test_user_cannot_delete_another_users_document(client: AsyncClient) ->
     await register_user(client, "other2@example.com")
     response = await client.delete(f"/api/v1/documents/{document_id}")
     assert response.status_code == 404
+    assert (await client.get(f"/api/v1/documents/{document_id}/download")).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_requests_cannot_reach_private_endpoints(client: AsyncClient) -> None:
+    _, assignment = await setup_assignment(client, "owner3@example.com")
+    await client.post("/api/v1/auth/logout")
+
+    for method, path in [
+        ("get", "/api/v1/auth/me"),
+        ("get", "/api/v1/courses"),
+        ("post", "/api/v1/courses"),
+        ("get", "/api/v1/assignments"),
+        ("get", f"/api/v1/assignments/{assignment['id']}"),
+        ("delete", f"/api/v1/assignments/{assignment['id']}"),
+        ("get", f"/api/v1/assignments/{assignment['id']}/requirements"),
+        ("get", f"/api/v1/assignments/{assignment['id']}/documents"),
+        ("get", "/api/v1/dashboard"),
+        ("get", "/api/v1/notifications"),
+    ]:
+        response = await getattr(client, method)(path)
+        assert response.status_code == 401, f"{method.upper()} {path} -> {response.status_code}"

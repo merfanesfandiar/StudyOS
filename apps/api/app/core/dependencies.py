@@ -32,6 +32,7 @@ async def get_current_user(
     user = await db.get(User, user_id)
     if user is None:
         raise AppError(401, "INVALID_TOKEN", "The authentication token is invalid.")
+    request.state.user_id = str(user.id)
     return user
 
 

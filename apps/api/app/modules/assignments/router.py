@@ -17,7 +17,7 @@ from app.models import (
     User,
     Workspace,
 )
-from app.models.enums import AssignmentStatus, AuditEventType
+from app.models.enums import AssignmentStatus, AuditEventType, NotificationType
 from app.modules.assignments.service import (
     assignment_response,
     get_course_in_workspace,
@@ -39,6 +39,7 @@ from app.schemas.assignments import (
     RequirementUpdate,
 )
 from app.services.events import record_audit
+from app.services.notifications import create_notification
 from app.storage import get_storage
 
 router = APIRouter(prefix="/api/v1/assignments", tags=["Assignments"])
@@ -163,6 +164,13 @@ async def finalize_assignment(
         entity_type="Assignment",
         entity_id=assignment.id,
         metadata={"finalized": True},
+    )
+    await create_notification(
+        db,
+        user_id=user.id,
+        notification_type=NotificationType.SYSTEM,
+        title="Assignment finalized",
+        message=f"{assignment.title} is now active and ready to plan.",
     )
     await db.commit()
     return assignment_response(await load_owned_assignment(assignment.id, user.id, db))
