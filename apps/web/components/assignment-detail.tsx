@@ -471,7 +471,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="section-title">Documents</h2>
-              <p className="mt-1 text-sm text-slate-500">PDF, DOCX, XLSX, PPTX, TXT, and images up to 10 MB.</p>
+              <p className="mt-1 text-sm text-slate-500">PDF, DOCX, MD, TXT, ZIP, and images up to 10 MB.</p>
             </div>
             <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">{assignment.documents.length}</span>
           </div>
