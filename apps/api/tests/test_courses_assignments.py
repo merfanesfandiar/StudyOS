@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from httpx import AsyncClient
@@ -119,7 +120,7 @@ async def test_assignment_crud_and_nested_specification(client: AsyncClient) -> 
     ready = await client.post(f"/api/v1/assignments/{assignment['id']}/readiness/mark-ready")
     assert ready.status_code == 200, ready.text
     assert ready.json()["status"] == "READY_FOR_ANALYSIS"
-    assert ready.json()["criteria_total"] == 100
+    assert Decimal(ready.json()["criteria_total"]) == Decimal("100.00")
     assert ready.json()["ready_for_analysis_at"] is not None
 
     detail = await client.get(f"/api/v1/assignments/{assignment['id']}")

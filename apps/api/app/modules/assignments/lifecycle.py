@@ -111,6 +111,29 @@ AI_OWNED_STATES: frozenset[AssignmentStatus] = frozenset(
 )
 
 
+#: Which stored states answer to each readiness filter value. ``DRAFT`` and
+#: ``INCOMPLETE`` are both "not ready yet", and the legacy ``ACTIVE`` state
+#: answers to ``READY_FOR_ANALYSIS`` so historical rows stay findable.
+READINESS_STATUS_GROUPS: dict[AssignmentStatus, frozenset[str]] = {
+    AssignmentStatus.DRAFT: frozenset({AssignmentStatus.DRAFT.value}),
+    AssignmentStatus.INCOMPLETE: frozenset(
+        {AssignmentStatus.DRAFT.value, AssignmentStatus.INCOMPLETE.value}
+    ),
+    AssignmentStatus.READY_FOR_ANALYSIS: frozenset(
+        {
+            AssignmentStatus.READY_FOR_ANALYSIS.value,
+            AssignmentStatus.ACTIVE.value,
+        }
+    ),
+    AssignmentStatus.ANALYSIS_IN_PROGRESS: frozenset(
+        {AssignmentStatus.ANALYSIS_IN_PROGRESS.value}
+    ),
+    AssignmentStatus.ANALYZED: frozenset({AssignmentStatus.ANALYZED.value}),
+    AssignmentStatus.COMPLETED: frozenset({AssignmentStatus.COMPLETED.value}),
+    AssignmentStatus.ARCHIVED: frozenset({AssignmentStatus.ARCHIVED.value}),
+}
+
+
 def ensure_client_settable(target: AssignmentStatus) -> None:
     if target not in CLIENT_SETTABLE:
         raise AppError(

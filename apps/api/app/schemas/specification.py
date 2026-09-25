@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import AssignmentStatus, CompletenessCheckStatus, RequirementStatus
 from app.schemas.assignments import (
@@ -79,10 +79,6 @@ class SpecificationSummary(BaseModel):
     readiness_score: int
     specification_version: int
 
-    @field_serializer("criteria_total")
-    def serialize_criteria_total(self, value: Decimal) -> float:
-        return float(value)
-
 
 class AssignmentSpecificationResponse(BaseModel):
     """The complete structured specification of one assignment."""
@@ -105,10 +101,6 @@ class AssignmentSpecificationResponse(BaseModel):
     summary: SpecificationSummary
     specification_version: int
     updated_at: datetime
-
-    @field_serializer("criteria_total")
-    def serialize_criteria_total(self, value: Decimal) -> float:
-        return float(value)
 
 
 class ValidationResponse(BaseModel):
@@ -165,6 +157,7 @@ class ActivityEvent(BaseModel):
     event_type: str
     entity_type: str
     entity_id: UUID | None
+    change_summary: str | None = None
     metadata: dict[str, Any]
     created_at: datetime
 

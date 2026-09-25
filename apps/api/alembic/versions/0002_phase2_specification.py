@@ -68,6 +68,22 @@ def _backfill_position_columns() -> None:
     connection.execute(
         sa.text("UPDATE assignments SET readiness_score = 0 WHERE readiness_score IS NULL")
     )
+    # Requirements keep their numbers across the migration, and the high-water
+    # mark must start above the highest one so no number is ever handed out
+    # twice after the upgrade.
+    connection.execute(
+        sa.text("UPDATE assignments SET requirement_sequence = 0 WHERE requirement_sequence IS NULL")
+    )
+    connection.execute(
+        sa.text(
+            "UPDATE assignments SET requirement_sequence = COALESCE("
+            "(SELECT MAX(sequence) FROM assignment_requirements"
+            " WHERE assignment_requirements.assignment_id = assignments.id), 0)"
+            " WHERE requirement_sequence < COALESCE("
+            "(SELECT MAX(sequence) FROM assignment_requirements"
+            " WHERE assignment_requirements.assignment_id = assignments.id), 0)"
+        )
+    )
 
 
 def upgrade() -> None:
@@ -214,6 +230,7 @@ def upgrade() -> None:
         batch.add_column(
             sa.Column("ready_for_analysis_at", sa.DateTime(timezone=True), nullable=True)
         )
+        batch.add_column(sa.Column("requirement_sequence", sa.Integer(), nullable=True))
 
     with op.batch_alter_table("assignment_requirements") as batch:
         batch.add_column(sa.Column("sequence", sa.Integer(), nullable=True))
@@ -261,6 +278,7 @@ def upgrade() -> None:
 
     with op.batch_alter_table("assignments") as batch:
         batch.alter_column("readiness_score", existing_type=sa.Integer(), nullable=False)
+        batch.alter_column("requirement_sequence", existing_type=sa.Integer(), nullable=False)
 
     op.create_index("ix_assignment_constraints_position", "assignment_constraints", ["position"])
     op.create_index("ix_evaluation_criteria_position", "evaluation_criteria", ["position"])
@@ -305,6 +323,8 @@ def downgrade() -> None:
     with op.batch_alter_table("assignments") as batch:
         batch.alter_column("readiness_score", existing_type=sa.Integer(), nullable=True)
         batch.drop_column("readiness_score")
+        batch.alter_column("requirement_sequence", existing_type=sa.Integer(), nullable=True)
+        batch.drop_column("requirement_sequence")
         batch.drop_column("ready_for_analysis_at")
         batch.alter_column("status", existing_type=sa.String(length=30), type_=sa.String(length=20))
 

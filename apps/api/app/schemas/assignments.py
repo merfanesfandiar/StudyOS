@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_serializer, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.models.enums import (
     AssignmentStatus,
@@ -37,6 +37,15 @@ CLIENT_SETTABLE_STATUSES: frozenset[AssignmentStatus] = frozenset(
         AssignmentStatus.COMPLETED,
         AssignmentStatus.ARCHIVED,
     }
+)
+
+
+_STATUS_DESCRIPTION = (
+    "A client may only set "
+    + ", ".join(sorted(item.value for item in CLIENT_SETTABLE_STATUSES))
+    + ". READY_FOR_ANALYSIS is reached through the readiness gate, and the analysis"
+    " states are reserved for the future AI layer. Anything else is rejected with"
+    " STATUS_NOT_CLIENT_SETTABLE."
 )
 
 
@@ -157,10 +166,6 @@ class CriterionResponse(APIModel):
     created_at: datetime
     updated_at: datetime
 
-    @field_serializer("weight")
-    def serialize_weight(self, value: Decimal) -> float:
-        return float(value)
-
 
 class DeliverableCreate(APIModel):
     title: str = Field(min_length=1, max_length=240)
@@ -224,21 +229,15 @@ class AssignmentCreate(APIModel):
     title: str = Field(min_length=1, max_length=240)
     description: str | None = Field(default=None, max_length=20000)
     deadline: datetime | None = None
-    status: AssignmentStatus = AssignmentStatus.DRAFT
+    status: AssignmentStatus = Field(
+        default=AssignmentStatus.DRAFT,
+        description=_STATUS_DESCRIPTION,
+    )
 
     @field_validator("deadline")
     @classmethod
     def validate_deadline(cls, value: datetime | None) -> datetime | None:
         return ensure_utc(value)
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, value: AssignmentStatus) -> AssignmentStatus:
-        if value not in CLIENT_SETTABLE_STATUSES:
-            raise ValueError(
-                f"{value} cannot be set directly; use the readiness endpoints instead."
-            )
-        return value
 
 
 class AssignmentUpdate(BaseModel):
@@ -246,21 +245,12 @@ class AssignmentUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=240)
     description: str | None = Field(default=None, max_length=20000)
     deadline: datetime | None = None
-    status: AssignmentStatus | None = None
+    status: AssignmentStatus | None = Field(default=None, description=_STATUS_DESCRIPTION)
 
     @field_validator("deadline")
     @classmethod
     def validate_deadline(cls, value: datetime | None) -> datetime | None:
         return ensure_utc(value)
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, value: AssignmentStatus | None) -> AssignmentStatus | None:
-        if value is not None and value not in CLIENT_SETTABLE_STATUSES:
-            raise ValueError(
-                f"{value} cannot be set directly; use the readiness endpoints instead."
-            )
-        return value
 
 
 class AssignmentSummary(APIModel):
@@ -283,10 +273,6 @@ class AssignmentListItem(AssignmentSummary):
     deadline_state: str
     updated_at: datetime
 
-    @field_serializer("criteria_total")
-    def serialize_criteria_total(self, value: Decimal) -> float:
-        return float(value)
-
 
 class AssignmentResponse(AssignmentSummary):
     workspace_id: UUID
@@ -303,10 +289,6 @@ class AssignmentResponse(AssignmentSummary):
     tags: list[TagResponse] = Field(default_factory=list)
     documents: list[DocumentResponse] = Field(default_factory=list)
     criteria_total: Decimal = Decimal("0.00")
-
-    @field_serializer("criteria_total")
-    def serialize_criteria_total(self, value: Decimal) -> float:
-        return float(value)
 
 
 class AssignmentListParams(PageParams):

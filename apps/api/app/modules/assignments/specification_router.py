@@ -204,6 +204,7 @@ async def activity_feed(
                 event_type=item.event_type,
                 entity_type=item.entity_type,
                 entity_id=item.entity_id,
+                change_summary=(item.metadata_json or {}).get("change_summary"),
                 metadata=item.metadata_json or {},
                 created_at=item.created_at,
             )

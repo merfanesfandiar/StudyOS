@@ -214,8 +214,8 @@ async def delete_requirement(
         for item in assignment.requirements
         if any(dependency.depends_on_id == requirement.id for dependency in item.dependencies)
     ]
+    # delete-orphan cascade: dropping it from the collection deletes the row.
     assignment.requirements.remove(requirement)
-    await db.delete(requirement)
     await record_specification_change(
         db,
         assignment=assignment,
@@ -310,7 +310,7 @@ async def delete_dependency(
     codes = code_index(assignment)
     summary = f"{codes[requirement.id]} no longer depends on {codes[dependency.depends_on_id]}"
     removed_code = codes[dependency.depends_on_id]
-    await db.delete(dependency)
+    requirement.dependencies.remove(dependency)
     await db.flush()
     # Reload so the readiness report is computed without the removed edge.
     assignment.requirements = await load_requirements(assignment.id, db)

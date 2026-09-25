@@ -25,7 +25,7 @@ from app.models import (
     WorkspaceMember,
 )
 from app.models.enums import AssignmentStatus, AuditEventType
-from app.modules.assignments.lifecycle import ensure_transition_allowed
+from app.modules.assignments.lifecycle import READINESS_STATUS_GROUPS, ensure_transition_allowed
 from app.modules.assignments.readiness import (
     analyze_assignment,
     readiness_state,
@@ -172,7 +172,11 @@ def _apply_filters(
     if params.status is not None:
         statement = statement.where(Assignment.status == params.status.value)
     if params.readiness is not None:
-        statement = statement.where(Assignment.status == params.readiness.value)
+        # A readiness filter asks "what state is this in", and DRAFT and
+        # INCOMPLETE are both "not ready yet" from the student's point of view.
+        statement = statement.where(
+            Assignment.status.in_(sorted(READINESS_STATUS_GROUPS[params.readiness]))
+        )
     if params.deadline_before is not None:
         statement = statement.where(
             Assignment.deadline.is_not(None), Assignment.deadline <= params.deadline_before
@@ -302,7 +306,9 @@ async def record_specification_change(
         event_type=event_type,
         entity_type=entity_type,
         entity_id=entity_id,
-        metadata=metadata,
+        # The summary is stored on the audit row so the activity feed reads
+        # like a changelog instead of a list of event codes.
+        metadata={**(metadata or {}), "change_summary": change_summary},
     )
 
     if version:

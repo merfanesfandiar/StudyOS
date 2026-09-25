@@ -89,8 +89,14 @@ def ensure_criteria_total(criteria: Sequence[EvaluationCriterion], *, required: 
     return total
 
 
-def ensure_no_duplicate_titles(titles: Sequence[str], *, entity: str) -> None:
-    """Reject exact duplicates that would make a specification ambiguous."""
+def ensure_no_duplicate_titles(
+    titles: Sequence[str], *, entity: str, code: str | None = None
+) -> None:
+    """Reject duplicates that would make a specification ambiguous.
+
+    Titles are compared case-insensitively and ignoring surrounding whitespace,
+    so "Correctness" and "correctness " are the same criterion.
+    """
     seen: set[str] = set()
     duplicates: set[str] = set()
     for title in titles:
@@ -100,9 +106,9 @@ def ensure_no_duplicate_titles(titles: Sequence[str], *, entity: str) -> None:
         seen.add(key)
     if duplicates:
         raise AppError(
-            422,
-            "DUPLICATE_ENTRY",
-            f"Duplicate {entity} titles are not allowed: "
+            409,
+            code or f"DUPLICATE_{entity.upper()}_TITLE",
+            f"A {entity.lower()} with that title already exists: "
             + ", ".join(sorted(duplicates)),
-            {"duplicates": sorted(duplicates)},
+            {"entity": entity, "duplicates": sorted(duplicates)},
         )

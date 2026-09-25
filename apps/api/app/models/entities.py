@@ -35,6 +35,7 @@ from app.models.enums import (
     TechnologyCategory,
     WorkspaceRole,
 )
+from app.models.identifiers import time_ordered_uuid
 
 
 class TimestampMixin:
@@ -157,6 +158,10 @@ class Assignment(TimestampMixin, Base):
     ready_for_analysis_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    #: Highest requirement number ever handed out. Kept on the row so a deleted
+    #: REQ-004 is never handed to a different requirement, which would make old
+    #: tasks, files and tests point at the wrong thing.
+    requirement_sequence: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     workspace: Mapped[Workspace] = relationship(back_populates="assignments")
     course: Mapped[Course] = relationship(back_populates="assignments")
@@ -539,7 +544,11 @@ class AuditLog(Base):
         Index("ix_audit_logs_assignment_id", "assignment_id"),
     )
 
-    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    # A time-ordered id keeps the assignment activity feed stable: several audit
+    # rows can share one timestamp, and a random uuid would reshuffle the page.
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
     user_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

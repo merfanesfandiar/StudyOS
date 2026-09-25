@@ -226,6 +226,7 @@ def build_dependency_graph(requirements: Sequence[AssignmentRequirement]) -> Dep
     graph = dependency_graph(requirements)
     depths = max_depth(graph)
     codes = {item.id: requirement_code(item.sequence) for item in requirements}
+    rank = {item.id: item.sequence for item in requirements}
     nodes = [
         DependencyNode(
             id=item.id,
@@ -250,7 +251,9 @@ def build_dependency_graph(requirements: Sequence[AssignmentRequirement]) -> Dep
     return DependencyGraph(
         nodes=nodes,
         edges=edges,
-        execution_order=[codes[node] for node in execution_order(graph) if node in codes],
+        execution_order=[
+            codes[node] for node in execution_order(graph, rank) if node in codes
+        ],
         has_cycles=False,
     )
 

@@ -12,7 +12,7 @@ rather than in a router:
 from collections.abc import Iterable, Sequence
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -55,13 +55,19 @@ async def get_requirement(
     return requirement
 
 
-async def next_sequence(assignment_id: UUID, db: AsyncSession) -> int:
-    highest = await db.scalar(
-        select(func.max(AssignmentRequirement.sequence)).where(
-            AssignmentRequirement.assignment_id == assignment_id
-        )
-    )
-    return (highest or 0) + 1
+async def next_sequence(assignment: Assignment, db: AsyncSession) -> int:
+    """Hand out the next requirement number atomically.
+
+    The counter lives on the assignment row and only ever moves forward, so
+    deleting REQ-004 does not hand REQ-004 to the next requirement. The
+    ``UPDATE ... RETURNING`` is the real guard against two concurrent inserts.
+    """
+    return await db.scalar(
+        update(Assignment)
+        .where(Assignment.id == assignment.id)
+        .values(requirement_sequence=Assignment.requirement_sequence + 1)
+        .returning(Assignment.requirement_sequence)
+    ) or 0
 
 
 async def add_requirement(
@@ -83,7 +89,7 @@ async def add_requirement(
     retry loop turns a concurrent insert into the next free number instead of a
     409 for the user.
     """
-    candidate = await next_sequence(assignment.id, db)
+    candidate = await next_sequence(assignment, db)
     for _ in range(SEQUENCE_ATTEMPTS):
         requirement = AssignmentRequirement(
             assignment_id=assignment.id,
@@ -275,8 +281,15 @@ def detect_cycle(graph: dict[UUID, set[UUID]]) -> list[UUID] | None:
     return None
 
 
-def execution_order(graph: dict[UUID, set[UUID]]) -> list[UUID]:
-    """Kahn topological order, so a future planner has a safe starting order."""
+def execution_order(
+    graph: dict[UUID, set[UUID]], rank: dict[UUID, int] | None = None
+) -> list[UUID]:
+    """Kahn topological order, so a future planner has a safe starting order.
+
+    ``rank`` breaks ties between requirements that are equally free to run, so
+    the order follows the numbering the student sees instead of a random id.
+    """
+    order_key = (lambda node: (rank.get(node, 0), str(node))) if rank else (lambda node: str(node))
     indegree = {node: len(dependencies) for node, dependencies in graph.items()}
     dependents: dict[UUID, list[UUID]] = {node: [] for node in graph}
     for node, dependencies in graph.items():
@@ -284,16 +297,16 @@ def execution_order(graph: dict[UUID, set[UUID]]) -> list[UUID]:
             if dependency in dependents:
                 dependents[dependency].append(node)
 
-    ready = sorted(node for node, degree in indegree.items() if degree == 0)
+    ready = sorted((node for node, degree in indegree.items() if degree == 0), key=order_key)
     order: list[UUID] = []
     while ready:
         node = ready.pop(0)
         order.append(node)
-        for dependent in sorted(dependents[node], key=str):
+        for dependent in sorted(dependents[node], key=order_key):
             indegree[dependent] -= 1
             if indegree[dependent] == 0:
                 ready.append(dependent)
-        ready.sort(key=str)
+        ready.sort(key=order_key)
     return order
 
 

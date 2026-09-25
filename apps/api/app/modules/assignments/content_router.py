@@ -110,7 +110,9 @@ async def create_constraint(
 ) -> ConstraintResponse:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
     ensure_no_duplicate_titles(
-        [item.title for item in assignment.constraints] + [payload.title], entity="Constraint"
+        [item.title for item in assignment.constraints] + [payload.title],
+        entity="Constraint",
+        code="DUPLICATE_CONSTRAINT_TITLE",
     )
     constraint = AssignmentConstraint(
         assignment_id=assignment.id,
@@ -214,7 +216,6 @@ async def delete_constraint(
     )
     title = constraint.title
     assignment.constraints.remove(constraint)
-    await db.delete(constraint)
     await record_specification_change(
         db,
         assignment=assignment,
@@ -256,7 +257,9 @@ async def create_criterion(
 ) -> CriterionResponse:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
     ensure_no_duplicate_titles(
-        [item.title for item in assignment.criteria] + [payload.title], entity="Criterion"
+        [item.title for item in assignment.criteria] + [payload.title],
+        entity="Criterion",
+        code="DUPLICATE_CRITERION_TITLE",
     )
     criterion = EvaluationCriterion(
         assignment_id=assignment.id,
@@ -363,7 +366,6 @@ async def delete_criterion(
     )
     title = criterion.title
     assignment.criteria.remove(criterion)
-    await db.delete(criterion)
     await record_specification_change(
         db,
         assignment=assignment,
@@ -403,7 +405,9 @@ async def create_deliverable(
 ) -> DeliverableResponse:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
     ensure_no_duplicate_titles(
-        [item.title for item in assignment.deliverables] + [payload.title], entity="Deliverable"
+        [item.title for item in assignment.deliverables] + [payload.title],
+        entity="Deliverable",
+        code="DUPLICATE_DELIVERABLE_TITLE",
     )
     deliverable = Deliverable(
         assignment_id=assignment.id,
@@ -505,7 +509,6 @@ async def delete_deliverable(
     )
     title = deliverable.title
     assignment.deliverables.remove(deliverable)
-    await db.delete(deliverable)
     await record_specification_change(
         db,
         assignment=assignment,

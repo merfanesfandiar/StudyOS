@@ -32,7 +32,7 @@ from app.modules.assignments.service import (
     record_specification_change,
 )
 from app.modules.assignments.specification import tag_response, technology_response
-from app.modules.assignments.validation import normalize_name
+from app.modules.assignments.validation import normalize_key
 from app.schemas.assignments import (
     TagCreate,
     TagResponse,
@@ -101,7 +101,7 @@ async def add_technology(
     assignment_id: UUID, payload: TechnologyCreate, user: CurrentUser, db: Db
 ) -> TechnologyResponse:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
-    normalized = normalize_name(payload.name)
+    normalized = normalize_key(payload.name)
     version = (payload.version or "").strip()
     technology = await db.scalar(
         select(Technology).where(
@@ -139,6 +139,19 @@ async def add_technology(
                     "TECHNOLOGY_CONFLICT",
                     "That technology is being created by someone else. Please retry.",
                 ) from error
+    existing = await db.scalar(
+        select(AssignmentTechnology.assignment_id).where(
+            AssignmentTechnology.assignment_id == assignment.id,
+            AssignmentTechnology.technology_id == technology.id,
+        )
+    )
+    if existing is not None:
+        raise AppError(
+            409,
+            "TECHNOLOGY_ALREADY_LINKED",
+            f"{technology.name} is already linked to this assignment.",
+            {"technology_id": str(technology.id)},
+        )
     link = AssignmentTechnology(assignment=assignment, technology_id=technology.id)
     db.add(link)
     await record_specification_change(
@@ -178,7 +191,6 @@ async def remove_technology(
     name = link.technology.name
     version = link.technology.version
     assignment.technologies.remove(link)
-    await db.delete(link)
     await record_specification_change(
         db,
         assignment=assignment,
@@ -237,7 +249,7 @@ async def add_tag(
     assignment_id: UUID, payload: TagCreate, user: CurrentUser, db: Db
 ) -> TagResponse:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
-    normalized = normalize_name(payload.name)
+    normalized = normalize_key(payload.name)
     tag = await db.scalar(
         select(Tag).where(
             Tag.workspace_id == assignment.workspace_id,
@@ -268,6 +280,19 @@ async def add_tag(
                     "TAG_CONFLICT",
                     "That tag is being created by someone else. Please retry.",
                 ) from error
+    existing = await db.scalar(
+        select(AssignmentTag.assignment_id).where(
+            AssignmentTag.assignment_id == assignment.id,
+            AssignmentTag.tag_id == tag.id,
+        )
+    )
+    if existing is not None:
+        raise AppError(
+            409,
+            "TAG_ALREADY_LINKED",
+            f"{tag.name} is already linked to this assignment.",
+            {"tag_id": str(tag.id)},
+        )
     link = AssignmentTag(assignment=assignment, tag_id=tag.id)
     db.add(link)
     await record_specification_change(
@@ -301,7 +326,6 @@ async def remove_tag(assignment_id: UUID, tag_id: UUID, user: CurrentUser, db: D
         raise AppError(404, "TAG_NOT_FOUND", "Tag is not attached to this assignment.")
     name = link.tag.name
     assignment.tags.remove(link)
-    await db.delete(link)
     await record_specification_change(
         db,
         assignment=assignment,
