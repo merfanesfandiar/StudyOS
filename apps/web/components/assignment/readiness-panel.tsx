@@ -76,13 +76,13 @@ export function ReadinessPanel({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="section-title">Readiness</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             A weighted checklist of what this specification still needs.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={assignment.status} />
-          <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-700">
+          <span className="rounded-full bg-[var(--color-surface-sunken)] px-2.5 py-1 text-xs font-bold text-[var(--color-ink-muted)]">
             {readiness.score}%
           </span>
         </div>
@@ -90,7 +90,7 @@ export function ReadinessPanel({
 
       <div className="mt-4">
         <ReadinessMeter score={readiness.score} bar={readiness.completeness_bar} />
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-xs text-[var(--color-ink-subtle)]">
           {readiness.is_ready_for_analysis
             ? isReady
               ? "Ready for analysis. Any edit that breaks a blocking check sends it back."
@@ -111,9 +111,9 @@ export function ReadinessPanel({
       ) : null}
 
       {readiness.failing_checks.length ? (
-        <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
-          <p className="text-sm font-bold text-red-900">Blocking</p>
-          <ul className="mt-2 space-y-1 text-sm text-red-800">
+        <div className="mt-4 rounded-xl border border-[var(--color-critical-soft)] bg-[var(--color-critical-soft)] p-4">
+          <p className="text-sm font-bold text-[var(--color-critical)]">Blocking</p>
+          <ul className="mt-2 space-y-1 text-sm text-[var(--color-critical)]">
             {readiness.failing_checks.map((field) => (
               <li key={field}>
                 <span className="font-semibold">{humanize(field)}:</span>{" "}
@@ -129,18 +129,18 @@ export function ReadinessPanel({
           <li className="flex items-start gap-2 text-sm" key={check.field}>
             <CheckDot status={check.status} />
             <span className="min-w-0">
-              <span className="font-semibold text-slate-800">{check.label}</span>{" "}
-              <span className="text-xs text-slate-400">
+              <span className="font-semibold text-[var(--color-ink)]">{check.label}</span>{" "}
+              <span className="text-xs text-[var(--color-ink-subtle)]">
                 {CHECK_LABELS[check.status]} · {check.weight}%
                 {check.blocking ? " · required" : ""}
               </span>
-              <span className="block text-xs leading-5 text-slate-500">{check.message}</span>
+              <span className="block text-xs leading-5 text-[var(--color-ink-subtle)]">{check.message}</span>
             </span>
           </li>
         ))}
       </ul>
 
-      <div className="mt-5 flex flex-wrap gap-2 border-t border-slate-100 pt-5">
+      <div className="mt-5 flex flex-wrap gap-2 border-t border-[var(--color-surface-sunken)] pt-5">
         {isReady ? (
           <button
             className="btn-secondary"
@@ -169,7 +169,7 @@ export function ReadinessPanel({
         >
           {pending === "validate" ? "Validating…" : "Re-check"}
         </button>
-        <span className="self-center text-xs text-slate-500">
+        <span className="self-center text-xs text-[var(--color-ink-subtle)]">
           {summary.requirements_total} requirements · {summary.criteria_count} criteria ·{" "}
           {summary.criteria_balanced ? "weights total 100%" : "weights do not total 100%"}
         </span>

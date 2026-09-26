@@ -64,7 +64,7 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
         description="Start with the course, brief, and deadline. Add requirements and grading criteria next to reach readiness."
         title="New assignment"
       />
-      <Link className="mb-5 inline-block text-sm font-semibold text-indigo-700" href="/assignments">
+      <Link className="mb-5 inline-block text-sm font-semibold text-[var(--color-accent-hover)]" href="/assignments">
         ← Back to assignments
       </Link>
       <div className="card p-6 sm:p-8">
@@ -111,9 +111,9 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
             <label className="field">
               <span>Deadline</span>
               <input name="deadline" type="datetime-local" />
-              <small className="text-slate-500">Times are entered in your local timezone.</small>
+              <small className="text-[var(--color-ink-subtle)]">Times are entered in your local timezone.</small>
             </label>
-            <div className="flex justify-end gap-3 border-t border-slate-100 pt-5">
+            <div className="flex justify-end gap-3 border-t border-[var(--color-surface-sunken)] pt-5">
               <Link className="btn-secondary" href="/assignments">
                 Cancel
               </Link>

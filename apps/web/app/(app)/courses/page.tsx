@@ -71,25 +71,25 @@ export default function CoursesPage() {
             <div className="grid gap-4 md:grid-cols-2">
               {courses.map((course) => (
                 <Link
-                  className="card block p-5 transition hover:border-indigo-200 hover:shadow-md"
+                  className="card block p-5 transition hover:border-[var(--color-accent)] hover:shadow-md"
                   href={`/courses/${course.id}`}
                   key={course.id}
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <span className="rounded-md bg-indigo-50 px-2 py-1 text-xs font-extrabold text-indigo-700">
+                      <span className="rounded-md bg-[var(--color-accent-soft)] px-2 py-1 text-xs font-extrabold text-[var(--color-accent-hover)]">
                         {course.code}
                       </span>
-                      <h2 className="mt-3 text-lg font-bold text-slate-950">{course.name}</h2>
+                      <h2 className="mt-3 text-lg font-bold text-[var(--color-ink)]">{course.name}</h2>
                     </div>
-                    <span className="text-xs font-semibold text-slate-500">
+                    <span className="text-xs font-semibold text-[var(--color-ink-subtle)]">
                       {course.assignment_count} assignments
                     </span>
                   </div>
-                  <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-slate-600">
+                  <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-[var(--color-ink-muted)]">
                     {course.description || "No course description yet."}
                   </p>
-                  <p className="mt-4 text-xs text-slate-400">Created {formatDate(course.created_at)}</p>
+                  <p className="mt-4 text-xs text-[var(--color-ink-subtle)]">Created {formatDate(course.created_at)}</p>
                 </Link>
               ))}
             </div>
@@ -100,7 +100,7 @@ export default function CoursesPage() {
         <aside>
           <div className="card sticky top-24 p-5">
             <h2 className="section-title">Add a course</h2>
-            <p className="mt-1 text-sm text-slate-500">Course codes are unique in your workspace.</p>
+            <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">Course codes are unique in your workspace.</p>
             <form className="mt-5 space-y-4" onSubmit={createCourse}>
               {error ? <Alert>{error}</Alert> : null}
               {success ? <Alert tone="success">{success}</Alert> : null}

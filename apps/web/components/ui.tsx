@@ -20,8 +20,8 @@ export function PageHeader({
   return (
     <div className="mb-7 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-950 sm:text-3xl">{title}</h1>
-        {description ? <p className="mt-2 max-w-2xl text-slate-600">{description}</p> : null}
+        <h1 className="text-2xl font-bold tracking-tight text-[var(--color-ink)] sm:text-3xl">{title}</h1>
+        {description ? <p className="mt-2 max-w-2xl text-[var(--color-ink-muted)]">{description}</p> : null}
       </div>
       {action}
     </div>
@@ -29,15 +29,15 @@ export function PageHeader({
 }
 
 const STATUS_STYLES: Record<AssignmentStatus, string> = {
-  DRAFT: "bg-slate-100 text-slate-700 ring-slate-200",
-  INCOMPLETE: "bg-orange-50 text-orange-800 ring-orange-200",
-  READY_FOR_ANALYSIS: "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  ANALYSIS_IN_PROGRESS: "bg-cyan-50 text-cyan-800 ring-cyan-200",
-  ANALYZED: "bg-teal-50 text-teal-800 ring-teal-200",
-  COMPLETED: "bg-blue-50 text-blue-700 ring-blue-200",
-  ARCHIVED: "bg-amber-50 text-amber-800 ring-amber-200",
+  DRAFT: "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)] ring-[var(--color-line)]",
+  INCOMPLETE: "bg-[var(--color-caution)] text-[var(--color-caution)] ring-[var(--color-caution)]",
+  READY_FOR_ANALYSIS: "bg-[var(--color-positive-soft)] text-[var(--color-positive)] ring-[var(--color-positive)]",
+  ANALYSIS_IN_PROGRESS: "bg-[var(--color-info)] text-[var(--color-info)] ring-[var(--color-info)]",
+  ANALYZED: "bg-[var(--color-positive)] text-[var(--color-positive)] ring-[var(--color-positive)]",
+  COMPLETED: "bg-[var(--color-info-soft)] text-[var(--color-info)] ring-[var(--color-info-soft)]",
+  ARCHIVED: "bg-[var(--color-caution-soft)] text-[var(--color-caution)] ring-[var(--color-caution-soft)]",
   // Rows migrated from the previous phase can still hold this value.
-  ACTIVE: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  ACTIVE: "bg-[var(--color-positive-soft)] text-[var(--color-positive)] ring-[var(--color-positive)]",
 };
 
 export function StatusBadge({ status }: { status: AssignmentStatus }) {
@@ -52,9 +52,9 @@ export function StatusBadge({ status }: { status: AssignmentStatus }) {
 }
 
 const CHECK_STYLES: Record<CheckStatus, string> = {
-  PASS: "bg-emerald-100 text-emerald-800",
-  WARNING: "bg-amber-100 text-amber-900",
-  FAIL: "bg-red-100 text-red-800",
+  PASS: "bg-[var(--color-positive-soft)] text-[var(--color-positive)]",
+  WARNING: "bg-[var(--color-caution-soft)] text-[var(--color-caution)]",
+  FAIL: "bg-[var(--color-critical-soft)] text-[var(--color-critical)]",
 };
 
 export function CheckDot({ status }: { status: CheckStatus }) {
@@ -69,14 +69,14 @@ export function CheckDot({ status }: { status: CheckStatus }) {
 
 export function ReadinessMeter({ score, bar = 90 }: { score: number; bar?: number }) {
   const tone =
-    score >= bar ? "bg-emerald-500" : score >= bar / 2 ? "bg-amber-500" : "bg-red-500";
+    score >= bar ? "bg-[var(--color-positive)]" : score >= bar / 2 ? "bg-[var(--color-caution)]" : "bg-[var(--color-critical)]";
   return (
     <div
       aria-label={`Readiness ${score} percent`}
       aria-valuemax={100}
       aria-valuemin={0}
       aria-valuenow={score}
-      className="h-2 w-full overflow-hidden rounded-full bg-slate-100"
+      className="h-2 w-full overflow-hidden rounded-full bg-[var(--color-surface-sunken)]"
       role="progressbar"
     >
       <div className={`h-full rounded-full ${tone}`} style={{ width: `${Math.min(100, Math.max(0, score))}%` }} />
@@ -92,9 +92,9 @@ export function Alert({
   tone?: "error" | "success" | "info";
 }) {
   const styles = {
-    error: "border-red-200 bg-red-50 text-red-800",
-    success: "border-emerald-200 bg-emerald-50 text-emerald-800",
-    info: "border-blue-200 bg-blue-50 text-blue-800",
+    error: "border-[var(--color-critical-soft)] bg-[var(--color-critical-soft)] text-[var(--color-critical)]",
+    success: "border-[var(--color-positive)] bg-[var(--color-positive-soft)] text-[var(--color-positive)]",
+    info: "border-[var(--color-info-soft)] bg-[var(--color-info-soft)] text-[var(--color-info)]",
   };
   return <div className={`rounded-xl border px-4 py-3 text-sm ${styles[tone]}`}>{children}</div>;
 }
@@ -102,8 +102,8 @@ export function Alert({
 export function LoadingState({ label = "Loading" }: { label?: string }) {
   return (
     <div className="flex min-h-40 items-center justify-center" role="status">
-      <div className="flex items-center gap-3 text-sm font-medium text-slate-600">
-        <span className="size-5 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />
+      <div className="flex items-center gap-3 text-sm font-medium text-[var(--color-ink-muted)]">
+        <span className="size-5 animate-spin rounded-full border-2 border-[var(--color-line-strong)] border-t-[var(--color-accent)]" />
         {label}…
       </div>
     </div>
@@ -120,9 +120,9 @@ export function EmptyState({
   action?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-10 text-center">
-      <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-slate-600">{description}</p>
+    <div className="rounded-2xl border border-dashed border-[var(--color-line-strong)] bg-[var(--color-surface)] px-6 py-10 text-center">
+      <h2 className="text-base font-semibold text-[var(--color-ink)]">{title}</h2>
+      <p className="mx-auto mt-2 max-w-md text-sm text-[var(--color-ink-muted)]">{description}</p>
       {action ? <div className="mt-5">{action}</div> : null}
     </div>
   );

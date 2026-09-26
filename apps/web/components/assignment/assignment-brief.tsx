@@ -71,7 +71,7 @@ export function AssignmentBrief({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="section-title">Assignment brief</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             {assignment.course_code} · {assignment.course_name}
           </p>
         </div>
@@ -134,7 +134,7 @@ export function AssignmentBrief({
             <span>Brief</span>
             <textarea defaultValue={description ?? ""} maxLength={20000} name="description" />
           </label>
-          <p className="text-sm text-slate-500 md:col-span-2">
+          <p className="text-sm text-[var(--color-ink-subtle)] md:col-span-2">
             Only draft, incomplete, completed, and archived can be set here. Moving into analysis
             happens through the readiness gate below.
           </p>
@@ -150,18 +150,18 @@ export function AssignmentBrief({
       ) : (
         <div className="mt-5 grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]">
           <div>
-            <p className="whitespace-pre-wrap leading-7 text-slate-700">
+            <p className="whitespace-pre-wrap leading-7 text-[var(--color-ink-muted)]">
               {description || "No brief has been added yet. Use Edit details to add one."}
             </p>
           </div>
-          <dl className="space-y-4 rounded-xl bg-slate-50 p-4 text-sm">
+          <dl className="space-y-4 rounded-xl bg-[var(--color-canvas)] p-4 text-sm">
             <div>
-              <dt className="font-medium text-slate-500">Deadline</dt>
-              <dd className="mt-1 font-semibold text-slate-900">{formatDate(assignment.deadline)}</dd>
+              <dt className="font-medium text-[var(--color-ink-subtle)]">Deadline</dt>
+              <dd className="mt-1 font-semibold text-[var(--color-ink)]">{formatDate(assignment.deadline)}</dd>
             </div>
             <div>
-              <dt className="font-medium text-slate-500">Grading total</dt>
-              <dd className="mt-1 font-semibold text-slate-900">
+              <dt className="font-medium text-[var(--color-ink-subtle)]">Grading total</dt>
+              <dd className="mt-1 font-semibold text-[var(--color-ink)]">
                 {formatWeight(criteriaTotal)} of 100%
               </dd>
             </div>
@@ -170,7 +170,7 @@ export function AssignmentBrief({
       )}
 
       {locked && !editing ? (
-        <p className="mt-4 text-xs text-slate-500">
+        <p className="mt-4 text-xs text-[var(--color-ink-subtle)]">
           This assignment is {statusLabel(assignment.status).toLowerCase()}. Edits are still allowed,
           but anything that breaks a blocking check sends it back to incomplete.
         </p>

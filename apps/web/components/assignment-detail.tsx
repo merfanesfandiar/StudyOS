@@ -84,7 +84,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           <nav aria-label="Specification sections" className="flex flex-wrap justify-end gap-1">
             {SECTIONS.map((section) => (
               <a
-                className="rounded-md px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                className="rounded-md px-2 py-1 text-xs font-semibold text-[var(--color-ink-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-ink)]"
                 href={section.href}
                 key={section.href}
               >
@@ -98,7 +98,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
       />
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <Link className="text-sm font-semibold text-indigo-700" href="/assignments">
+        <Link className="text-sm font-semibold text-[var(--color-accent-hover)]" href="/assignments">
           ← Back to assignments
         </Link>
         <StatusBadge status={specification.assignment.status} />

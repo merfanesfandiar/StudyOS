@@ -13,10 +13,10 @@ import type { AssignmentSpecification, Constraint } from "@/lib/types";
 import { Alert, SubmitButton } from "@/components/ui";
 
 const SEVERITY_STYLES: Record<Constraint["severity"], string> = {
-  INFO: "bg-slate-100 text-slate-600",
-  WARNING: "bg-amber-50 text-amber-800",
-  IMPORTANT: "bg-orange-50 text-orange-800",
-  CRITICAL: "bg-red-50 text-red-800",
+  INFO: "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)]",
+  WARNING: "bg-[var(--color-caution-soft)] text-[var(--color-caution)]",
+  IMPORTANT: "bg-[var(--color-caution)] text-[var(--color-caution)]",
+  CRITICAL: "bg-[var(--color-critical-soft)] text-[var(--color-critical)]",
 };
 
 export function ConstraintsSection({
@@ -47,7 +47,7 @@ export function ConstraintsSection({
     <section className="card p-6" data-testid="constraints-section" id="constraints">
       <div>
         <h2 className="section-title">Constraints</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
           Rules the solution has to respect. Advisory: they lower the score, never block.
         </p>
       </div>
@@ -60,16 +60,16 @@ export function ConstraintsSection({
 
       <div className="mt-5 space-y-3">
         {constraints.map((constraint) => (
-          <article className="rounded-xl border border-slate-200 p-4" key={constraint.id}>
+          <article className="rounded-xl border border-[var(--color-line)] p-4" key={constraint.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-semibold text-slate-950">{constraint.title}</p>
-                <p className="mt-1 text-sm leading-6 text-slate-600">{constraint.description}</p>
+                <p className="font-semibold text-[var(--color-ink)]">{constraint.title}</p>
+                <p className="mt-1 text-sm leading-6 text-[var(--color-ink-muted)]">{constraint.description}</p>
                 {constraint.value ? (
-                  <p className="mt-1 font-mono text-xs text-slate-500">{constraint.value}</p>
+                  <p className="mt-1 font-mono text-xs text-[var(--color-ink-subtle)]">{constraint.value}</p>
                 ) : null}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-600">
+                  <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5 text-[var(--color-ink-muted)]">
                     {constraintTypeLabel(constraint.type)}
                   </span>
                   <span className={`rounded px-2 py-0.5 ${SEVERITY_STYLES[constraint.severity]}`}>
@@ -79,7 +79,7 @@ export function ConstraintsSection({
               </div>
               <button
                 aria-label={`Delete ${constraint.title}`}
-                className="shrink-0 text-sm font-semibold text-red-600"
+                className="shrink-0 text-sm font-semibold text-[var(--color-critical)]"
                 disabled={pending === `constraint-${constraint.id}`}
                 onClick={() =>
                   void run(`constraint-${constraint.id}`, () =>
@@ -94,14 +94,14 @@ export function ConstraintsSection({
           </article>
         ))}
         {constraints.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+          <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
             No constraints recorded.
           </p>
         ) : null}
       </div>
 
       <form
-        className="mt-5 grid gap-3 border-t border-slate-100 pt-5"
+        className="mt-5 grid gap-3 border-t border-[var(--color-surface-sunken)] pt-5"
         onSubmit={(event) => {
           event.preventDefault();
           const element = event.currentTarget;
@@ -192,13 +192,13 @@ export function CriteriaSection({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="section-title">Evaluation criteria</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             Weights must total exactly 100% before this specification is complete.
           </p>
         </div>
         <span
           className={`rounded-full px-2.5 py-1 text-xs font-bold ${
-            balanced ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-800"
+            balanced ? "bg-[var(--color-positive-soft)] text-[var(--color-positive)]" : "bg-[var(--color-caution-soft)] text-[var(--color-caution)]"
           }`}
         >
           {formatWeight(total)} of 100%
@@ -213,21 +213,21 @@ export function CriteriaSection({
 
       <div className="mt-5 space-y-3">
         {criteria.map((criterion) => (
-          <article className="rounded-xl border border-slate-200 p-4" key={criterion.id}>
+          <article className="rounded-xl border border-[var(--color-line)] p-4" key={criterion.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-semibold text-slate-950">{criterion.title}</p>
+                <p className="font-semibold text-[var(--color-ink)]">{criterion.title}</p>
                 {criterion.description ? (
-                  <p className="mt-1 text-sm leading-6 text-slate-600">{criterion.description}</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--color-ink-muted)]">{criterion.description}</p>
                 ) : null}
               </div>
               <div className="flex shrink-0 items-center gap-3">
-                <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">
+                <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-1 text-xs font-bold text-[var(--color-ink-muted)]">
                   {formatWeight(criterion.weight)}
                 </span>
                 <button
                   aria-label={`Delete ${criterion.title}`}
-                  className="text-sm font-semibold text-red-600"
+                  className="text-sm font-semibold text-[var(--color-critical)]"
                   disabled={pending === `criterion-${criterion.id}`}
                   onClick={() =>
                     void run(`criterion-${criterion.id}`, () =>
@@ -243,14 +243,14 @@ export function CriteriaSection({
           </article>
         ))}
         {criteria.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+          <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
             No criteria yet.
           </p>
         ) : null}
       </div>
 
       <form
-        className="mt-5 grid gap-3 border-t border-slate-100 pt-5"
+        className="mt-5 grid gap-3 border-t border-[var(--color-surface-sunken)] pt-5"
         onSubmit={(event) => {
           event.preventDefault();
           const element = event.currentTarget;

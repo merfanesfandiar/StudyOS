@@ -67,11 +67,11 @@ export function ResourcesSection({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="section-title">Resources</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             Briefs, rubrics, and reference files. PDF, DOCX, MD, TXT, ZIP, and images up to 10 MB.
           </p>
         </div>
-        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">
+        <span className="rounded-full bg-[var(--color-surface-sunken)] px-2.5 py-1 text-xs font-bold text-[var(--color-ink-muted)]">
           {resources.length}
         </span>
       </div>
@@ -90,13 +90,13 @@ export function ResourcesSection({
       <div className="mt-5 space-y-3">
         {resources.map((item) => (
           <article
-            className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"
+            className="flex items-center justify-between gap-3 rounded-xl border border-[var(--color-line)] p-4"
             data-testid="document-item"
             key={item.id}
           >
             <div className="min-w-0">
-              <p className="truncate font-semibold text-slate-950">{item.filename}</p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="truncate font-semibold text-[var(--color-ink)]">{item.filename}</p>
+              <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">
                 {formatFileSize(item.size)} · {item.mime_type} · {formatDate(item.created_at)}
               </p>
             </div>
@@ -110,7 +110,7 @@ export function ResourcesSection({
               </button>
               <button
                 aria-label={`Delete ${item.filename}`}
-                className="text-sm font-semibold text-red-600"
+                className="text-sm font-semibold text-[var(--color-critical)]"
                 disabled={pending === item.id}
                 onClick={() => void remove(item)}
                 type="button"
@@ -121,7 +121,7 @@ export function ResourcesSection({
           </article>
         ))}
         {resources.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+          <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
             No documents attached yet.
           </p>
         ) : null}

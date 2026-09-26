@@ -60,19 +60,19 @@ export default function DashboardPage() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {tiles.map((tile) => (
             <div className="card p-5" key={tile.label}>
-              <p className="text-sm font-medium text-slate-500">{tile.label}</p>
-              <p className="mt-2 text-3xl font-black tracking-tight text-slate-950">{tile.value}</p>
-              <p className="mt-1 text-xs text-slate-400">{tile.hint}</p>
+              <p className="text-sm font-medium text-[var(--color-ink-subtle)]">{tile.label}</p>
+              <p className="mt-2 text-3xl font-black tracking-tight text-[var(--color-ink)]">{tile.value}</p>
+              <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">{tile.hint}</p>
             </div>
           ))}
         </div>
         <dl className="card grid gap-4 p-5 sm:grid-cols-4">
           {glance.map((item) => (
             <div key={item.label}>
-              <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-subtle)]">
                 {item.label}
               </dt>
-              <dd className="mt-1 text-xl font-bold text-slate-900">{item.value}</dd>
+              <dd className="mt-1 text-xl font-bold text-[var(--color-ink)]">{item.value}</dd>
             </div>
           ))}
         </dl>
@@ -81,7 +81,7 @@ export default function DashboardPage() {
         <section>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="section-title">Upcoming deadlines</h2>
-            <Link className="text-sm font-semibold text-indigo-700" href="/assignments">
+            <Link className="text-sm font-semibold text-[var(--color-accent-hover)]" href="/assignments">
               View all
             </Link>
           </div>
@@ -106,22 +106,22 @@ export default function DashboardPage() {
             <h2 className="section-title">Recently updated</h2>
           </div>
           {data.recent_assignments.length ? (
-            <div className="card divide-y divide-slate-100">
+            <div className="card divide-y divide-[var(--color-surface-sunken)]">
               {data.recent_assignments.slice(0, 5).map((assignment) => (
                 <Link
-                  className="flex items-center justify-between gap-4 px-5 py-4 transition hover:bg-slate-50"
+                  className="flex items-center justify-between gap-4 px-5 py-4 transition hover:bg-[var(--color-canvas)]"
                   href={`/assignments/${assignment.id}`}
                   key={assignment.id}
                 >
                   <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-900">{assignment.title}</p>
-                    <p className="mt-0.5 text-xs text-slate-500">
+                    <p className="truncate font-semibold text-[var(--color-ink)]">{assignment.title}</p>
+                    <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
                       {assignment.course_code} · {assignment.readiness_score}% ready ·{" "}
                       {assignment.completed_requirements_count}/{assignment.requirements_count}{" "}
                       requirements
                     </p>
                   </div>
-                  <span className="shrink-0 text-xs text-slate-500">{formatDate(assignment.deadline)}</span>
+                  <span className="shrink-0 text-xs text-[var(--color-ink-subtle)]">{formatDate(assignment.deadline)}</span>
                 </Link>
               ))}
             </div>
@@ -133,25 +133,25 @@ export default function DashboardPage() {
           <div className="mb-4 flex items-center justify-between">
             <h2 className="section-title">Notifications</h2>
             {data.unread_notifications_count ? (
-              <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-700">
+              <span className="rounded-full bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs font-bold text-[var(--color-accent-hover)]">
                 {data.unread_notifications_count} new
               </span>
             ) : null}
           </div>
-          <div className="card divide-y divide-slate-100">
+          <div className="card divide-y divide-[var(--color-surface-sunken)]">
             {notifications.length ? (
               notifications.slice(0, 6).map((notification) => (
                 <div className="p-4" key={notification.id}>
                   <div className="flex items-center gap-2">
-                    {!notification.read_at ? <span className="size-2 rounded-full bg-indigo-500" /> : null}
-                    <p className="font-semibold text-slate-900">{notification.title}</p>
+                    {!notification.read_at ? <span className="size-2 rounded-full bg-[var(--color-accent)]" /> : null}
+                    <p className="font-semibold text-[var(--color-ink)]">{notification.title}</p>
                   </div>
-                  <p className="mt-1 text-sm leading-5 text-slate-600">{notification.message}</p>
-                  <p className="mt-2 text-xs text-slate-400">{formatDate(notification.created_at)}</p>
+                  <p className="mt-1 text-sm leading-5 text-[var(--color-ink-muted)]">{notification.message}</p>
+                  <p className="mt-2 text-xs text-[var(--color-ink-subtle)]">{formatDate(notification.created_at)}</p>
                 </div>
               ))
             ) : (
-              <div className="p-6 text-center text-sm text-slate-500">You are all caught up.</div>
+              <div className="p-6 text-center text-sm text-[var(--color-ink-subtle)]">You are all caught up.</div>
             )}
           </div>
         </aside>

@@ -54,22 +54,22 @@ export default function SettingsPage() {
             <h2 className="section-title">Account</h2>
             <dl className="mt-5 space-y-4 text-sm">
               <div>
-                <dt className="font-medium text-slate-500">Name</dt>
-                <dd className="mt-1 font-semibold text-slate-900">{user?.name}</dd>
+                <dt className="font-medium text-[var(--color-ink-subtle)]">Name</dt>
+                <dd className="mt-1 font-semibold text-[var(--color-ink)]">{user?.name}</dd>
               </div>
               <div>
-                <dt className="font-medium text-slate-500">Email</dt>
-                <dd className="mt-1 break-all font-semibold text-slate-900">{user?.email}</dd>
+                <dt className="font-medium text-[var(--color-ink-subtle)]">Email</dt>
+                <dd className="mt-1 break-all font-semibold text-[var(--color-ink)]">{user?.email}</dd>
               </div>
               <div>
-                <dt className="font-medium text-slate-500">Member since</dt>
-                <dd className="mt-1 font-semibold text-slate-900">{formatDate(user?.created_at)}</dd>
+                <dt className="font-medium text-[var(--color-ink-subtle)]">Member since</dt>
+                <dd className="mt-1 font-semibold text-[var(--color-ink)]">{formatDate(user?.created_at)}</dd>
               </div>
             </dl>
           </section>
           <section className="card mt-5 p-6">
             <h2 className="section-title">Workspace</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600">
+            <p className="mt-3 text-sm leading-6 text-[var(--color-ink-muted)]">
               You are the owner of a private workspace. Courses, assignments, and documents are visible only to you.
             </p>
           </section>
@@ -77,21 +77,21 @@ export default function SettingsPage() {
         <section>
           <div className="mb-4 flex items-center justify-between">
             <h2 className="section-title">Notifications</h2>
-            {unread ? <span className="rounded-full bg-indigo-100 px-2.5 py-1 text-xs font-bold text-indigo-700">{unread} unread</span> : null}
+            {unread ? <span className="rounded-full bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs font-bold text-[var(--color-accent-hover)]">{unread} unread</span> : null}
           </div>
           {loading ? (
             <LoadingState label="Loading notifications" />
           ) : notifications.length ? (
-            <div className="card divide-y divide-slate-100">
+            <div className="card divide-y divide-[var(--color-surface-sunken)]">
               {notifications.map((notification) => (
                 <article className="p-5" key={notification.id}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex gap-3">
-                      {!notification.read_at ? <span className="mt-2 size-2 shrink-0 rounded-full bg-indigo-500" /> : null}
+                      {!notification.read_at ? <span className="mt-2 size-2 shrink-0 rounded-full bg-[var(--color-accent)]" /> : null}
                       <div>
-                        <h3 className="font-semibold text-slate-950">{notification.title}</h3>
-                        <p className="mt-1 text-sm leading-6 text-slate-600">{notification.message}</p>
-                        <p className="mt-2 text-xs text-slate-400">{formatDate(notification.created_at)}</p>
+                        <h3 className="font-semibold text-[var(--color-ink)]">{notification.title}</h3>
+                        <p className="mt-1 text-sm leading-6 text-[var(--color-ink-muted)]">{notification.message}</p>
+                        <p className="mt-2 text-xs text-[var(--color-ink-subtle)]">{formatDate(notification.created_at)}</p>
                       </div>
                     </div>
                     {!notification.read_at ? (

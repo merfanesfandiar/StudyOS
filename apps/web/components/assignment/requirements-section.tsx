@@ -52,19 +52,19 @@ export function RequirementsSection({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="section-title">Requirements</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             Numbered once and never reused, so references stay valid after a deletion.
           </p>
         </div>
-        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600">
+        <span className="rounded-full bg-[var(--color-surface-sunken)] px-2.5 py-1 text-xs font-bold text-[var(--color-ink-muted)]">
           {completed}/{requirements.length} done
         </span>
       </div>
 
       {graph?.execution_order.length ? (
-        <p className="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600">
+        <p className="mt-3 rounded-lg bg-[var(--color-canvas)] px-3 py-2 text-xs text-[var(--color-ink-muted)]">
           A safe order to work in:{" "}
-          <span className="font-semibold text-slate-800">
+          <span className="font-semibold text-[var(--color-ink)]">
             {graph.execution_order.join(" → ")}
           </span>
         </p>
@@ -78,28 +78,28 @@ export function RequirementsSection({
 
       <ol className="mt-5 space-y-3">
         {requirements.map((requirement) => (
-          <li className="rounded-xl border border-slate-200 p-4" key={requirement.id}>
+          <li className="rounded-xl border border-[var(--color-line)] p-4" key={requirement.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-xs font-bold uppercase tracking-wider text-indigo-600">
+                <p className="text-xs font-bold uppercase tracking-wider text-[var(--color-accent)]">
                   {requirement.code}
                 </p>
-                <p className="mt-0.5 font-semibold text-slate-950">{requirement.title}</p>
+                <p className="mt-0.5 font-semibold text-[var(--color-ink)]">{requirement.title}</p>
                 {requirement.description ? (
-                  <p className="mt-1 text-sm leading-6 text-slate-600">{requirement.description}</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--color-ink-muted)]">{requirement.description}</p>
                 ) : null}
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                  <span className="rounded bg-slate-100 px-2 py-0.5">
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--color-ink-subtle)]">
+                  <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {requirementTypeLabel(requirement.type)}
                   </span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5">
+                  <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {priorityLabel(requirement.priority)}
                   </span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5">
+                  <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {requirement.is_required ? "Required" : "Optional"}
                   </span>
                   {dependenciesOf(requirement.id).length ? (
-                    <span className="rounded bg-indigo-50 px-2 py-0.5 text-indigo-700">
+                    <span className="rounded bg-[var(--color-accent-soft)] px-2 py-0.5 text-[var(--color-accent-hover)]">
                       Needs{" "}
                       {dependenciesOf(requirement.id)
                         .map((edge) => edge.depends_on_code)
@@ -113,7 +113,7 @@ export function RequirementsSection({
                   Status for {requirement.code}
                 </label>
                 <select
-                  className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                  className="rounded-lg border border-[var(--color-line-strong)] px-2 py-1 text-sm"
                   disabled={pending === `requirement-${requirement.id}`}
                   id={`status-${requirement.id}`}
                   onChange={(event) =>
@@ -132,7 +132,7 @@ export function RequirementsSection({
                   ))}
                 </select>
                 <button
-                  className="text-sm font-semibold text-indigo-700"
+                  className="text-sm font-semibold text-[var(--color-accent-hover)]"
                   onClick={() => setDependencyFor(requirement.id)}
                   type="button"
                 >
@@ -140,7 +140,7 @@ export function RequirementsSection({
                 </button>
                 <button
                   aria-label={`Delete ${requirement.code}`}
-                  className="text-sm font-semibold text-red-600"
+                  className="text-sm font-semibold text-[var(--color-critical)]"
                   disabled={pending === `requirement-${requirement.id}`}
                   onClick={() =>
                     void run(`requirement-${requirement.id}`, () =>
@@ -154,12 +154,12 @@ export function RequirementsSection({
               </div>
             </div>
             {dependenciesOf(requirement.id).length ? (
-              <ul className="mt-3 space-y-1 border-t border-slate-100 pt-3">
+              <ul className="mt-3 space-y-1 border-t border-[var(--color-surface-sunken)] pt-3">
                 {dependenciesOf(requirement.id).map((edge) => (
                   <li className="flex items-center justify-between text-xs" key={edge.depends_on_id}>
-                    <span className="text-slate-600">Depends on {edge.depends_on_code}</span>
+                    <span className="text-[var(--color-ink-muted)]">Depends on {edge.depends_on_code}</span>
                     <button
-                      className="font-semibold text-red-600"
+                      className="font-semibold text-[var(--color-critical)]"
                       disabled={pending === `dependency-${edge.depends_on_id}`}
                       onClick={() =>
                         void run(`dependency-${edge.depends_on_id}`, async () => {
@@ -184,13 +184,13 @@ export function RequirementsSection({
         ))}
       </ol>
       {requirements.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+        <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
           No requirements yet. The readiness gate needs at least one.
         </p>
       ) : null}
 
       <form
-        className="mt-5 grid gap-3 border-t border-slate-100 pt-5"
+        className="mt-5 grid gap-3 border-t border-[var(--color-surface-sunken)] pt-5"
         onSubmit={(event) => {
           event.preventDefault();
           const element = event.currentTarget;
@@ -276,8 +276,8 @@ function DependencyPicker({
 }) {
   const [selected, setSelected] = useState("");
   return (
-    <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-      <p className="text-sm font-semibold text-indigo-900">
+    <div className="mt-4 rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-4">
+      <p className="text-sm font-semibold text-[var(--color-accent)]">
         What must exist before {requirement?.code}?
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-3">

@@ -59,15 +59,15 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
           type="password"
         />
         {isRegister ? (
-          <small className="text-slate-500">Use 8+ characters with uppercase, lowercase, and a number.</small>
+          <small className="text-[var(--color-ink-subtle)]">Use 8+ characters with uppercase, lowercase, and a number.</small>
         ) : null}
       </label>
       <SubmitButton className="btn-primary w-full" pending={pending}>
         {isRegister ? "Create account" : "Sign in"}
       </SubmitButton>
-      <p className="text-center text-sm text-slate-600">
+      <p className="text-center text-sm text-[var(--color-ink-muted)]">
         {isRegister ? "Already have an account?" : "New to StudyOS?"}{" "}
-        <Link className="font-semibold text-indigo-700 hover:text-indigo-800" href={isRegister ? "/login" : "/register"}>
+        <Link className="font-semibold text-[var(--color-accent-hover)] hover:text-[var(--color-accent)]" href={isRegister ? "/login" : "/register"}>
           {isRegister ? "Sign in" : "Create one"}
         </Link>
       </p>

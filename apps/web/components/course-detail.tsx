@@ -90,7 +90,7 @@ export function CourseDetail({ courseId }: { courseId: string }) {
         description={course.description || "Add a description to give this course context."}
         title={`${course.code} · ${course.name}`}
       />
-      <Link className="mb-6 inline-block text-sm font-semibold text-indigo-700" href="/courses">
+      <Link className="mb-6 inline-block text-sm font-semibold text-[var(--color-accent-hover)]" href="/courses">
         ← All courses
       </Link>
       {error ? <div className="mb-5"><Alert>{error}</Alert></div> : null}
@@ -122,7 +122,7 @@ export function CourseDetail({ courseId }: { courseId: string }) {
       <section>
         <div className="mb-4 flex items-center justify-between">
           <h2 className="section-title">Assignments</h2>
-          <span className="text-sm font-medium text-slate-500">{assignments.length} total</span>
+          <span className="text-sm font-medium text-[var(--color-ink-subtle)]">{assignments.length} total</span>
         </div>
         {assignments.length ? (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

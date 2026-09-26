@@ -29,15 +29,15 @@ export function HistorySection({
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="section-title">History</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             What changed, and the snapshots taken along the way.
           </p>
         </div>
-        <div className="flex gap-1 rounded-lg bg-slate-100 p-1">
+        <div className="flex gap-1 rounded-lg bg-[var(--color-surface-sunken)] p-1">
           <button
             aria-pressed={tab === "activity"}
             className={`rounded-md px-3 py-1 text-xs font-semibold ${
-              tab === "activity" ? "bg-white text-slate-900" : "text-slate-500"
+              tab === "activity" ? "bg-[var(--color-surface)] text-[var(--color-ink)]" : "text-[var(--color-ink-subtle)]"
             }`}
             onClick={() => setTab("activity")}
             type="button"
@@ -47,7 +47,7 @@ export function HistorySection({
           <button
             aria-pressed={tab === "versions"}
             className={`rounded-md px-3 py-1 text-xs font-semibold ${
-              tab === "versions" ? "bg-white text-slate-900" : "text-slate-500"
+              tab === "versions" ? "bg-[var(--color-surface)] text-[var(--color-ink)]" : "text-[var(--color-ink-subtle)]"
             }`}
             onClick={() => setTab("versions")}
             type="button"
@@ -114,21 +114,21 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
     <div className="mt-5">
       {error ? <Alert>{error}</Alert> : null}
       {loading && events.length === 0 ? (
-        <p className="text-sm text-slate-500">Loading activity…</p>
+        <p className="text-sm text-[var(--color-ink-subtle)]">Loading activity…</p>
       ) : null}
       {!loading && events.length === 0 && !error ? (
-        <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+        <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
           Nothing recorded yet.
         </p>
       ) : null}
       {events.length ? (
         <ol className="space-y-2" data-testid="activity-feed">
           {events.map((event) => (
-            <li className="rounded-xl border border-slate-200 p-3" key={event.id}>
-              <p className="text-sm text-slate-900">
+            <li className="rounded-xl border border-[var(--color-line)] p-3" key={event.id}>
+              <p className="text-sm text-[var(--color-ink)]">
                 {event.change_summary ?? humanize(event.event_type)}
               </p>
-              <p className="mt-0.5 text-xs text-slate-400">{formatDate(event.created_at)}</p>
+              <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">{formatDate(event.created_at)}</p>
             </li>
           ))}
         </ol>
@@ -143,7 +143,7 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
           >
             Newer
           </button>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-[var(--color-ink-subtle)]">
             Page {page} of {pages}
           </span>
           <button
@@ -220,10 +220,10 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
     <div className="mt-5">
       {error ? <Alert>{error}</Alert> : null}
       {versions === null && !error ? (
-        <p className="text-sm text-slate-500">Loading versions…</p>
+        <p className="text-sm text-[var(--color-ink-subtle)]">Loading versions…</p>
       ) : null}
       {versions?.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+        <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
           No snapshots yet. One is taken whenever the specification changes.
         </p>
       ) : null}
@@ -231,15 +231,15 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
         <ol className="space-y-2" data-testid="version-list">
           {versions.map((version) => (
             <li
-              className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 p-3"
+              className="flex items-start justify-between gap-3 rounded-xl border border-[var(--color-line)] p-3"
               key={version.version}
             >
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-900">Version {version.version}</p>
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="text-sm font-semibold text-[var(--color-ink)]">Version {version.version}</p>
+                <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
                   {version.change_summary || "Specification snapshot"}
                 </p>
-                <p className="mt-0.5 text-xs text-slate-400">{formatDate(version.created_at)}</p>
+                <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">{formatDate(version.created_at)}</p>
               </div>
               <button
                 className="btn-secondary shrink-0"
@@ -260,7 +260,7 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
       ) : null}
       {snapshot ? (
         <pre
-          className="mt-4 max-h-80 overflow-auto rounded-xl bg-slate-900 p-4 text-xs leading-5 text-slate-100"
+          className="mt-4 max-h-80 overflow-auto rounded-xl bg-[var(--color-ink)] p-4 text-xs leading-5 text-[var(--color-surface-sunken)]"
           data-testid="version-snapshot"
         >
           {JSON.stringify(snapshot, null, 2)}

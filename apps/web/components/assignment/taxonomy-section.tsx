@@ -42,7 +42,7 @@ export function DeliverablesSection({
     <section className="card p-6" data-testid="deliverables-section" id="deliverables">
       <div>
         <h2 className="section-title">Deliverables</h2>
-        <p className="mt-1 text-sm text-slate-500">What has to be handed in, and its state.</p>
+        <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">What has to be handed in, and its state.</p>
       </div>
 
       {error ? (
@@ -53,18 +53,18 @@ export function DeliverablesSection({
 
       <div className="mt-5 space-y-3">
         {deliverables.map((deliverable) => (
-          <article className="rounded-xl border border-slate-200 p-4" key={deliverable.id}>
+          <article className="rounded-xl border border-[var(--color-line)] p-4" key={deliverable.id}>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-semibold text-slate-950">{deliverable.title}</p>
+                <p className="font-semibold text-[var(--color-ink)]">{deliverable.title}</p>
                 {deliverable.description ? (
-                  <p className="mt-1 text-sm leading-6 text-slate-600">{deliverable.description}</p>
+                  <p className="mt-1 text-sm leading-6 text-[var(--color-ink-muted)]">{deliverable.description}</p>
                 ) : null}
-                <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-500">
-                  <span className="rounded bg-slate-100 px-2 py-0.5">
+                <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--color-ink-subtle)]">
+                  <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {deliverableTypeLabel(deliverable.type)}
                   </span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5">
+                  <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {deliverable.is_required ? "Required" : "Optional"}
                   </span>
                 </div>
@@ -74,7 +74,7 @@ export function DeliverablesSection({
                   Status for {deliverable.title}
                 </label>
                 <select
-                  className="rounded-lg border border-slate-300 px-2 py-1 text-sm"
+                  className="rounded-lg border border-[var(--color-line-strong)] px-2 py-1 text-sm"
                   id={`deliverable-${deliverable.id}`}
                   onChange={(event) =>
                     void run(`deliverable-${deliverable.id}`, () =>
@@ -93,7 +93,7 @@ export function DeliverablesSection({
                 </select>
                 <button
                   aria-label={`Delete ${deliverable.title}`}
-                  className="text-sm font-semibold text-red-600"
+                  className="text-sm font-semibold text-[var(--color-critical)]"
                   disabled={pending === `deliverable-${deliverable.id}`}
                   onClick={() =>
                     void run(`deliverable-${deliverable.id}`, () =>
@@ -109,14 +109,14 @@ export function DeliverablesSection({
           </article>
         ))}
         {deliverables.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 p-4 text-sm text-slate-500">
+          <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
             No deliverables listed yet.
           </p>
         ) : null}
       </div>
 
       <form
-        className="mt-5 grid gap-3 border-t border-slate-100 pt-5"
+        className="mt-5 grid gap-3 border-t border-[var(--color-surface-sunken)] pt-5"
         onSubmit={(event) => {
           event.preventDefault();
           const element = event.currentTarget;
@@ -187,7 +187,7 @@ export function TaxonomySection({
     <section className="card p-6" data-testid="taxonomy-section" id="stack">
       <div>
         <h2 className="section-title">Tools and tags</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
           Technologies and tags are shared across the workspace, so they are entered once.
         </p>
       </div>
@@ -200,25 +200,25 @@ export function TaxonomySection({
 
       <div className="mt-5 grid gap-6 sm:grid-cols-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Technologies</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-ink)]">Technologies</h3>
           <ul className="mt-3 space-y-2">
             {technologies.map((technology) => (
               <li
-                className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="flex items-center justify-between gap-2 rounded-lg border border-[var(--color-line)] px-3 py-2 text-sm"
                 key={technology.id}
               >
                 <span className="min-w-0">
-                  <span className="font-semibold text-slate-900">{technology.name}</span>
+                  <span className="font-semibold text-[var(--color-ink)]">{technology.name}</span>
                   {technology.version ? (
-                    <span className="text-slate-500"> {technology.version}</span>
+                    <span className="text-[var(--color-ink-subtle)]"> {technology.version}</span>
                   ) : null}
-                  <span className="block text-xs text-slate-500">
+                  <span className="block text-xs text-[var(--color-ink-subtle)]">
                     {technologyCategoryLabel(technology.category)}
                   </span>
                 </span>
                 <button
                   aria-label={`Remove ${technology.name}`}
-                  className="shrink-0 text-sm font-semibold text-red-600"
+                  className="shrink-0 text-sm font-semibold text-[var(--color-critical)]"
                   onClick={() =>
                     void run(`technology-${technology.id}`, () =>
                       api.deleteTechnology(assignment.id, technology.id),
@@ -231,7 +231,7 @@ export function TaxonomySection({
               </li>
             ))}
             {technologies.length === 0 ? (
-              <li className="rounded-lg border border-dashed border-slate-200 p-3 text-sm text-slate-500">
+              <li className="rounded-lg border border-dashed border-[var(--color-line)] p-3 text-sm text-[var(--color-ink-subtle)]">
                 None recorded.
               </li>
             ) : null}
@@ -283,17 +283,17 @@ export function TaxonomySection({
         </div>
 
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Tags</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-ink)]">Tags</h3>
           <ul className="mt-3 flex flex-wrap gap-2">
             {tags.map((tag) => (
               <li
-                className="inline-flex items-center gap-2 rounded-full bg-indigo-50 px-3 py-1 text-sm text-indigo-800"
+                className="inline-flex items-center gap-2 rounded-full bg-[var(--color-accent-soft)] px-3 py-1 text-sm text-[var(--color-accent)]"
                 key={tag.id}
               >
                 {tag.name}
                 <button
                   aria-label={`Remove ${tag.name}`}
-                  className="font-bold text-indigo-500"
+                  className="font-bold text-[var(--color-accent)]"
                   onClick={() =>
                     void run(`tag-${tag.id}`, () => api.deleteTag(assignment.id, tag.id))
                   }
@@ -304,7 +304,7 @@ export function TaxonomySection({
               </li>
             ))}
             {tags.length === 0 ? (
-              <li className="rounded-lg border border-dashed border-slate-200 p-3 text-sm text-slate-500">
+              <li className="rounded-lg border border-dashed border-[var(--color-line)] p-3 text-sm text-[var(--color-ink-subtle)]">
                 None yet.
               </li>
             ) : null}

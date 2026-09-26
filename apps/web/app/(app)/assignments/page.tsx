@@ -115,8 +115,8 @@ export default function AssignmentsPage() {
             <button
               className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
                 status === item.value
-                  ? "bg-indigo-600 text-white"
-                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  ? "bg-[var(--color-accent)] text-white"
+                  : "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)] hover:bg-[var(--color-line)]"
               }`}
               key={item.value}
               onClick={() => {
@@ -199,7 +199,7 @@ export default function AssignmentsPage() {
               >
                 Previous
               </button>
-              <span className="text-slate-500">
+              <span className="text-[var(--color-ink-subtle)]">
                 Page {pager.page} of {pager.pages} · {pager.total} assignments
               </span>
               <button

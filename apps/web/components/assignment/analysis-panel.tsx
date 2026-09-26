@@ -32,7 +32,7 @@ function OriginTag({ source }: { source: Evidence["source_type"] | string }) {
   return (
     <span
       data-testid="origin-tag"
-      className="ms-1 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-600"
+      className="ms-1 rounded bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-ink-muted)]"
     >
       {sourceKindShort(source as never)}
     </span>
@@ -43,7 +43,7 @@ function ConfidenceTag({ confidence }: { confidence: number }) {
   return (
     <span
       data-testid="confidence"
-      className="ms-1.5 text-xs text-slate-500"
+      className="ms-1.5 text-xs text-[var(--color-ink-subtle)]"
       title={`Confidence ${confidence.toFixed(2)}`}
     >
       {confidenceLabel(confidence)}
@@ -54,25 +54,25 @@ function ConfidenceTag({ confidence }: { confidence: number }) {
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="mt-6 first:mt-0">
-      <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
+      <h3 className="text-sm font-semibold text-[var(--color-ink-muted)]">{title}</h3>
       <div className="mt-2">{children}</div>
     </section>
   );
 }
 
 function Bullet({ children }: { children: React.ReactNode }) {
-  return <li className="text-sm text-slate-700">{children}</li>;
+  return <li className="text-sm text-[var(--color-ink-muted)]">{children}</li>;
 }
 
 /** One evidence entry, collapsed by default so provenance stays optional. */
 function EvidenceList({ evidence }: { evidence: Evidence[] }) {
   if (evidence.length === 0) {
-    return <p className="mt-1 text-xs text-slate-500">No supporting evidence recorded.</p>;
+    return <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">No supporting evidence recorded.</p>;
   }
   return (
     <ul className="mt-1 space-y-1">
       {evidence.map((item, index) => (
-        <li key={index} className="text-xs text-slate-500">
+        <li key={index} className="text-xs text-[var(--color-ink-subtle)]">
           <span className="font-medium">{sourceKindLabel(item.source_type as never)}</span>
           {item.location ? ` · ${item.location}` : ""}
           {item.supports ? ` · ${item.supports}` : ""}
@@ -83,10 +83,10 @@ function EvidenceList({ evidence }: { evidence: Evidence[] }) {
 }
 
 const SEVERITY_TONE: Record<FindingSeverity, string> = {
-  INFO: "border-slate-200 bg-slate-50 text-slate-700",
-  WARNING: "border-amber-200 bg-amber-50 text-amber-800",
-  IMPORTANT: "border-orange-200 bg-orange-50 text-orange-800",
-  CRITICAL: "border-red-200 bg-red-50 text-red-800",
+  INFO: "border-[var(--color-line)] bg-[var(--color-canvas)] text-[var(--color-ink-muted)]",
+  WARNING: "border-[var(--color-caution-soft)] bg-[var(--color-caution-soft)] text-[var(--color-caution)]",
+  IMPORTANT: "border-[var(--color-caution)] bg-[var(--color-caution)] text-[var(--color-caution)]",
+  CRITICAL: "border-[var(--color-critical-soft)] bg-[var(--color-critical-soft)] text-[var(--color-critical)]",
 };
 
 /**
@@ -99,15 +99,15 @@ function SpecializedSection({ item }: { item: SpecializedAnalysis }) {
     <div
       key={item.analyzer}
       data-testid="specialized-analysis"
-      className="mt-3 rounded border border-slate-200 bg-white p-3"
+      className="mt-3 rounded border border-[var(--color-line)] bg-[var(--color-surface)] p-3"
     >
-      <p className="text-sm font-semibold text-slate-800">
+      <p className="text-sm font-semibold text-[var(--color-ink)]">
         {item.analyzer.replace(/_/g, " ").toLowerCase()}
         <ConfidenceTag confidence={item.confidence} />
       </p>
-      {item.summary ? <p className="mt-1 text-sm text-slate-700">{item.summary}</p> : null}
+      {item.summary ? <p className="mt-1 text-sm text-[var(--color-ink-muted)]">{item.summary}</p> : null}
       {rows.length > 0 ? (
-        <dl className="mt-2 space-y-1 text-xs text-slate-600">
+        <dl className="mt-2 space-y-1 text-xs text-[var(--color-ink-muted)]">
           {rows.map(([key, value]) => (
             <div key={key} className="flex gap-2">
               <dt className="font-medium">{key.replace(/_/g, " ")}</dt>
@@ -137,11 +137,11 @@ function QuestionRow({
   const settled = question.status !== "OPEN";
 
   return (
-    <li data-testid="clarification-question" className="rounded border border-slate-200 p-3">
-      <p className="text-sm font-medium text-slate-800">
+    <li data-testid="clarification-question" className="rounded border border-[var(--color-line)] p-3">
+      <p className="text-sm font-medium text-[var(--color-ink)]">
         {question.code}. {question.question}
       </p>
-      <p className="mt-1 text-xs text-slate-500">
+      <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">
         {questionPriorityLabel(question.priority)} priority
         {question.related_requirements.length > 0
           ? ` · affects ${question.related_requirements.join(", ")}`
@@ -149,10 +149,10 @@ function QuestionRow({
         {settled ? ` · ${question.status.replace(/_/g, " ").toLowerCase()}` : ""}
       </p>
       {question.rationale ? (
-        <p className="mt-1 text-xs text-slate-500">Why this matters: {question.rationale}</p>
+        <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">Why this matters: {question.rationale}</p>
       ) : null}
       {question.answer ? (
-        <p className="mt-2 text-xs text-emerald-700">Your answer: {question.answer}</p>
+        <p className="mt-2 text-xs text-[var(--color-positive)]">Your answer: {question.answer}</p>
       ) : null}
       {!settled ? (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -162,7 +162,7 @@ function QuestionRow({
             onChange={(event) => setDraft(event.target.value)}
             placeholder="Your answer…"
             aria-label={`Answer to ${question.code}`}
-            className="flex-1 rounded border border-slate-300 px-2 py-1 text-sm"
+            className="flex-1 rounded border border-[var(--color-line-strong)] px-2 py-1 text-sm"
           />
           <button
             type="button"
@@ -223,12 +223,12 @@ function ClassificationEditor({
   }
 
   return (
-    <div data-testid="classification-editor" className="mt-3 space-y-3 rounded border border-slate-200 p-3">
+    <div data-testid="classification-editor" className="mt-3 space-y-3 rounded border border-[var(--color-line)] p-3">
       <div>
-        <p className="text-xs font-medium text-slate-600">Assignment type</p>
+        <p className="text-xs font-medium text-[var(--color-ink-muted)]">Assignment type</p>
         <div className="mt-1 flex flex-wrap gap-2">
           {ASSIGNMENT_TYPE_OPTIONS.map((type) => (
-            <label key={type} className="flex items-center gap-1 text-xs text-slate-700">
+            <label key={type} className="flex items-center gap-1 text-xs text-[var(--color-ink-muted)]">
               <input
                 type="checkbox"
                 checked={types.includes(type)}
@@ -241,10 +241,10 @@ function ClassificationEditor({
         </div>
       </div>
       <div>
-        <p className="text-xs font-medium text-slate-600">Academic domain</p>
+        <p className="text-xs font-medium text-[var(--color-ink-muted)]">Academic domain</p>
         <div className="mt-1 flex flex-wrap gap-2">
           {ACADEMIC_DOMAIN_OPTIONS.map((domain) => (
-            <label key={domain} className="flex items-center gap-1 text-xs text-slate-700">
+            <label key={domain} className="flex items-center gap-1 text-xs text-[var(--color-ink-muted)]">
               <input
                 type="checkbox"
                 checked={domains.includes(domain)}
@@ -338,8 +338,8 @@ function ReviewBar({
   }
 
   return (
-    <div data-testid="review-bar" className="rounded border border-slate-200 bg-slate-50 p-3">
-      <p className="text-sm text-slate-700">
+    <div data-testid="review-bar" className="rounded border border-[var(--color-line)] bg-[var(--color-canvas)] p-3">
+      <p className="text-sm text-[var(--color-ink-muted)]">
         Review this before you plan anything. Accepting records that it matches your brief;
         rejecting keeps the analysis but marks it as not usable.
       </p>
@@ -349,7 +349,7 @@ function ReviewBar({
         onChange={(event) => setNote(event.target.value)}
         placeholder="Optional note"
         aria-label="Review note"
-        className="mt-2 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+        className="mt-2 w-full rounded border border-[var(--color-line-strong)] px-2 py-1 text-sm"
       />
       <div className="mt-2 flex gap-2">
         <button
@@ -386,7 +386,7 @@ function NotAnalyzed({
   return (
     <section className="card p-6" id="analysis">
       <h2 className="section-title">Analysis</h2>
-      <p className="mt-2 text-sm text-slate-600">
+      <p className="mt-2 text-sm text-[var(--color-ink-muted)]">
         Analysis reads your assignment specification, works out what is required and why, and
         shows you what is explicit, inferred, or still missing. It never changes your
         specification.
@@ -450,7 +450,7 @@ export function AnalysisPanel({
     <section className="card p-6" id="analysis">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 className="section-title">Analysis</h2>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-[var(--color-ink-subtle)]">
           {confidenceLabel(analysis.confidence)} confidence · v{analysis.analysis_version}
           {analysis.edited ? " · corrected" : ""}
         </p>
@@ -474,7 +474,7 @@ export function AnalysisPanel({
       </div>
 
       {analysis.summary ? (
-        <p data-testid="analysis-summary" className="mt-4 text-sm text-slate-700">
+        <p data-testid="analysis-summary" className="mt-4 text-sm text-[var(--color-ink-muted)]">
           {analysis.summary}
         </p>
       ) : null}
@@ -482,18 +482,18 @@ export function AnalysisPanel({
       {/* Classification */}
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
-          <p className="text-sm font-medium text-slate-600">Assignment type</p>
+          <p className="text-sm font-medium text-[var(--color-ink-muted)]">Assignment type</p>
           <ul data-testid="classification-types" className="mt-1 space-y-1">
             {analysis.assignment_types.length === 0 ? (
-              <li className="text-sm text-slate-500">Uncertain</li>
+              <li className="text-sm text-[var(--color-ink-subtle)]">Uncertain</li>
             ) : (
               analysis.assignment_types.map((item) => (
-                <li key={item.type} className="text-sm text-slate-700">
+                <li key={item.type} className="text-sm text-[var(--color-ink-muted)]">
                   {assignmentTypeLabel(item.type)}
                   <ConfidenceTag confidence={item.confidence} />
                   {item.source === "USER" ? <OriginTag source="USER_NOTE" /> : null}
                   {item.rationale ? (
-                    <span className="block text-xs text-slate-500">{item.rationale}</span>
+                    <span className="block text-xs text-[var(--color-ink-subtle)]">{item.rationale}</span>
                   ) : null}
                 </li>
               ))
@@ -501,17 +501,17 @@ export function AnalysisPanel({
           </ul>
         </div>
         <div>
-          <p className="text-sm font-medium text-slate-600">Academic domain</p>
+          <p className="text-sm font-medium text-[var(--color-ink-muted)]">Academic domain</p>
           <ul data-testid="classification-domains" className="mt-1 space-y-1">
             {analysis.academic_domains.length === 0 ? (
-              <li className="text-sm text-slate-500">Uncertain</li>
+              <li className="text-sm text-[var(--color-ink-subtle)]">Uncertain</li>
             ) : (
               analysis.academic_domains.map((item) => (
-                <li key={item.domain} className="text-sm text-slate-700">
+                <li key={item.domain} className="text-sm text-[var(--color-ink-muted)]">
                   {academicDomainLabel(item.domain)}
                   <ConfidenceTag confidence={item.confidence} />
                   {item.rationale ? (
-                    <span className="block text-xs text-slate-500">{item.rationale}</span>
+                    <span className="block text-xs text-[var(--color-ink-subtle)]">{item.rationale}</span>
                   ) : null}
                 </li>
               ))
@@ -548,15 +548,15 @@ export function AnalysisPanel({
               <li
                 key={requirement.key}
                 data-testid="requirement"
-                className="rounded border border-slate-200 p-2"
+                className="rounded border border-[var(--color-line)] p-2"
               >
-                <p className="text-sm font-medium text-slate-800">
+                <p className="text-sm font-medium text-[var(--color-ink)]">
                   {requirement.key}. {requirement.title}
                 </p>
                 {requirement.description ? (
-                  <p className="mt-0.5 text-sm text-slate-700">{requirement.description}</p>
+                  <p className="mt-0.5 text-sm text-[var(--color-ink-muted)]">{requirement.description}</p>
                 ) : null}
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
                   {requirementCategoryLabel(requirement.category)} ·{" "}
                   {requirement.priority.toLowerCase()} priority ·{" "}
                   {requirement.required ? "required" : "optional"}
@@ -577,7 +577,7 @@ export function AnalysisPanel({
               <Bullet key={constraint.id}>
                 {constraint.title}
                 {constraint.value ? `: ${constraint.value}` : ""}
-                <span className="ms-1 text-xs text-slate-500">
+                <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">
                   ({constraint.severity.toLowerCase()} {constraint.type.toLowerCase().replace(/_/g, " ")})
                 </span>
               </Bullet>
@@ -617,11 +617,11 @@ export function AnalysisPanel({
             {analysis.risks.map((risk) => (
               <Bullet key={risk.key}>
                 {risk.description}
-                <span className="ms-1 text-xs text-slate-500">
+                <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">
                   {findingSeverityLabel(risk.severity)} · {risk.affected_area}
                 </span>
                 {risk.mitigation_hint ? (
-                  <span className="block text-xs text-slate-500">{risk.mitigation_hint}</span>
+                  <span className="block text-xs text-[var(--color-ink-subtle)]">{risk.mitigation_hint}</span>
                 ) : null}
               </Bullet>
             ))}
@@ -672,20 +672,20 @@ export function AnalysisPanel({
               <li
                 key={deliverable.key}
                 data-testid="deliverable"
-                className="rounded border border-slate-200 p-2"
+                className="rounded border border-[var(--color-line)] p-2"
               >
-                <p className="text-sm font-medium text-slate-800">
+                <p className="text-sm font-medium text-[var(--color-ink)]">
                   {deliverable.title}
                   {deliverable.format ? (
-                    <span className="ms-2 text-xs font-normal text-slate-500">
+                    <span className="ms-2 text-xs font-normal text-[var(--color-ink-subtle)]">
                       {deliverable.format}
                     </span>
                   ) : null}
                 </p>
                 {deliverable.description ? (
-                  <p className="mt-0.5 text-sm text-slate-700">{deliverable.description}</p>
+                  <p className="mt-0.5 text-sm text-[var(--color-ink-muted)]">{deliverable.description}</p>
                 ) : null}
-                <p className="mt-0.5 text-xs text-slate-500">
+                <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
                   {deliverable.required === null
                     ? "Whether it is required is unknown"
                     : deliverable.required
@@ -698,7 +698,7 @@ export function AnalysisPanel({
                   <ConfidenceTag confidence={deliverable.confidence} />
                 </p>
                 {deliverable.verification_needs.length > 0 ? (
-                  <p className="mt-0.5 text-xs text-slate-500">
+                  <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
                     To verify: {deliverable.verification_needs.join(", ")}
                   </p>
                 ) : null}
@@ -711,9 +711,9 @@ export function AnalysisPanel({
       {analysis.evaluation.criteria.length > 0 || analysis.evaluation.implied_quality_expectations.length > 0 ? (
         <Section title="How it will be judged">
           {analysis.evaluation.rubric_available ? (
-            <p className="text-sm text-slate-700">A rubric was provided in your brief.</p>
+            <p className="text-sm text-[var(--color-ink-muted)]">A rubric was provided in your brief.</p>
           ) : (
-            <p className="text-sm text-slate-700">
+            <p className="text-sm text-[var(--color-ink-muted)]">
               No rubric was provided, so these expectations are inferred and you should confirm
               them with your instructor.
             </p>
@@ -728,7 +728,7 @@ export function AnalysisPanel({
                     <OriginTag source="AI_INFERENCE" />
                   ) : null}
                   {criterion.description ? (
-                    <span className="block text-xs text-slate-500">{criterion.description}</span>
+                    <span className="block text-xs text-[var(--color-ink-subtle)]">{criterion.description}</span>
                   ) : null}
                 </Bullet>
               ))}
@@ -745,7 +745,7 @@ export function AnalysisPanel({
             </ul>
           ) : null}
           {analysis.evaluation.missing_rubric_information.length > 0 ? (
-            <p className="mt-2 text-xs text-amber-700">
+            <p className="mt-2 text-xs text-[var(--color-caution)]">
               Still unknown: {analysis.evaluation.missing_rubric_information.join(", ")}
             </p>
           ) : null}
@@ -755,24 +755,24 @@ export function AnalysisPanel({
       {analysis.scope.overall !== "UNKNOWN" ? (
         <Section title="Scope">
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
-            <dt className="text-slate-600">Breadth</dt>
-            <dd className="text-slate-800">{scopeLevelLabel(analysis.scope.breadth.level)}</dd>
-            <dt className="text-slate-600">Depth</dt>
-            <dd className="text-slate-800">{scopeLevelLabel(analysis.scope.depth.level)}</dd>
-            <dt className="text-slate-600">Research</dt>
-            <dd className="text-slate-800">
+            <dt className="text-[var(--color-ink-muted)]">Breadth</dt>
+            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.breadth.level)}</dd>
+            <dt className="text-[var(--color-ink-muted)]">Depth</dt>
+            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.depth.level)}</dd>
+            <dt className="text-[var(--color-ink-muted)]">Research</dt>
+            <dd className="text-[var(--color-ink)]">
               {scopeLevelLabel(analysis.scope.research_intensity.level)}
             </dd>
-            <dt className="text-slate-600">Writing</dt>
-            <dd className="text-slate-800">
+            <dt className="text-[var(--color-ink-muted)]">Writing</dt>
+            <dd className="text-[var(--color-ink)]">
               {scopeLevelLabel(analysis.scope.writing_intensity.level)}
             </dd>
-            <dt className="text-slate-600">Overall</dt>
-            <dd className="text-slate-800">{scopeLevelLabel(analysis.scope.overall)}</dd>
-            <dt className="text-slate-600">Requirements</dt>
-            <dd className="text-slate-800">{analysis.scope.requirement_count}</dd>
-            <dt className="text-slate-600">Deliverables</dt>
-            <dd className="text-slate-800">{analysis.scope.deliverable_count}</dd>
+            <dt className="text-[var(--color-ink-muted)]">Overall</dt>
+            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.overall)}</dd>
+            <dt className="text-[var(--color-ink-muted)]">Requirements</dt>
+            <dd className="text-[var(--color-ink)]">{analysis.scope.requirement_count}</dd>
+            <dt className="text-[var(--color-ink-muted)]">Deliverables</dt>
+            <dd className="text-[var(--color-ink)]">{analysis.scope.deliverable_count}</dd>
           </dl>
         </Section>
       ) : null}
@@ -783,11 +783,11 @@ export function AnalysisPanel({
             {analysis.work_areas.map((area) => (
               <Bullet key={area.key}>
                 {area.title}
-                <span className="ms-1 text-xs text-slate-500">
+                <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">
                   {requirementCategoryLabel(area.category)} · {sourceKindLabel(area.origin)}
                 </span>
                 {area.description ? (
-                  <span className="block text-xs text-slate-500">{area.description}</span>
+                  <span className="block text-xs text-[var(--color-ink-subtle)]">{area.description}</span>
                 ) : null}
               </Bullet>
             ))}
@@ -801,7 +801,7 @@ export function AnalysisPanel({
             {analysis.dependencies.map((dependency, index) => (
               <Bullet key={index}>
                 {dependency.predecessor} must come before {dependency.successor}
-                <span className="ms-1 text-xs text-slate-500">({dependency.kind})</span>
+                <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">({dependency.kind})</span>
               </Bullet>
             ))}
           </ul>
@@ -814,9 +814,9 @@ export function AnalysisPanel({
             {analysis.verification.items.map((item, index) => (
               <Bullet key={index}>
                 {item.title}
-                <span className="ms-1 text-xs text-slate-500">via {item.method}</span>
+                <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">via {item.method}</span>
                 {item.description ? (
-                  <span className="block text-xs text-slate-500">{item.description}</span>
+                  <span className="block text-xs text-[var(--color-ink-subtle)]">{item.description}</span>
                 ) : null}
               </Bullet>
             ))}
@@ -832,7 +832,7 @@ export function AnalysisPanel({
         </Section>
       ) : null}
 
-      <p className="mt-6 text-xs text-slate-400">
+      <p className="mt-6 text-xs text-[var(--color-ink-subtle)]">
         Analysis is generated, not authoritative. Your specification stays the source of truth,
         and {analysis.provider}
         {analysis.model ? `/${analysis.model}` : ""} produced this with prompt{" "}

@@ -20,7 +20,7 @@ export function SummarySection({ specification }: { specification: AssignmentSpe
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="section-title">Specification summary</h2>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             Version {version} · last changed {formatDate(updatedAt)}
           </p>
         </div>
@@ -61,11 +61,11 @@ export function SummarySection({ specification }: { specification: AssignmentSpe
       </dl>
 
       {requirementsByStatus.length ? (
-        <div className="mt-5 border-t border-slate-100 pt-5">
-          <h3 className="text-sm font-semibold text-slate-900">Requirements by status</h3>
+        <div className="mt-5 border-t border-[var(--color-surface-sunken)] pt-5">
+          <h3 className="text-sm font-semibold text-[var(--color-ink)]">Requirements by status</h3>
           <ul className="mt-2 flex flex-wrap gap-2 text-xs">
             {requirementsByStatus.map(([status, count]) => (
-              <li className="rounded-full bg-slate-100 px-3 py-1 font-semibold text-slate-600" key={status}>
+              <li className="rounded-full bg-[var(--color-surface-sunken)] px-3 py-1 font-semibold text-[var(--color-ink-muted)]" key={status}>
                 {humanize(status)} {count}
               </li>
             ))}
@@ -79,8 +79,8 @@ export function SummarySection({ specification }: { specification: AssignmentSpe
 function Fact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <dt className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</dt>
-      <dd className="mt-1 text-sm font-semibold text-slate-900">{children}</dd>
+      <dt className="text-xs font-semibold uppercase tracking-wide text-[var(--color-ink-subtle)]">{label}</dt>
+      <dd className="mt-1 text-sm font-semibold text-[var(--color-ink)]">{children}</dd>
     </div>
   );
 }
