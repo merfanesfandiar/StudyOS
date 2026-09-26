@@ -322,3 +322,209 @@ class AuditEventType(StrEnum):
     ASSIGNMENT_ANALYSIS_MARKED_STALE = "ASSIGNMENT_ANALYSIS_MARKED_STALE"
     ASSIGNMENT_CLASSIFICATION_CORRECTED = "ASSIGNMENT_CLASSIFICATION_CORRECTED"
     ASSIGNMENT_ANALYSIS_QUESTION_ANSWERED = "ASSIGNMENT_ANALYSIS_QUESTION_ANSWERED"
+
+    # Phase 4: planning lifecycle. Recorded so a plan's history is answerable
+    # without reading the run table, and so the assignment activity feed can tell
+    # the student who changed what.
+    PLAN_GENERATED = "PLAN_GENERATED"
+    PLAN_GENERATION_FAILED = "PLAN_GENERATION_FAILED"
+    PLAN_REGENERATED = "PLAN_REGENERATED"
+    PLAN_EDITED = "PLAN_EDITED"
+    PLAN_TASK_UPDATED = "PLAN_TASK_UPDATED"
+    PLAN_TASK_ADDED = "PLAN_TASK_ADDED"
+    PLAN_TASK_DELETED = "PLAN_TASK_DELETED"
+    PLAN_TASKS_REORDERED = "PLAN_TASKS_REORDERED"
+    PLAN_APPROVED = "PLAN_APPROVED"
+    PLAN_MARKED_STALE = "PLAN_MARKED_STALE"
+    PLAN_PREFERENCES_UPDATED = "PLAN_PREFERENCES_UPDATED"
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: the Academic Planning Engine.
+#
+# Planning vocabulary is deliberately academic-domain-agnostic. There is no
+# "write_unit_test" or "run_experiment" task type: the same task graph has to
+# serve a proof, a literature review and a programming project. Domain-specific
+# wording is carried by the task title, description and acceptance criteria,
+# which is where it belongs.
+# ---------------------------------------------------------------------------
+
+
+class PlanStatus(StrEnum):
+    """Lifecycle of an academic work plan.
+
+    A plan only becomes authoritative at ``APPROVED``. ``STALE`` is not a
+    terminal verdict: it means the analysis the plan was built from has moved on,
+    so the plan is still readable but must not be worked from until it is
+    regenerated or re-approved against the current analysis.
+    """
+
+    DRAFT = "DRAFT"
+    GENERATING = "GENERATING"
+    READY_FOR_REVIEW = "READY_FOR_REVIEW"
+    APPROVED = "APPROVED"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    ARCHIVED = "ARCHIVED"
+    STALE = "STALE"
+
+
+class AcademicTaskType(StrEnum):
+    """What kind of academic work a task represents.
+
+    Extensible on purpose. An unrecognised value from a future provider must
+    degrade to ``OTHER`` rather than fail a run, so the stored column is a
+    plain string and this enum is the vocabulary, not a database constraint.
+    """
+
+    READ = "READ"
+    RESEARCH = "RESEARCH"
+    UNDERSTAND = "UNDERSTAND"
+    ANALYZE = "ANALYZE"
+    SOLVE = "SOLVE"
+    PROVE = "PROVE"
+    WRITE = "WRITE"
+    IMPLEMENT = "IMPLEMENT"
+    EXPERIMENT = "EXPERIMENT"
+    COLLECT_DATA = "COLLECT_DATA"
+    ANALYZE_DATA = "ANALYZE_DATA"
+    DESIGN = "DESIGN"
+    REVIEW = "REVIEW"
+    REVISE = "REVISE"
+    PRACTICE = "PRACTICE"
+    PRESENT = "PRESENT"
+    VERIFY = "VERIFY"
+    SUBMIT = "SUBMIT"
+    OTHER = "OTHER"
+
+
+class AcademicTaskStatus(StrEnum):
+    """Student-owned progress on a single task.
+
+    ``BLOCKED`` exists because "I cannot start this because a prerequisite is
+    unfinished" is the single most common real state in a plan, and hiding it
+    behind "not started" makes a dependency graph useless in practice.
+    """
+
+    PENDING = "PENDING"
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    COMPLETED = "COMPLETED"
+    SKIPPED = "SKIPPED"
+
+
+class AcademicTaskPriority(StrEnum):
+    """How urgently a task matters within the plan.
+
+    Distinct from the assignment's own requirement priority. A task can be
+    critical to the plan while addressing a low-priority requirement, and vice
+    versa, so conflating them would lose real information.
+    """
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class EffortLevel(StrEnum):
+    """Coarse effort band. Never a guarantee.
+
+    The minute range on a task is an AI estimate and is labelled as one
+    everywhere it surfaces. ``UNKNOWN`` is a real value rather than a zero:
+    pretending an unknown estimate is small would quietly corrupt the schedule
+    risk check.
+    """
+
+    VERY_LOW = "VERY_LOW"
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    VERY_HIGH = "VERY_HIGH"
+    UNKNOWN = "UNKNOWN"
+
+
+class PlanningStyle(StrEnum):
+    """How much structure the student wants generated.
+
+    A presentation preference. It changes how the planner decomposes work, never
+    which requirements are authoritative.
+    """
+
+    MINIMAL = "MINIMAL"
+    BALANCED = "BALANCED"
+    DETAILED = "DETAILED"
+
+
+class GuidanceLevel(StrEnum):
+    """How much explanation the planner attaches to each task."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+
+
+class SessionLength(StrEnum):
+    """Preferred working-session length, used to size task chunks."""
+
+    SHORT = "SHORT"
+    MEDIUM = "MEDIUM"
+    LONG = "LONG"
+
+
+class AIMode(StrEnum):
+    """The student's model-quality preference.
+
+    ``AUTO`` delegates the choice to the router. The other three bias it. None of
+    them can bypass validation, safety checks or human approval, which is why
+    this is a preference and not a switch.
+    """
+
+    FAST = "FAST"
+    BALANCED = "BALANCED"
+    DEEP = "DEEP"
+    AUTO = "AUTO"
+
+
+class ModelTier(StrEnum):
+    """Which of the two configured models a request was routed to.
+
+    Named by capability, never by provider. The product must not leak vendor or
+    model names into the domain layer or the default UI.
+    """
+
+    EFFICIENT = "EFFICIENT"
+    ADVANCED = "ADVANCED"
+
+
+class ComplexityLevel(StrEnum):
+    """Normalised complexity of an assignment for routing and plan shaping."""
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    VERY_HIGH = "VERY_HIGH"
+
+
+class PlanningRunStatus(StrEnum):
+    """Lifecycle of a single plan generation attempt.
+
+    Mirrors ``AnalysisRunStatus`` so the two AI subsystems are auditable the
+    same way: what was asked, which model answered, what it cost, and what
+    failed.
+    """
+
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class PlanTrigger(StrEnum):
+    """Why a plan version exists."""
+
+    GENERATED = "GENERATED"
+    REGENERATED = "REGENERATED"
+    EDITED = "EDITED"
+    APPROVED = "APPROVED"

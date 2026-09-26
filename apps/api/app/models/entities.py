@@ -24,6 +24,10 @@ from sqlalchemy.types import Uuid
 
 from app.db.base import Base
 from app.models.enums import (
+    AcademicTaskPriority,
+    AcademicTaskStatus,
+    AcademicTaskType,
+    AIMode,
     AnalysisReviewStatus,
     AnalysisRunStatus,
     AssignmentStatus,
@@ -33,11 +37,19 @@ from app.models.enums import (
     ConstraintType,
     DeliverableStatus,
     DeliverableType,
+    EffortLevel,
+    GuidanceLevel,
+    ModelTier,
     NotificationType,
+    PlanStatus,
+    PlanTrigger,
+    PlanningRunStatus,
+    PlanningStyle,
     QuestionStatus,
     RequirementPriority,
     RequirementStatus,
     RequirementType,
+    SessionLength,
     TechnologyCategory,
     WorkspaceRole,
 )
@@ -214,6 +226,16 @@ class Assignment(TimestampMixin, Base):
         back_populates="assignment",
         cascade="all, delete-orphan",
         order_by="AnalysisRun.started_at",
+    )
+    plans: Mapped[list[AcademicWorkPlan]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AcademicWorkPlan.version",
+    )
+    planning_runs: Mapped[list[PlanningRun]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="PlanningRun.started_at",
     )
 
 
@@ -791,3 +813,430 @@ class AnalysisClassification(TimestampMixin, Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     analysis: Mapped[AssignmentAnalysis] = relationship(back_populates="classifications")
+
+
+# ---------------------------------------------------------------------------
+# Phase 4: the Academic Planning Engine.
+#
+# A plan is a versioned, human-approved projection of an analysis into ordered
+# academic tasks. Three rules shaped these tables:
+#
+# 1. Plans are immutable versions. Editing a plan creates the next version rather
+#    than mutating the approved one, so "what the student approved" stays
+#    answerable after they change their mind.
+# 2. Task-to-requirement links are rows, not embedded JSON, because traceability
+#    is the feature that makes a plan trustworthy and it has to be queryable and
+#    enforceable.
+# 3. Task dependencies are rows rather than an array so cycle detection can run
+#    in SQL and in the validator without re-parsing a blob.
+# ---------------------------------------------------------------------------
+
+
+class AcademicWorkPlan(TimestampMixin, Base):
+    """A versioned, reviewable plan of academic work for one assignment."""
+
+    __tablename__ = "academic_work_plans"
+    __table_args__ = (
+        UniqueConstraint("assignment_id", "version", name="uq_work_plan_assignment_version"),
+        Index("ix_academic_work_plans_assignment_id", "assignment_id"),
+        Index("ix_academic_work_plans_analysis_id", "analysis_id"),
+        Index(
+            "ix_academic_work_plans_assignment_status",
+            "assignment_id",
+            "status",
+        ),
+        Index("ix_academic_work_plans_plan_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The analysis this plan was generated from. The FK is SET NULL rather than
+    #: CASCADE on purpose: deleting an analysis must not silently delete approved
+    #: student work. The plan survives and reports itself as orphaned instead.
+    analysis_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_analyses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Monotonic per-assignment version, 1 for the first plan. A plan is never
+    #: updated in place across versions; this is the authoritative ordering.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: Why this version exists. Shown to the student so a regeneration is legible
+    #: rather than surprising.
+    reason: Mapped[str] = mapped_column(String(200), nullable=False, default=PlanTrigger.GENERATED.value)
+    trigger: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=PlanTrigger.GENERATED.value
+    )
+    #: Sections the model changed relative to the previous version, as plan-relative
+    #: keys such as ``tasks:3`` or ``milestones``. ``None`` means a first version.
+    changed_sections: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=PlanStatus.DRAFT.value, index=True
+    )
+    objectives: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    #: The validated plan payload: tasks, milestones, verification points, effort
+    #: and risk. Kept as JSON for the same reason the analysis payload is: it is a
+    #: document the model produced, it is versioned wholesale, and the queryable
+    #: projections below are what the database must enforce.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    estimated_effort: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=EffortLevel.UNKNOWN.value
+    )
+    min_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Set when the source analysis moved on. A stale plan stays readable but
+    #: cannot be approved or treated as current.
+    is_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stale_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approved_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Deterministic key over assignment + analysis + planner prompt + model, so a
+    #: repeated identical request does not bill twice.
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    assignment: Mapped[Assignment] = relationship(back_populates="plans")
+    analysis: Mapped[AssignmentAnalysis | None] = relationship(foreign_keys=[analysis_id])
+    approved_by: Mapped[User | None] = relationship(foreign_keys=[approved_by_id])
+    tasks: Mapped[list[PlanTask]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="(PlanTask.position, PlanTask.created_at)",
+    )
+    task_requirements: Mapped[list[PlanTaskRequirement]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+    task_deliverables: Mapped[list[PlanTaskDeliverable]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+    dependencies: Mapped[list[PlanTaskDependency]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+    milestones: Mapped[list[PlanMilestone]] = relationship(
+        back_populates="plan",
+        cascade="all, delete-orphan",
+        order_by="(PlanMilestone.position, PlanMilestone.created_at)",
+    )
+    runs: Mapped[list[PlanningRun]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
+
+
+class PlanTask(Base):
+    """One unit of academic work. Generic by design: no task assumes code."""
+
+    __tablename__ = "plan_tasks"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "key", name="uq_plan_task_plan_key"),
+        Index("ix_plan_tasks_plan_id", "plan_id"),
+        Index("ix_plan_tasks_plan_status", "plan_id", "status"),
+        Index("ix_plan_tasks_type", "type"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: Stable plan-local key (``T1``, ``T2``). Unlike the database id this is what
+    #: the model emits and what dependency edges reference, so it must survive a
+    #: regeneration that preserves unrelated tasks.
+    key: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=AcademicTaskType.OTHER.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AcademicTaskStatus.PENDING.value
+    )
+    priority: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AcademicTaskPriority.MEDIUM.value
+    )
+    #: Topological order within the plan. Renumbered on reorder so it always
+    #: reflects the current graph rather than the original generation order.
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    estimated_effort: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=EffortLevel.UNKNOWN.value
+    )
+    min_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    verification_method: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    acceptance_criteria: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    resources: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: True when the student added or edited this task. Regeneration preserves
+    #: user-authored tasks and must never overwrite them.
+    is_user_authored: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    plan: Mapped[AcademicWorkPlan] = relationship(back_populates="tasks")
+    requirement_links: Mapped[list[PlanTaskRequirement]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
+    deliverable_links: Mapped[list[PlanTaskDeliverable]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
+    )
+    predecessors: Mapped[list[PlanTaskDependency]] = relationship(
+        back_populates="successor",
+        cascade="all, delete-orphan",
+        foreign_keys="PlanTaskDependency.successor_id",
+    )
+    successors: Mapped[list[PlanTaskDependency]] = relationship(
+        back_populates="predecessor",
+        cascade="all, delete-orphan",
+        foreign_keys="PlanTaskDependency.predecessor_id",
+    )
+
+
+class PlanTaskRequirement(Base):
+    """Traceability edge: this task exists because of this requirement.
+
+    The requirement key is stored as text rather than a foreign key on purpose.
+    A requirement key is a planning-contract-local reference (``R3``), not a
+    database id, and the same key can be a normalised requirement or a work area
+    reference. The FK that matters is to the plan: dropping a plan drops its
+    traceability, and dropping an analysis does not.
+    """
+
+    __tablename__ = "plan_task_requirements"
+    __table_args__ = (
+        UniqueConstraint(
+            "task_id", "requirement_key", name="uq_plan_task_requirement"
+        ),
+        Index("ix_plan_task_requirements_plan_id", "plan_id"),
+        Index("ix_plan_task_requirements_task_id", "task_id"),
+        Index("ix_plan_task_requirements_key", "plan_id", "requirement_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("plan_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    requirement_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    plan: Mapped[AcademicWorkPlan] = relationship(back_populates="task_requirements")
+    task: Mapped[PlanTask] = relationship(back_populates="requirement_links")
+
+
+class PlanTaskDeliverable(Base):
+    """Traceability edge: this task contributes to this deliverable."""
+
+    __tablename__ = "plan_task_deliverables"
+    __table_args__ = (
+        UniqueConstraint("task_id", "deliverable_key", name="uq_plan_task_deliverable"),
+        Index("ix_plan_task_deliverables_plan_id", "plan_id"),
+        Index("ix_plan_task_deliverables_task_id", "task_id"),
+        Index("ix_plan_task_deliverables_key", "plan_id", "deliverable_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("plan_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    deliverable_key: Mapped[str] = mapped_column(String(40), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    plan: Mapped[AcademicWorkPlan] = relationship(back_populates="task_deliverables")
+    task: Mapped[PlanTask] = relationship(back_populates="deliverable_links")
+
+
+class PlanTaskDependency(Base):
+    """A directed edge ``predecessor -> successor`` in the task graph.
+
+    Self-references are named explicitly so Alembic can round-trip them. The
+    database cannot prevent a cycle across rows, so the deterministic validator
+    in ``app/modules/planning/graph.py`` is the authority on that; the service
+    refuses to persist a plan that has not passed it.
+    """
+
+    __tablename__ = "plan_task_dependencies"
+    __table_args__ = (
+        UniqueConstraint(
+            "predecessor_id", "successor_id", name="uq_plan_task_dependency"
+        ),
+        Index("ix_plan_task_dependencies_plan_id", "plan_id"),
+        Index("ix_plan_task_dependencies_predecessor", "predecessor_id"),
+        Index("ix_plan_task_dependencies_successor", "successor_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    predecessor_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", ondelete="CASCADE", name="fk_plan_dependency_predecessor"),
+        nullable=False,
+    )
+    successor_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", ondelete="CASCADE", name="fk_plan_dependency_successor"),
+        nullable=False,
+    )
+    #: Why this ordering exists, shown to the student when they ask "why is this
+    #: here first?".
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    plan: Mapped[AcademicWorkPlan] = relationship(back_populates="dependencies")
+    predecessor: Mapped[PlanTask] = relationship(
+        back_populates="successors", foreign_keys=[predecessor_id]
+    )
+    successor: Mapped[PlanTask] = relationship(
+        back_populates="predecessors", foreign_keys=[successor_id]
+    )
+
+
+class PlanMilestone(Base):
+    """A meaningful checkpoint in the plan.
+
+    Deliberately few. A plan with thirty milestones has none, so the planner caps
+    them and the UI treats them as progress markers rather than tasks.
+    """
+
+    __tablename__ = "plan_milestones"
+    __table_args__ = (
+        UniqueConstraint("plan_id", "key", name="uq_plan_milestone_plan_key"),
+        Index("ix_plan_milestones_plan_id", "plan_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    plan_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    key: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AcademicTaskStatus.PENDING.value
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    plan: Mapped[AcademicWorkPlan] = relationship(back_populates="milestones")
+
+
+class PlanningRun(TimestampMixin, Base):
+    """One execution of the planner. Telemetry only, never chain-of-thought.
+
+    Mirrors ``AnalysisRun`` so both AI subsystems answer the same operational
+    questions: which model ran, on what, for how long, at what cost, and what
+    went wrong. ``routing_reason`` is a one-line explanation written for a human,
+    not the router's internal scoring.
+    """
+
+    __tablename__ = "planning_runs"
+    __table_args__ = (
+        Index("ix_planning_runs_assignment_id", "assignment_id"),
+        Index("ix_planning_runs_plan_id", "plan_id"),
+        Index("ix_planning_runs_status", "status"),
+        Index("ix_planning_runs_assignment_started", "assignment_id", "started_at"),
+        Index("ix_planning_runs_idempotency_key", "idempotency_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    plan_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=PlanningRunStatus.QUEUED.value
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(String(160), nullable=False)
+    model_tier: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ModelTier.EFFICIENT.value
+    )
+    #: Concise, human-readable selection explanation. Never internal reasoning.
+    routing_reason: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    routing_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    complexity: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM")
+    #: Set when this run fell back from the advanced tier to the efficient one.
+    fell_back_from_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    analysis_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    plan: Mapped[AcademicWorkPlan | None] = relationship(back_populates="runs")
+    assignment: Mapped[Assignment] = relationship(back_populates="planning_runs")
+    triggered_by: Mapped[User | None] = relationship(foreign_keys=[triggered_by_id])
+
+
+class PlanningPreference(Base):
+    """Per-workspace planning and AI preferences.
+
+    Workspace-scoped rather than user-scoped on purpose: a future shared workspace
+    should plan consistently for everyone in it, and per-user duplication would
+    make two members of the same course see different plans for the same brief.
+    """
+
+    __tablename__ = "planning_preferences"
+    __table_args__ = (Index("ix_planning_preferences_workspace_id", "workspace_id"),)
+
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("workspaces.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    planning_style: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=PlanningStyle.BALANCED.value
+    )
+    guidance_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=GuidanceLevel.MEDIUM.value
+    )
+    session_length: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=SessionLength.MEDIUM.value
+    )
+    ai_mode: Mapped[str] = mapped_column(String(20), nullable=False, default=AIMode.AUTO.value)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

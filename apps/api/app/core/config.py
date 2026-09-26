@@ -41,6 +41,23 @@ class Settings(BaseSettings):
     #: Cost per 1,000 tokens, used only to record an estimate for a run.
     analysis_cost_per_1k_tokens: float = Field(default=0.0, ge=0.0)
 
+    # ------------------------------------------------------------------
+    # Phase 4: the two-model planning architecture.
+    #
+    # The product deliberately never names a vendor or model in the domain
+    # layer. These settings map the two capability tiers onto whatever the
+    # deployment actually has, and the router only ever asks for EFFICIENT or
+    # ADVANCED. Pointing both tiers at the same model is a valid configuration
+    # and is what the mock provider does.
+    # ------------------------------------------------------------------
+    llm_efficient_model: str = Field(default="mock-academic-analyzer-v1")
+    llm_advanced_model: str = Field(default="mock-academic-analyzer-v1")
+    llm_planner_prompt_version: str = Field(default="academic_planner_v1")
+    planning_enabled: bool = Field(default=True)
+    planning_max_task_count: int = Field(default=60, ge=5, le=200)
+    planning_fallback_enabled: bool = Field(default=True)
+    planning_effort_hours_per_point: float = Field(default=45.0, ge=5.0, le=600.0)
+
     model_config = SettingsConfigDict(
         env_file=(".env", "../../.env"),
         env_file_encoding="utf-8",

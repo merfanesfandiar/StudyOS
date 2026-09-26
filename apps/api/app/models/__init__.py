@@ -1,4 +1,5 @@
 from app.models.entities import (
+    AcademicWorkPlan,
     AnalysisClassification,
     AnalysisQuestion,
     AnalysisRun,
@@ -15,6 +16,13 @@ from app.models.entities import (
     Document,
     EvaluationCriterion,
     Notification,
+    PlanMilestone,
+    PlanTask,
+    PlanTaskDeliverable,
+    PlanTaskDependency,
+    PlanTaskRequirement,
+    PlanningPreference,
+    PlanningRun,
     RequirementDependency,
     Tag,
     Technology,
@@ -24,6 +32,7 @@ from app.models.entities import (
 )
 
 __all__ = [
+    "AcademicWorkPlan",
     "AnalysisClassification",
     "AnalysisQuestion",
     "AnalysisRun",
@@ -40,6 +49,13 @@ __all__ = [
     "Document",
     "EvaluationCriterion",
     "Notification",
+    "PlanMilestone",
+    "PlanTask",
+    "PlanTaskDeliverable",
+    "PlanTaskDependency",
+    "PlanTaskRequirement",
+    "PlanningPreference",
+    "PlanningRun",
     "RequirementDependency",
     "Tag",
     "Technology",
