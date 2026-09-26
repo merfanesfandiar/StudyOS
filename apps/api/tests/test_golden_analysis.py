@@ -12,9 +12,12 @@ import json
 import pytest
 from app.ai import heuristics
 from app.ai.evaluation import run_evaluation
+from app.ai.evaluation.metrics import coverage_of, tally_grounding
+from app.ai.evaluation.runner import _context, allowed_sources
 from app.ai.golden import golden_fixtures
 from app.ai.parsing import parse_analyzer_output
 from app.ai.specialized import SpecializationContext, analyze_specializations
+from app.models.enums import SourceKind
 
 REQUIRED_FIXTURES = {
     "mathematics_proof",
@@ -64,10 +67,11 @@ async def test_evaluation_passes_every_fixture() -> None:
     assert summary["fixtures"] >= 10
     assert summary["schema_validity"] == 1.0
     assert summary["classification_accuracy"] >= 0.9
-    assert summary["requirement_recall"] >= 0.9
+    assert summary["requirement_coverage"] >= 0.9
     assert summary["deliverable_recall"] >= 0.9
     assert summary["evidence_grounding"] == 1.0
     assert summary["hallucination_rate"] == 0.0
+    assert summary["assertions"] > 0, "grounding must be measured over real assertions"
 
 
 @pytest.mark.asyncio
@@ -76,14 +80,16 @@ async def test_evaluation_metrics_have_expected_keys() -> None:
     metrics = report.summary()
     for key in (
         "classification_accuracy",
-        "requirement_recall",
-        "ambiguity_rate",
-        "contradiction_rate",
+        "requirement_coverage",
+        "ambiguity_detection",
+        "contradiction_detection",
         "dependency_recall",
         "rubric_recall",
         "evidence_grounding",
         "hallucination_rate",
         "schema_validity",
+        "assertions",
+        "mutation_detection_rate",
     ):
         assert key in metrics
 
@@ -160,3 +166,65 @@ def test_ambiguity_and_contradiction_detection() -> None:
     result = heuristics.analyze(conflicting)
     assert result["contradictions"]
     assert result["contradictions"][0]["severity"] == "CRITICAL"
+
+
+# -- the metrics must be able to fail -------------------------------------
+# A suite that scores 1.0 on everything is worthless unless it can also reject a
+# broken analysis. These tests break the analysis deliberately and assert the
+# report notices.
+
+
+@pytest.mark.asyncio
+async def test_every_deliberate_defect_is_detected() -> None:
+    report = await run_evaluation()
+    blind = [item.name for item in report.mutations if not item.caught]
+    assert not blind, f"the evaluation is blind to: {blind}"
+    assert report.mutation_detection_rate == 1.0
+
+
+@pytest.mark.asyncio
+async def test_a_hallucinated_requirement_raises_the_hallucination_rate() -> None:
+    """The headline metric must respond to invented content, not just count ids."""
+    import copy
+
+    fixture = golden_fixtures()[0]
+    output = parse_analyzer_output(json.dumps(heuristics.analyze(fixture.payload)))
+    pools = allowed_sources(_context(fixture.payload, "golden"))
+
+    clean = tally_grounding(output, pools)
+    assert clean.ungrounded == 0
+
+    corrupted = copy.deepcopy(output)
+    corrupted.normalized_requirements[0].evidence = []
+    corrupted.normalized_requirements[0].source = SourceKind.EXPLICIT.value
+    dirty = tally_grounding(corrupted, pools)
+    assert dirty.ungrounded == 1
+    assert dirty.offenders, "a hallucination must be reported, not merely counted"
+
+
+@pytest.mark.asyncio
+async def test_an_honest_inference_is_not_counted_as_a_hallucination() -> None:
+    """The inverse control: flagging admitted uncertainty would make the metric lie."""
+    import copy
+
+    fixture = golden_fixtures()[0]
+    output = parse_analyzer_output(json.dumps(heuristics.analyze(fixture.payload)))
+    pools = allowed_sources(_context(fixture.payload, "golden"))
+
+    hedged = copy.deepcopy(output)
+    hedged.normalized_requirements[0].evidence = []
+    hedged.normalized_requirements[0].source = SourceKind.AI_INFERENCE.value
+
+    assert tally_grounding(hedged, pools).ungrounded == 0
+
+
+def test_requirement_coverage_can_be_measured_and_can_fail() -> None:
+    """Coverage is a rate against the brief's own wording, not a boolean."""
+    required = ["Prove the uniform convergence theorem", "State every theorem used"]
+
+    assert coverage_of(required, required) == 1.0
+    assert coverage_of(required, ["Prove the uniform convergence theorem"]) == 0.5
+    assert coverage_of(required, ["Discuss the weather forecast"]) == 0.0
+    assert coverage_of([], []) == 1.0
+    # A single shared common word must not count as coverage.
+    assert coverage_of(["Implement Dijkstra in Python"], ["Implement Bellman-Ford"]) < 0.99

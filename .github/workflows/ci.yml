@@ -57,6 +57,12 @@ jobs:
       - name: Test
         run: pytest -q
 
+      - name: Golden analysis evaluation
+        # Runs with the deterministic mock provider, so no model credential is
+        # needed. Fails the build if a fixture regresses or if the evaluation goes
+        # blind, i.e. stops detecting a deliberately broken analysis.
+        run: python -m app.ai.evaluation.report
+
       - name: Apply migrations
         env:
           DATABASE_URL: postgresql+asyncpg://studyos:studyos@localhost:5432/studyos

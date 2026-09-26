@@ -39,6 +39,12 @@ export function AssignmentBrief({
     event.preventDefault();
     const element = event.currentTarget;
     const form = new FormData(element);
+    const nextStatus = String(form.get("status") ?? assignment.status);
+    // The status is only sent when it actually changed. Echoing back the
+    // current value would be rejected after analysis, because ANALYZED and
+    // ANALYSIS_IN_PROGRESS are AI-owned and ANALYZED -> ANALYZED is not a
+    // legal transition, which made every edit fail once an analysis existed.
+    const statusChanged = nextStatus !== assignment.status;
     setPending(true);
     setError("");
     setNotice("");
@@ -48,7 +54,7 @@ export function AssignmentBrief({
         title: String(form.get("title") ?? ""),
         description: String(form.get("description") ?? "") || null,
         deadline: toUtcDateTime(String(form.get("deadline") ?? "")),
-        status: String(form.get("status") ?? assignment.status) as ClientSettableStatus,
+        ...(statusChanged ? { status: nextStatus as ClientSettableStatus } : {}),
       });
       setEditing(false);
       setNotice("Assignment details updated.");

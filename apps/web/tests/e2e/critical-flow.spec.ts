@@ -240,3 +240,61 @@ test("a second student cannot reach the first student's assignment", async ({ br
   await firstContext.close();
   await secondContext.close();
 });
+
+test("an assignment is analyzed, questioned, corrected, and accepted", async ({ page }) => {
+  await seedDraft(page);
+  await completeSpecification(page);
+
+  // Nothing is analyzed yet, and the panel says so instead of showing an error.
+  await expect(page.getByTestId("analyze")).toBeVisible();
+
+  await page.getByTestId("analyze").click();
+
+  // The panel must render a real, classified analysis rather than a shell.
+  await expect(page.getByTestId("analysis-summary")).toBeVisible();
+  await expect(page.getByTestId("classification-types")).toContainText(/programming/i);
+  await expect(page.getByTestId("review-bar")).toBeVisible();
+  await expect(page.getByTestId("requirement").first()).toBeVisible();
+
+  // Human control: the classification is the student's to correct.
+  await page.getByTestId("edit-classification").click();
+  await page.getByTestId("classification-editor").getByLabel(/essay/i).check();
+  await page.getByTestId("save-classification").click();
+  await expect(page.getByTestId("classification-types")).toContainText(/essay/i);
+
+  // A clarification question can be answered, and the answer is shown afterwards.
+  const question = page.getByTestId("clarification-question").first();
+  await question.getByRole("textbox").fill("Any length is fine.");
+  await question.getByTestId("answer-question").click();
+  await expect(page.getByText("Your answer: Any length is fine.")).toBeVisible();
+
+  // Accepting records the decision and is reflected in the assignment status.
+  await page.getByLabel("Review note").fill("Matches the sheet I was given.");
+  await page.getByTestId("accept-analysis").click();
+  await expect(page.getByText(/You accepted this analysis/)).toBeVisible();
+  await expect(page.getByText(/Matches the sheet I was given/)).toBeVisible();
+
+  // The review survives a reload, so it is server state and not local component state.
+  await page.reload();
+  await expect(page.getByText(/You accepted this analysis/)).toBeVisible();
+});
+
+test("editing the specification marks an existing analysis out of date", async ({ page }) => {
+  await seedDraft(page);
+  await completeSpecification(page);
+
+  await page.getByTestId("analyze").click();
+  await expect(page.getByTestId("analysis-summary")).toBeVisible();
+  // A fresh analysis is not stale, so no re-analysis prompt is offered yet.
+  await expect(page.getByTestId("reanalyze")).toHaveCount(0);
+
+  // Changing the brief invalidates any interpretation of it.
+  await page.getByRole("button", { name: "Edit details" }).click();
+  await page
+    .getByRole("textbox", { name: "Brief" })
+    .fill(`${BRIEF} Add a multiplayer mode with turn order enforced server side.`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+
+  await expect(page.getByText(/out of date/i)).toBeVisible();
+  await expect(page.getByTestId("reanalyze")).toBeEnabled();
+});

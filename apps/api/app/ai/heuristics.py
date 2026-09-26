@@ -94,14 +94,25 @@ def _norm(value: str | None) -> str:
 
 
 def _pattern(phrase: str) -> str:
-    escaped = re.escape(phrase)
+    """Match a phrase on word boundaries, tolerating a plural ``s``.
+
+    An optional plural is allowed because briefs say "unit test" where the keyword
+    list says "unit tests"; without it a legitimate match is silently lost.
+    """
+    escaped = re.escape(_norm(phrase))
     if phrase and phrase[0].isalnum() and phrase[-1].isalnum():
-        return rf"(?<!\w){escaped}(?!\w)"
+        return rf"(?<!\w){escaped}(?:e?s)?(?!\w)"
     return escaped
 
 
 def _count(haystack: str, phrase: str) -> int:
-    return len(re.findall(_pattern(phrase), haystack))
+    """Count phrase occurrences, case-insensitively.
+
+    The haystack is normalised here rather than at every call site: briefs are
+    written with capitals ("Java", "API"), and a case-sensitive match silently
+    classified an obviously programming assignment as OTHER.
+    """
+    return len(re.findall(_pattern(phrase), _norm(haystack)))
 
 
 def _tokens(text: str | None) -> set[str]:
@@ -111,9 +122,18 @@ def _tokens(text: str | None) -> set[str]:
 
 
 def _haystack(payload: dict[str, Any]) -> str:
+    """All the text a classification may legitimately be based on.
+
+    Course and technology data are included because "Advanced Programming" and a
+    declared Java 17 are direct evidence about the kind of work being asked for.
+    Omitting them made an obviously programming brief classify as OTHER.
+    """
     parts: list[str] = []
     assignment = payload.get("assignment", {})
     parts.extend([str(assignment.get("title") or ""), str(assignment.get("description") or "")])
+    # The course name lives inside the assignment object; the flat key is a
+    # fallback for payloads built by the golden dataset.
+    parts.append(str(assignment.get("course_name") or ""))
     parts.append(str(payload.get("course_name") or ""))
     for group in ("requirements", "constraints", "criteria", "deliverables"):
         for item in payload.get(group, []) or []:
@@ -125,10 +145,22 @@ def _haystack(payload: dict[str, Any]) -> str:
                     str(item.get("type") or ""),
                 ]
             )
+    for technology in payload.get("technologies", []) or []:
+        if isinstance(technology, dict):
+            parts.extend(
+                [
+                    str(technology.get("name") or ""),
+                    str(technology.get("category") or ""),
+                ]
+            )
+        else:
+            parts.append(str(technology))
+    for tag in payload.get("tags", []) or []:
+        parts.append(str(tag.get("name") if isinstance(tag, dict) else tag))
     for document in payload.get("document_texts", []) or []:
         parts.append(str(document.get("text") or ""))
     parts.append(str(payload.get("user_notes") or ""))
-    return " \n ".join(part for part in parts if part)
+    return _norm(" \n ".join(part for part in parts if part))
 
 
 def _match_requirements(text: str, requirements: list[dict[str, Any]]) -> list[str]:

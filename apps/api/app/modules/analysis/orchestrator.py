@@ -41,10 +41,12 @@ from app.models import (
 )
 from app.models.enums import (
     AnalysisRunStatus,
+    AssignmentStatus,
     ClassificationKind,
     ClassificationSource,
     QuestionStatus,
 )
+from app.modules.analysis import service
 from app.modules.analysis.input_builder import (
     ANALYSIS_VERSION,
     AnalyzerInput,
@@ -53,6 +55,7 @@ from app.modules.analysis.input_builder import (
     canonical_json,
     sha256_hex,
 )
+from app.modules.assignments.lifecycle import ensure_transition_allowed
 from app.schemas.analysis import AnalyzerOutput
 
 #: Errors that mean "the model, not the assignment, misbehaved".
@@ -176,9 +179,7 @@ async def run_analysis(
     )
     # A forced re-run must be a distinct row, so it gets a distinct key rather
     # than colliding with the analysis it deliberately replaces.
-    idempotency_key = (
-        base_key if not force else sha256_hex(f"{base_key}:{uuid4().hex}")
-    )
+    idempotency_key = base_key if not force else sha256_hex(f"{base_key}:{uuid4().hex}")
 
     messages = build_analyzer_messages(analyzer_input.payload, include_questions=include_questions)
     request = LLMRequest(
@@ -206,6 +207,13 @@ async def run_analysis(
     )
     db.add(run)
     await db.flush()
+
+    # The assignment is promised to be in this state by the phase 2 status machine,
+    # so the analysis layer owns it. Remember where to return to if the run fails.
+    previous_status = AssignmentStatus(assignment.status)
+    if previous_status != AssignmentStatus.ANALYSIS_IN_PROGRESS:
+        _move_assignment(assignment, AssignmentStatus.ANALYSIS_IN_PROGRESS)
+
     logger.info(
         "ASSIGNMENT_ANALYSIS_STARTED",
         extra={"run_id": str(run.id), "assignment_id": str(assignment.id)},
@@ -232,6 +240,7 @@ async def run_analysis(
         analysis = AssignmentAnalysis(
             assignment_id=assignment.id,
             analysis_version=ANALYSIS_VERSION,
+            revision=await service.next_revision(assignment.id, db),
             specification_version=specification_version,
             specification_hash=analyzer_input.specification_hash,
             idempotency_key=idempotency_key,
@@ -260,18 +269,55 @@ async def run_analysis(
                 / Decimal(1000)
                 * Decimal(str(cost_per_1k_tokens))
             ).quantize(Decimal("0.000001"))
+        # Only a run that actually produced an analysis may claim ANALYZED.
+        _move_assignment(assignment, AssignmentStatus.ANALYZED)
         return AnalysisResult(analysis=analysis, run=run, reused=False)
     except AppError:
         await _fail_run(db, run, "ANALYSIS_INPUT_INVALID", "Invalid analyzer input.", started)
+        _restore_assignment(assignment, previous_status)
         raise
     except Exception as exc:  # noqa: BLE001 - mapped below, never surfaced raw
         app_error = _map_provider_error(exc)
         await _fail_run(db, run, app_error.code, app_error.message, started)
+        _restore_assignment(assignment, previous_status)
         logger.warning(
             "ASSIGNMENT_ANALYSIS_FAILED",
             extra={"run_id": str(run.id), "error_type": type(exc).__name__},
         )
         raise app_error from exc
+
+
+def _restore_assignment(assignment: Assignment, previous: AssignmentStatus) -> None:
+    """Return a failed run's assignment to the state it started from.
+
+    A failure to roll back must never replace the real error the caller needs to
+    see, so a rejected rollback is logged and swallowed.
+    """
+    try:
+        _move_assignment(assignment, previous)
+    except AppError:
+        logger.warning(
+            "ASSIGNMENT_ANALYSIS_ROLLBACK_REJECTED",
+            extra={
+                "assignment_id": str(assignment.id),
+                "from": assignment.status,
+                "to": previous.value,
+            },
+        )
+
+
+def _move_assignment(assignment: Assignment, target: AssignmentStatus) -> None:
+    """Apply a status the AI layer owns, enforcing the phase 2 transition table.
+
+    An illegal transition is a programming error, not a user error: the table in
+    ``assignments.lifecycle`` already allows the analysis states, so reaching here
+    with a disallowed pair means the caller moved the assignment unexpectedly.
+    """
+    current = AssignmentStatus(assignment.status)
+    if current == target:
+        return
+    ensure_transition_allowed(current, target)
+    assignment.status = target.value
 
 
 async def _fail_run(

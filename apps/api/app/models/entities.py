@@ -609,6 +609,11 @@ class AssignmentAnalysis(TimestampMixin, Base):
             "assignment_id",
             "is_stale",
         ),
+        Index(
+            "ix_assignment_analyses_assignment_revision",
+            "assignment_id",
+            "revision",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -618,6 +623,11 @@ class AssignmentAnalysis(TimestampMixin, Base):
     #: Schema/contract version of the assigned analysis, bumped when the shape of
     #: the payload changes incompatibly.
     analysis_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: Monotonic per-assignment counter, 1 for the first analysis. ``created_at`` is
+    #: not unique enough to order by: the database clock has one-second resolution on
+    #: SQLite, so two analyses in the same second tie and "newest" becomes arbitrary.
+    #: This is the authoritative ordering for "the latest analysis".
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     #: The immutable specification version this analysis was computed against.
     specification_version: Mapped[int] = mapped_column(Integer, nullable=False)
     #: Stable hash of the analyzer input, so the same input can be recognised.

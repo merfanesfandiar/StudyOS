@@ -29,6 +29,9 @@ ANALYSIS_VERSION = 1
 _TEXT_MIME_PREFIXES = ("text/",)
 _TEXT_MIME_TYPES = frozenset({"application/json", "application/csv"})
 _TEXT_EXTENSIONS = (".txt", ".md", ".markdown", ".csv", ".json", ".tsv")
+#: Extensions with a dedicated reader in the extraction layer. Order matters only
+#: for readability; none of these is a suffix of another.
+_READABLE_EXTENSIONS = (".pdf", ".docx", ".pptx", ".xlsx", ".csv", ".txt", ".md")
 
 #: Per-document and total character caps for extracted text.
 MAX_DOCUMENT_CHARS = 20_000
@@ -147,9 +150,31 @@ def _resource_type(document: Document) -> str:
 
 
 def is_text_extractable(document: Document) -> bool:
+    """True when the resource is expected to yield text without an OCR engine.
+
+    Images are readable resources but carry no extractable text, so they are not
+    included here; they still reach the analyzer as metadata.
+    """
     if document.mime_type.startswith(_TEXT_MIME_PREFIXES) or document.mime_type in _TEXT_MIME_TYPES:
         return True
     return document.filename.lower().endswith(_TEXT_EXTENSIONS)
+
+
+def document_text_kind(document: Document) -> str | None:
+    """The reader key for a document, or ``None`` when it yields no text.
+
+    The extension decides, not the declared MIME type: a client can label a file
+    anything, and the extension is what selects the parser. Returns one of the keys
+    of :data:`app.modules.analysis.extraction._READERS`, or ``"text"`` for a
+    text-like MIME type with no more specific reader.
+    """
+    lowered = document.filename.lower()
+    for extension in _READABLE_EXTENSIONS:
+        if lowered.endswith(extension):
+            return extension
+    if document.mime_type.startswith(_TEXT_MIME_PREFIXES) or document.mime_type in _TEXT_MIME_TYPES:
+        return "text"
+    return None
 
 
 def build_analyzer_input(

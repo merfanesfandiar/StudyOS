@@ -23,12 +23,19 @@ CLIENT_SETTABLE: frozenset[AssignmentStatus] = frozenset(
 #: Explicit transition table. Backwards moves are allowed on purpose: a ready
 #: assignment that the student reopens goes back to being a specification under
 #: construction, not a dead end.
+#:
+#: ``DRAFT`` and ``INCOMPLETE`` may reach the analysis states on purpose. Part of
+#: what Phase 3 is for is reporting what a brief is *missing*, so refusing to
+#: analyze an unfinished specification would hide the very questions the student
+#: needs answered. Reaching ``ANALYZED`` still means "an analysis exists", not
+#: "the specification is complete".
 ALLOWED_TRANSITIONS: dict[AssignmentStatus, frozenset[AssignmentStatus]] = {
     AssignmentStatus.DRAFT: frozenset(
         {
             AssignmentStatus.DRAFT,
             AssignmentStatus.INCOMPLETE,
             AssignmentStatus.READY_FOR_ANALYSIS,
+            AssignmentStatus.ANALYSIS_IN_PROGRESS,
             AssignmentStatus.COMPLETED,
             AssignmentStatus.ARCHIVED,
         }
@@ -38,6 +45,7 @@ ALLOWED_TRANSITIONS: dict[AssignmentStatus, frozenset[AssignmentStatus]] = {
             AssignmentStatus.INCOMPLETE,
             AssignmentStatus.DRAFT,
             AssignmentStatus.READY_FOR_ANALYSIS,
+            AssignmentStatus.ANALYSIS_IN_PROGRESS,
             AssignmentStatus.COMPLETED,
             AssignmentStatus.ARCHIVED,
         }
@@ -56,6 +64,7 @@ ALLOWED_TRANSITIONS: dict[AssignmentStatus, frozenset[AssignmentStatus]] = {
     AssignmentStatus.ANALYSIS_IN_PROGRESS: frozenset(
         {
             AssignmentStatus.ANALYSIS_IN_PROGRESS,
+            AssignmentStatus.DRAFT,
             AssignmentStatus.READY_FOR_ANALYSIS,
             AssignmentStatus.INCOMPLETE,
             AssignmentStatus.ANALYZED,
@@ -65,6 +74,7 @@ ALLOWED_TRANSITIONS: dict[AssignmentStatus, frozenset[AssignmentStatus]] = {
     AssignmentStatus.ANALYZED: frozenset(
         {
             AssignmentStatus.ANALYZED,
+            AssignmentStatus.ANALYSIS_IN_PROGRESS,
             AssignmentStatus.READY_FOR_ANALYSIS,
             AssignmentStatus.INCOMPLETE,
             AssignmentStatus.ARCHIVED,
@@ -125,9 +135,7 @@ READINESS_STATUS_GROUPS: dict[AssignmentStatus, frozenset[str]] = {
             AssignmentStatus.ACTIVE.value,
         }
     ),
-    AssignmentStatus.ANALYSIS_IN_PROGRESS: frozenset(
-        {AssignmentStatus.ANALYSIS_IN_PROGRESS.value}
-    ),
+    AssignmentStatus.ANALYSIS_IN_PROGRESS: frozenset({AssignmentStatus.ANALYSIS_IN_PROGRESS.value}),
     AssignmentStatus.ANALYZED: frozenset({AssignmentStatus.ANALYZED.value}),
     AssignmentStatus.COMPLETED: frozenset({AssignmentStatus.COMPLETED.value}),
     AssignmentStatus.ARCHIVED: frozenset({AssignmentStatus.ARCHIVED.value}),

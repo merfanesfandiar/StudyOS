@@ -46,16 +46,57 @@ python -m alembic upgrade head
 python -m alembic downgrade base   # to reset
 ```
 
-The Phase 3 migration (`0003_phase3_analysis.py`) creates 4 tables (`assignment_analyses`, `analysis_runs`, `analysis_questions`, `analysis_classifications`) plus indexes and foreign keys.
+The Phase 3 migrations create 4 tables (`assignment_analyses`, `analysis_runs`,
+`analysis_questions`, `analysis_classifications`) plus indexes and foreign keys
+(`0003_phase3_analysis.py`), then add a monotonic `revision` to each analysis so
+"the latest analysis" is well defined after a re-analysis (`0004_analysis_revision.py`).
 
 ## Quality gates
 
-Commands that must stay green (run from `apps/api`):
+Commands that must stay green. From `apps/api`:
 
 ```bash
-python -m pytest -q                    # 78 passed
-python -m ruff check app tests alembic # clean
-python -m mypy app                      # 93 source files
+python -m pytest -q                       # 135 passed
+python -m ruff check app tests alembic    # clean
+python -m mypy app                        # 95 source files
+python -m app.ai.evaluation.report        # golden gate, exit 0
 ```
 
-The `MockLLMProvider` exercises the full parse → validate → persist pipeline in CI so that no live LLM call is required. The `force` parameter derives a distinct idempotency key (`sha256(base:uuid4)`) to satisfy the `UNIQUE(assignment_id, idempotency_key)` constraint.
+From `apps/web`:
+
+```bash
+npx tsc --noEmit
+npm run lint
+npm test                                 # 70 passed
+npm run build
+```
+
+The `MockLLMProvider` exercises the full parse -> validate -> persist pipeline in CI so that no live LLM call is required. The `force` parameter derives a distinct idempotency key (`sha256(base:uuid4)`) to satisfy the `UNIQUE(assignment_id, idempotency_key)` constraint.
+
+## End-to-end tests
+
+The Playwright suite needs a running API on port 8000 and a **production build
+of the web app that was built with the same API URL**:
+
+```bash
+# apps/api
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+# apps/web
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 npm run build
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 npm run start
+
+# apps/web, once both are up
+E2E_BASE_URL=http://127.0.0.1:3000 npx playwright test
+```
+
+Two traps cost real time here, so they are worth stating:
+
+- `NEXT_PUBLIC_API_URL` is **baked in at build time**, not read at runtime.
+  Rebuilding without it silently points the app at `http://localhost:8000`, and
+  because the browser is on `127.0.0.1` the auth cookie is then never sent
+  back. Every test fails at the login redirect with no obvious cause.
+- `next start` warns that it "does not work with `output: standalone`". It does
+  serve the app here, but the standalone bundle in `.next/standalone` is *not*
+  usable directly: its static chunks are not copied, so the page renders
+  without hydrating. Use `npm run start`.

@@ -5,17 +5,38 @@ from fastapi import UploadFile
 
 from app.core.errors import AppError
 
-ALLOWED_EXTENSIONS = {".pdf", ".txt", ".docx", ".md", ".zip", ".png", ".jpg", ".jpeg"}
+OFFICE_MIME = "application/vnd.openxmlformats-officedocument"
+
+#: Resource types the analysis layer is expected to read. The prompt's minimum set
+#: is PDF, DOCX, TXT, MD, PPTX, CSV, XLSX and images.
+ALLOWED_EXTENSIONS = {
+    ".pdf",
+    ".txt",
+    ".docx",
+    ".md",
+    ".csv",
+    ".pptx",
+    ".xlsx",
+    ".zip",
+    ".png",
+    ".jpg",
+    ".jpeg",
+}
 ALLOWED_MIME_TYPES = {
     ".pdf": {"application/pdf"},
     ".txt": {"text/plain"},
-    ".docx": {"application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+    ".docx": {f"{OFFICE_MIME}.wordprocessingml.document"},
     ".md": {"text/markdown", "text/plain"},
+    ".csv": {"text/csv", "text/plain", "application/csv"},
+    ".pptx": {f"{OFFICE_MIME}.presentationml.presentation"},
+    ".xlsx": {f"{OFFICE_MIME}.spreadsheetml.sheet"},
     ".zip": {"application/zip", "application/x-zip-compressed"},
     ".png": {"image/png"},
     ".jpg": {"image/jpeg"},
     ".jpeg": {"image/jpeg"},
 }
+
+SUPPORTED_FILE_TYPES = "PDF, TXT, DOCX, MD, CSV, PPTX, XLSX, ZIP, PNG, JPG, and JPEG"
 
 
 def safe_filename(filename: str | None) -> str:
@@ -37,7 +58,7 @@ def validate_upload(upload: UploadFile) -> tuple[str, str, str]:
         raise AppError(
             415,
             "UNSUPPORTED_FILE_TYPE",
-            "Supported file types are PDF, TXT, DOCX, MD, ZIP, PNG, JPG, and JPEG.",
+            f"Supported file types are {SUPPORTED_FILE_TYPES}.",
         )
     mime_type = (upload.content_type or "").lower().split(";", 1)[0].strip()
     if mime_type not in ALLOWED_MIME_TYPES[extension]:

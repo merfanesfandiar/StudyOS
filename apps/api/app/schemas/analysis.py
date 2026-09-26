@@ -484,6 +484,7 @@ class AssignmentAnalysisResponse(BaseModel):
     id: UUID
     assignment_id: UUID
     analysis_version: int
+    revision: int
     specification_version: int
     specification_hash: str
     prompt_version: str
@@ -624,6 +625,7 @@ class PlanningContractResponse(BaseModel):
     analysis_id: UUID
     assignment_id: UUID
     analysis_version: int
+    revision: int
     specification_version: int
     specification_hash: str
     prompt_version: str

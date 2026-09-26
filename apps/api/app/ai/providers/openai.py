@@ -34,12 +34,15 @@ class OpenAIProvider(LLMProvider):
         base_url: str = "https://api.openai.com/v1",
         timeout_seconds: float = 60.0,
         max_output_tokens: int = 4000,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.api_key = api_key
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.max_output_tokens = max_output_tokens
+        #: Injectable so the transport contract can be tested without a network.
+        self.transport = transport
 
     def _body(self, request: LLMRequest) -> dict[str, Any]:
         return {
@@ -64,7 +67,9 @@ class OpenAIProvider(LLMProvider):
             "Content-Type": "application/json",
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout_seconds, transport=self.transport
+            ) as client:
                 response = await client.post(
                     f"{self.base_url}/chat/completions",
                     headers=headers,

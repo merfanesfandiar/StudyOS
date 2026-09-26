@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -95,17 +95,33 @@ async def list_analyses(assignment_id: UUID, db: AsyncSession) -> list[Assignmen
         select(AssignmentAnalysis)
         .where(AssignmentAnalysis.assignment_id == assignment_id)
         .options(*ANALYSIS_LOADERS)
-        .order_by(AssignmentAnalysis.created_at.desc())
+        .order_by(AssignmentAnalysis.revision.desc())
     )
     return list(result.scalars().unique().all())
 
 
+async def next_revision(assignment_id: UUID, db: AsyncSession) -> int:
+    """The next per-assignment analysis revision, so 'latest' stays well defined."""
+    current = await db.scalar(
+        select(func.max(AssignmentAnalysis.revision)).where(
+            AssignmentAnalysis.assignment_id == assignment_id
+        )
+    )
+    return int(current or 0) + 1
+
+
 async def latest_analysis(assignment_id: UUID, db: AsyncSession) -> AssignmentAnalysis | None:
+    """The newest analysis for an assignment.
+
+    Ordered by the monotonic ``revision`` rather than ``created_at``: the database
+    clock only has second resolution on SQLite, so two analyses created in the
+    same second tie and the newest one would be chosen at random.
+    """
     result = await db.execute(
         select(AssignmentAnalysis)
         .where(AssignmentAnalysis.assignment_id == assignment_id)
         .options(*ANALYSIS_LOADERS)
-        .order_by(AssignmentAnalysis.created_at.desc())
+        .order_by(AssignmentAnalysis.revision.desc())
         .limit(1)
     )
     return result.scalar_one_or_none()
@@ -225,6 +241,7 @@ def build_analysis_response(
         id=analysis.id,
         assignment_id=analysis.assignment_id,
         analysis_version=analysis.analysis_version,
+        revision=analysis.revision,
         specification_version=analysis.specification_version,
         specification_hash=analysis.specification_hash,
         prompt_version=analysis.prompt_version,
@@ -286,6 +303,7 @@ def build_planning_contract(
         analysis_id=analysis.id,
         assignment_id=analysis.assignment_id,
         analysis_version=analysis.analysis_version,
+        revision=analysis.revision,
         specification_version=analysis.specification_version,
         specification_hash=analysis.specification_hash,
         prompt_version=analysis.prompt_version,

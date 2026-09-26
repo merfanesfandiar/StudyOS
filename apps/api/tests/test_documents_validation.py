@@ -53,9 +53,7 @@ async def test_documents_are_specification_changes(client: AsyncClient) -> None:
     show up in the assignment change feed, and leave no orphaned row behind.
     """
     await register_user(client, "documents-spec@example.com")
-    course = (
-        await client.post("/api/v1/courses", json={"name": "Docs", "code": "DOC2"})
-    ).json()
+    course = (await client.post("/api/v1/courses", json={"name": "Docs", "code": "DOC2"})).json()
     assignment = (
         await client.post(
             "/api/v1/assignments",
@@ -114,3 +112,69 @@ async def test_upload_rejects_wrong_type_and_naive_deadline(client: AsyncClient)
     )
     assert naive_deadline.status_code == 422
     assert naive_deadline.json()["error"]["code"] == "VALIDATION_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_every_resource_type_the_analyzer_promises_is_accepted(
+    client: AsyncClient,
+) -> None:
+    """The prompt's minimum resource set must be uploadable, not just parseable.
+
+    CSV, PPTX and XLSX are read by the analysis layer, so refusing them at upload
+    would make that extraction code unreachable in production.
+    """
+    from app.services.file_validation import ALLOWED_EXTENSIONS, ALLOWED_MIME_TYPES
+
+    accepted = {
+        ".pdf": "application/pdf",
+        ".txt": "text/plain",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".md": "text/markdown",
+        ".csv": "text/csv",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".png": "image/png",
+    }
+    assert set(accepted) <= ALLOWED_EXTENSIONS, "every promised type must be uploadable"
+    for extension, mime_type in accepted.items():
+        assert mime_type in ALLOWED_MIME_TYPES[extension], f"{extension} needs its MIME type"
+
+    await register_user(client, "types@example.com")
+    course = (await client.post("/api/v1/courses", json={"name": "Types", "code": "TYP1"})).json()
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={"course_id": course["id"], "title": "Resource types"},
+        )
+    ).json()
+
+    for index, (extension, mime_type) in enumerate(accepted.items()):
+        response = await client.post(
+            f"/api/v1/assignments/{assignment['id']}/documents",
+            files={"file": (f"resource{index}{extension}", b"content", mime_type)},
+        )
+        assert response.status_code == 201, f"{extension}: {response.text}"
+        assert response.json()["filename"] == f"resource{index}{extension}"
+
+
+@pytest.mark.asyncio
+async def test_a_promised_extension_with_the_wrong_mime_type_is_still_rejected(
+    client: AsyncClient,
+) -> None:
+    """Allowing an extension must not mean trusting the client's content type."""
+    await register_user(client, "mismatch@example.com")
+    course = (
+        await client.post("/api/v1/courses", json={"name": "Mismatch", "code": "MMS1"})
+    ).json()
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={"course_id": course["id"], "title": "Mime mismatch"},
+        )
+    ).json()
+
+    response = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/documents",
+        files={"file": ("sheet.xlsx", b"binary", "application/octet-stream")},
+    )
+    assert response.status_code == 415

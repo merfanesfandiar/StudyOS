@@ -119,6 +119,99 @@ async def test_analysis_persists_and_retrieves(client: AsyncClient, prepared: di
     assert items[0]["input_hash"] and items[0]["output_hash"]
 
 
+async def _status_of(client: AsyncClient, assignment_id: str) -> str:
+    response = await client.get(f"/api/v1/assignments/{assignment_id}")
+    assert response.status_code == 200, response.text
+    return response.json()["status"]
+
+
+async def test_a_successful_analysis_moves_the_assignment_to_analysed(
+    client: AsyncClient, prepared: dict
+) -> None:
+    assignment_id = prepared["id"]
+    await _analyze(client, assignment_id)
+    assert await _status_of(client, assignment_id) == "ANALYZED"
+
+
+async def test_a_failed_analysis_leaves_the_status_it_started_from(
+    client: AsyncClient, prepared: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A provider failure must not strand an assignment in ANALYSIS_IN_PROGRESS."""
+    import app.modules.analysis.router as router_module
+    from app.ai.errors import LLMTimeoutError
+    from app.ai.provider import LLMProvider, LLMRequest, LLMResponse
+
+    class FailingProvider(LLMProvider):
+        name = "failing"
+        model = "failing-model"
+
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            raise LLMTimeoutError("boom")
+
+    monkeypatch.setattr(router_module, "build_llm_provider", lambda *_: FailingProvider())
+
+    assignment_id = prepared["id"]
+    before = await _status_of(client, assignment_id)
+
+    failed = await client.post(f"/api/v1/assignments/{assignment_id}/analysis", json={})
+    assert failed.status_code == 504
+
+    assert await _status_of(client, assignment_id) == before
+
+
+async def test_the_client_cannot_set_the_analysis_states_directly(
+    client: AsyncClient, prepared: dict
+) -> None:
+    """AI-owned states are reachable only through the analysis layer."""
+    for target in ("ANALYSIS_IN_PROGRESS", "ANALYZED"):
+        response = await client.patch(
+            f"/api/v1/assignments/{prepared['id']}", json={"status": target}
+        )
+        assert response.status_code == 422, response.text
+
+
+async def test_latest_analysis_round_trips_and_reports_never_analyzed(
+    client: AsyncClient, prepared: dict
+) -> None:
+    """The client reads the newest analysis through `GET /analysis`, not a path id.
+
+    A student opening an assignment must not have to know an analysis uuid, and an
+    assignment that was never analyzed is an empty state rather than an error.
+    """
+    assignment_id = prepared["id"]
+
+    before = await client.get(f"/api/v1/assignments/{assignment_id}/analysis")
+    assert before.status_code == 404
+    assert before.json()["error"]["code"] == "ANALYSIS_NOT_FOUND"
+
+    created = await _analyze(client, assignment_id)
+    latest = await client.get(f"/api/v1/assignments/{assignment_id}/analysis")
+    assert latest.status_code == 200
+    assert latest.json()["id"] == created["id"]
+
+    # A forced re-analysis supersedes the previous one, and `latest` follows it.
+    forced = await client.post(
+        f"/api/v1/assignments/{assignment_id}/analysis", json={"force": True}
+    )
+    assert forced.status_code in {200, 201}
+    newest = await client.get(f"/api/v1/assignments/{assignment_id}/analysis")
+    assert newest.status_code == 200
+    assert newest.json()["id"] == forced.json()["id"]
+
+
+async def test_latest_analysis_never_leaks_across_assignments(
+    client: AsyncClient, prepared: dict
+) -> None:
+    await register_user(client, "intruder@example.com")
+    course = await _create_course(client, code="SEC401")
+    other = await _create_assignment(client, course["id"], title="Unrelated Essay")
+
+    forbidden = await client.get(f"/api/v1/assignments/{prepared['id']}/analysis")
+    assert forbidden.status_code == 404
+    assert forbidden.json()["error"]["code"] == "ASSIGNMENT_NOT_FOUND"
+    assert other["id"] != prepared["id"]
+
+
 async def test_planning_contract_is_complete_and_structured(
     client: AsyncClient, prepared: dict
 ) -> None:

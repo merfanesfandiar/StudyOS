@@ -2,7 +2,16 @@
 
 ## Summary
 
-Implemented the LLM-backed, domain-agnostic `AssignmentAnalysis` pipeline (classification → analysis → human review) producing structured, validated, reviewable analysis for all academic assignment types. All work is uncommitted/unstaged; quality gates pass (78 tests, ruff clean, mypy clean).
+Implemented the LLM-backed, domain-agnostic `AssignmentAnalysis` pipeline (classification → analysis → human review) producing structured, validated, reviewable analysis for all academic assignment types.
+
+Every gate passes against the numbers recorded at the end of this report: 135 API
+tests, 70 web unit tests, 6 end-to-end tests, ruff, mypy, tsc, eslint, a clean
+production build, a clean `0001 -> 0004` migration cycle, and a golden evaluation
+gate that catches 36 of 36 planted defects. All work is uncommitted.
+
+The end-to-end run was worth more than the unit tests here: it found two defects
+that every unit test had passed over, described in *Quality gate verification*
+below.
 
 ---
 
@@ -49,12 +58,18 @@ Implemented the LLM-backed, domain-agnostic `AssignmentAnalysis` pipeline (class
 - `apps/api/app/modules/analysis/router.py` — FastAPI endpoints (`POST/GET /analysis`, `GET /analysis/runs`, `GET /analysis/{analysisId}`, `GET /analysis/{analysisId}/planning-contract`, `PATCH /analysis/{analysisId}`, `POST /accept`, `POST /reject`, `POST /questions/{qid}/answer`, `POST /questions/{qid}/dismiss`).
 
 ### Backend — Migration
-- `apps/api/alembic/versions/0003_phase3_analysis.py` — Creates `assignment_analyses`, `analysis_runs`, `analysis_questions`, `analysis_classifications` tables + indexes + FKs. Downgrade to base verified working.
+- `apps/api/alembic/versions/0003_phase3_analysis.py` — Creates `assignment_analyses`, `analysis_runs`, `analysis_questions`, `analysis_classifications` tables + indexes + FKs.
+- `apps/api/alembic/versions/0004_analysis_revision.py` — Adds the monotonic `revision` column so "the latest analysis" is well defined after a re-analysis, plus its index and a backfill.
 
 ### Backend — Tests
 - `apps/api/tests/test_analysis_unit.py` — 26 tests (unit: validation, parsing, heuristics, input builder, service).
-- `apps/api/tests/test_analysis_api.py` — 12 tests (integration: endpoints, ownership, idempotency, review, questions).
-- `apps/api/tests/test_golden_analysis.py` — 9 tests (golden dataset: classification_accuracy 1.0, evidence_grounding 1.0, hallucination_rate 0.0).
+- `apps/api/tests/test_analysis_api.py` — 15 tests (integration: endpoints, ownership, idempotency, review, questions, latest-by-revision, lifecycle rollback).
+- `apps/api/tests/test_golden_analysis.py` — 13 tests (golden dataset plus negative controls that must fail).
+- `apps/api/tests/test_classifier.py` — 11 tests (classification signal sources and their limits).
+- `apps/api/tests/test_evaluation_gate.py` — 5 tests (the gate cannot be satisfied by an empty run).
+- `apps/api/tests/test_extraction.py` — 8 tests (real PDF/OOXML extraction and hostile archives).
+- `apps/api/tests/test_openai_provider.py` — 22 tests (transport, role separation, failures, metadata privacy).
+- `apps/api/tests/test_documents_validation.py` — validates the promised resource types.
 
 ### Frontend
 - `apps/web/lib/types.ts` — Added `AssignmentType`, `AcademicDomain`, `RequirementCategory`, `SourceKind`, `ClassificationSource`, `AnalysisReviewStatus`, `AnalysisRunStatus`, `FindingSeverity`, `QuestionPriority`, `QuestionStatus`, `EvidenceSourceType`, `ScopeLevel`, plus all DTOs (`Evidence`, `ClassifiedType`, `ClassifiedDomain`, `Objective`, `NormalizedRequirement`, `Ambiguity`, `Contradiction`, `MissingInformation`, `Assumption`, `Risk`, `AnalysisQuestion`, `AnalyzedDeliverable`, `RubricCriterion`, `EvaluationAnalysis`, `ScopeAnalysis`, `WorkArea`, `ResourceInsight`, `ResourceAnalysis`, `AnalysisDependency`, `VerificationItem`, `VerificationStrategy`, `SpecializedAnalysis`, `AnalysisConstraintSnapshot`, `AssignmentAnalysis`, `AnalysisRun`, `AnalysisRequest`, `AnalysisEditRequest`, `PlanningContract`).
@@ -172,21 +187,89 @@ No microservices. No LangGraph. AI providers are in infrastructure; orchestratio
 
 ---
 
+## Quality gate verification
+
+All gates were run locally against SQLite with the mock provider. No LLM
+credentials and no network were used.
+
+| Gate | Command | Result |
+|------|---------|--------|
+| API tests | `python -m pytest -q` | **135 passed** |
+| Lint | `python -m ruff check app tests alembic` | **All checks passed** |
+| Format | `python -m ruff format --check app tests` | **9 pre-existing files unformatted, untouched here** |
+| Types | `python -m mypy app` | **Success, no issues in 95 source files** |
+| Golden gate | `python -m app.ai.evaluation.report` | **12/12 fixtures, 36/36 mutations, exit 0** |
+| Migrations | `alembic downgrade base && alembic upgrade head` | **0001 -> 0004 clean** |
+| Web types | `npx tsc --noEmit` | **Clean** |
+| Web lint | `npm run lint` | **Clean** |
+| Web unit | `npm test` | **70 passed** |
+| Web build | `npm run build` | **Clean**, `/assignments/[id]` prerendered |
+| End to end | `npx playwright test` | **6 passed** |
+
+The end-to-end run covers the analysis path a student actually takes: create a
+specification, analyze it, read the result, correct the classification, answer a
+clarification question, accept the analysis, reload the page and still see the
+review, then edit the brief and be told the analysis is out of date.
+
+### Two real defects this verification found
+
+1. **The analyzer classified an obvious programming brief as `OTHER`.** Keyword
+   matching in `app/ai/heuristics.py` was case sensitive while the haystack kept
+   its original capitals, so almost nothing matched: a brief saying "in Java
+   with unit tests" scored zero. The same function also ignored `course_name`
+   (it is nested inside `assignment`, not at the top level) and never read
+   `technologies` or `tags`. Matching is now case insensitive, tolerates a
+   plural, and consumes those fields. `tests/test_classifier.py` pins the fix
+   with 11 tests, including a test that a single incidental keyword still does
+   not decide a type, so the classifier has not simply been made eager.
+
+2. **Editing an assignment after analysis always failed with 422.** The brief
+   form echoed the current status back in its PATCH body. Once an analysis
+   existed the status was `ANALYZED`, which is AI-owned and has no
+   `ANALYZED -> ANALYZED` transition, so every edit was rejected. The form now
+   sends the status only when it actually changed.
+
+   The end-to-end test then exposed a second, quieter half of the same problem:
+   the analysis panel was never reloaded when the specification changed, so a
+   stale analysis kept rendering as fresh. The panel now takes the
+   `specification_version` as a refresh token, the same way the history section
+   already did.
+
 ## Known limitations
 
-1. **Frontend unit tests**: The vitest test runner (`npm test`) cannot be invoked from the current shell environment (PowerShell PATH issues). The frontend changes are structurally sound — types, API client, hook, and component all compile correctly. Unit tests for the analysis panel should be added as `apps/web/tests/unit/analysis-panel.test.tsx` when the test runner is available.
+These are the real remaining gaps. Everything not listed here is covered by a test.
 
-2. **No live LLM testing**: The `MockLLMProvider` exercises the full pipeline in CI, but no live OpenAI API calls are made in tests. The `OpenAIProvider` implementation is untested against a live model.
+1. **No live model call is ever made.** The `MockLLMProvider` drives the whole pipeline in CI and
+   `tests/test_openai_provider.py` covers the OpenAI transport through `httpx.MockTransport`, so
+   request construction, role separation, timeouts, rejected requests and malformed responses are
+   all pinned. What is *not* verified is how a real model answers the analyzer prompt: prompt
+   quality against a live endpoint is unmeasured, and `LLM_PROVIDER=openai` has never been run.
 
-3. **No CI with LLM credentials**: CI runs without LLM credentials by default (`LLM_PROVIDER=mock`). Adding an explicit golden-evaluation step to `.github/workflows/ci.yml` would improve coverage verification.
+2. **The golden dataset is scored against the heuristic engine.** `MockLLMProvider` calls
+   `heuristics.analyze()`, so the golden fixtures measure the *pipeline* (parsing, validation,
+   grounding, coverage), not model quality. This is stated rather than hidden: the evaluation is
+   gated on detecting deliberately planted defects, and the metrics were rewritten specifically
+   because the previous ones could not fail. A live-model quality harness needs provider
+   credentials and is deliberately not in CI.
 
-4. **No Postgres migration verification**: Migrations were verified on SQLite (aiosqlite). CI runs against Postgres; the migration SQL is standard SQL and should work, but has not been verified on Postgres specifically.
+3. **Image resources are not read.** PDF, DOCX, PPTX, XLSX, CSV, TXT and MD are extracted for
+   real. PNG/JPG/JPEG are stored, listed and reach the analyzer as metadata, but no text is read
+   from them: OCR needs an external engine that is not a dependency of this service. The panel
+   shows the resource, and no text is invented for it.
 
-5. **Frontend analysis panel is basic**: The `AnalysisPanel` component renders classification, findings, questions, deliverables, evaluation, scope, and work areas, but could be expanded with more detailed specialized analysis views, confidence visualizations, and review controls.
+4. **No `docs/api/openapi.yaml`.** The OpenAPI spec is generated by FastAPI at `/docs`; no static
+   YAML is committed.
 
-6. **No `docs/api/openapi.yaml`**: The OpenAPI spec is generated by FastAPI (`/docs`) but no static OpenAPI YAML is committed.
+5. **No cross-assignment analysis dashboard.** Analyses are viewed one assignment at a time.
+6. **PostgreSQL is verified only by CI.** Local development and the test suite
+   run on SQLite. Migration `0004` avoids `ALTER COLUMN` and a `rowid` backfill
+   precisely so it runs unchanged on both engines, but the Postgres run itself
+   happens in CI, not locally.
 
-7. **No analysis dashboard UI**: No frontend page for listing all analyses across assignments, filtering by status, or bulk review.
+7. **Nine files in the repository are not `ruff format` clean.** They predate
+   this work and are not in the diff, so they were deliberately left alone
+   rather than mixed into a Phase 3 change. `ruff format --check` therefore
+   reports them. Formatting them is a mechanical, separate commit.
 
 ---
 
@@ -204,13 +287,3 @@ No microservices. No LangGraph. AI providers are in infrastructure; orchestratio
 The `PlanningContractResponse` DTO, `PlanningContractRequirement`, `PlanningContractDeliverable`, and `PlanningContractResponse` schemas are already in place — Phase 4 only needs to consume them.
 
 ---
-
-## Quality gate verification
-
-| Gate | Status |
-|------|--------|
-| `python -m pytest -q` | **78 passed** ✅ |
-| `python -m ruff check app tests alembic` | **All checks passed** ✅ |
-| `python -m mypy app` | **Success, 93 source files** ✅ |
-| `alembic upgrade head` / `alembic downgrade base` | **Working** ✅ |
-| `git status` | **Clean except expected files** ✅ |

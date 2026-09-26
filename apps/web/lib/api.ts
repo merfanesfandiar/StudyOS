@@ -277,8 +277,11 @@ export const api = {
     request<PageResponse<AnalysisRun>>(
       `/assignments/${id}/analysis/runs${queryString({ page, page_size: pageSize })}`,
     ),
+  /** `"latest"` reads the newest analysis; the server maps it to the newest row. */
   analysis: (id: string, analysisId: string) =>
-    request<AssignmentAnalysis>(`/assignments/${id}/analysis/${analysisId}`),
+    analysisId === "latest"
+      ? request<AssignmentAnalysis>(`/assignments/${id}/analysis`)
+      : request<AssignmentAnalysis>(`/assignments/${id}/analysis/${analysisId}`),
   planningContract: (id: string, analysisId: string) =>
     request<PlanningContract>(`/assignments/${id}/analysis/${analysisId}/planning-contract`),
   /** Correct classification or overlay human findings. Never edits the brief. */

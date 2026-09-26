@@ -130,7 +130,10 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
         </div>
         <ResourcesSection onChanged={refresh} specification={specification} />
         <SummarySection specification={specification} />
-        <AnalysisPanel assignmentId={specification.assignment.id} />
+        <AnalysisPanel
+          assignmentId={specification.assignment.id}
+          refreshToken={specification.specification_version}
+        />
         <HistorySection
           assignmentId={assignmentId}
           refreshToken={specification.specification_version}

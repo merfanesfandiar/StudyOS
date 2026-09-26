@@ -71,8 +71,14 @@ The `SpecializedAnalysis` DTO carries `analyzer: str`, `assignment_types: list[A
   **never** mutate authoritative requirements, deadline, rubric, constraints, or deliverables.
 - Corrections go into `edited_payload` (validated against `AnalyzerOutput`) or `AnalysisClassification`
   rows with `source: USER`.
-- The assignment status `ANALYZED` is only set when `ALLOWED_TRANSITIONS` permits it (from
-  `READY_FOR_ANALYSIS`), owned by the analysis layer, never by a client.
+- The assignment status is moved by the analysis layer only, never by a client: a run sets
+  `ANALYSIS_IN_PROGRESS` before calling the model and `ANALYZED` only after a validated analysis
+  exists. A failed or timed-out run restores the status the assignment had before the run, so an
+  error can never strand an assignment in `ANALYSIS_IN_PROGRESS`.
+- `DRAFT` and `INCOMPLETE` are allowed to reach the analysis states on purpose. Reporting what a
+  brief is *missing* is a main purpose of the layer, so refusing to analyze an unfinished
+  specification would hide the questions the student needs answered. `ANALYZED` means "an analysis
+  exists", not "the specification is complete".
 
 ## Security and privacy
 
