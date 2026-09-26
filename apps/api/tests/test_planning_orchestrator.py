@@ -358,7 +358,11 @@ async def test_fallback_disabled_surfaces_the_provider_failure(
 
     runs = list(await db_session.scalars(select(PlanningRun)))
     assert runs, "a run that failed must still be recorded"
-    assert runs[-1].status == PlanningRunStatus.RUNNING.value, "the run is left open for retry"
+    run = runs[-1]
+    assert run.status == PlanningRunStatus.FAILED.value
+    assert run.completed_at is not None
+    assert run.error_code == "LLM_UNAVAILABLE"
+    assert run.error_message
 
 
 async def test_fallback_disabled_also_refuses_an_invalid_proposal(

@@ -34,7 +34,13 @@ from app.ai.errors import LLMError
 from app.ai.provider import LLMProvider, LLMRequest
 from app.ai.registry import ModelSelection
 from app.core.errors import AppError
-from app.models import AcademicWorkPlan, Assignment, AssignmentAnalysis, PlanTask
+from app.models import (
+    AcademicWorkPlan,
+    Assignment,
+    AssignmentAnalysis,
+    PlanningRun,
+    PlanTask,
+)
 from app.models.enums import PlanningRunStatus, PlanTrigger
 from app.modules.planning.complexity import score_complexity
 from app.modules.planning.graph import PlanGraphError, ValidatedGraph, validate_graph
@@ -186,10 +192,30 @@ async def generate_plan(
         proposed = candidate
     except LLMError as exc:
         if not fallback_enabled:
+            # The run is finished, not still in progress. Leaving it RUNNING
+            # would make a dead attempt indistinguishable from a live one.
+            await _fail_run(
+                db,
+                run,
+                started=started,
+                token_usage=token_usage,
+                estimated_cost=cost,
+                code=exc.code or exc.__class__.__name__,
+                message=exc.message,
+            )
             raise
         rejections = [f"the model call failed: {exc.code or exc.__class__.__name__}"]
     except PlanGraphError as exc:
         if not fallback_enabled:
+            await _fail_run(
+                db,
+                run,
+                started=started,
+                token_usage=token_usage,
+                estimated_cost=cost,
+                code="PLAN_REJECTED",
+                message="the model proposed a plan that does not validate",
+            )
             raise
         rejections = exc.violations
 
@@ -314,6 +340,29 @@ def build_planner_request(
             "max_task_count": max_task_count,
             "model": model,
         },
+    )
+
+
+async def _fail_run(
+    db: AsyncSession,
+    run: PlanningRun,
+    *,
+    started: float,
+    token_usage: dict[str, Any] | None,
+    estimated_cost: float | None,
+    code: str,
+    message: str,
+) -> None:
+    """Close out a run that produced nothing, so it is not left open forever."""
+    await finish_run(
+        db,
+        run,
+        status=PlanningRunStatus.FAILED,
+        duration_ms=int((time.monotonic() - started) * 1000),
+        token_usage=token_usage,
+        estimated_cost=estimated_cost,
+        error_code=code,
+        error_message=message,
     )
 
 
