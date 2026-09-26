@@ -107,6 +107,7 @@ export function PlanPanel({ assignmentId }: { assignmentId: string }) {
 
   const blockedCount = plan.tasks.filter((task) => task.blocked_by.length > 0).length;
   const reasons = fallbackReasons(plan);
+  const warnings = otherWarnings(plan);
 
   return (
     <section className="grid gap-4">
@@ -175,13 +176,19 @@ export function PlanPanel({ assignmentId }: { assignmentId: string }) {
           </div>
         )}
 
-        {plan.validation_warnings.length > 0 && (
+        {/*
+          Warnings the panel has not already rendered. The fallback prose is
+          excluded because the structured notice above says the same thing in the
+          reader's language, and showing both means the same fact appears once
+          translated and once in English.
+        */}
+        {warnings.length > 0 && (
           <details className="rounded-[var(--radius-control)] border border-[var(--color-line)] px-3 py-2 text-sm">
             <summary className="cursor-pointer font-semibold">
-              {count("common.count", plan.validation_warnings.length)}
+              {count("common.count", warnings.length)}
             </summary>
             <ul className="mt-2 grid gap-1 list-disc ps-5 text-[var(--color-ink-muted)]">
-              {plan.validation_warnings.map((warning) => (
+              {warnings.map((warning) => (
                 <li key={warning}>{warning}</li>
               ))}
             </ul>
@@ -392,9 +399,9 @@ export function PlanPanel({ assignmentId }: { assignmentId: string }) {
                 no visible reason is indistinguishable from one that never ran.
               */}
               {run.error_code && (
-                <span className="text-[var(--color-critical)]">
-                  {run.error_code}
-                  {run.error_message ? `: ${run.error_message}` : null}
+                <span className="flex flex-wrap items-baseline gap-1 text-[var(--color-critical)]">
+                  <code className="text-xs font-semibold">{run.error_code}</code>
+                  {run.error_message && <span className="text-xs">{run.error_message}</span>}
                 </span>
               )}
               {run.fell_back_from_tier && (
@@ -640,6 +647,18 @@ function groupByMilestone(plan: WorkPlan | null): { milestone: PlanMilestone | n
  * than the data; and a substring match on server prose breaks the moment the
  * server rewords it, which would turn a stated fallback into a silent one.
  */
+/**
+ * Validation warnings the fallback notice has not already covered.
+ *
+ * These are the server's own sentences and are shown untranslated: they name
+ * specific checks, and paraphrasing them here would risk stating something the
+ * planner did not actually say.
+ */
+function otherWarnings(plan: WorkPlan): string[] {
+  if (!plan.used_fallback) return plan.validation_warnings;
+  return plan.validation_warnings.filter((warning) => !warning.includes("not the model"));
+}
+
 function fallbackReasons(plan: WorkPlan): string[] {
   if (!plan.used_fallback) return [];
   return plan.rejection_reasons.length > 0

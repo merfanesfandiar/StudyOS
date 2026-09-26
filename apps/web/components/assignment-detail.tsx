@@ -12,6 +12,7 @@ import { ResourcesSection } from "@/components/assignment/resources-section";
 import { SummarySection } from "@/components/assignment/summary-section";
 import { DeliverablesSection, TaxonomySection } from "@/components/assignment/taxonomy-section";
 import { AnalysisPanel } from "@/components/assignment/analysis-panel";
+import { PlanPanel } from "@/components/planning/plan-panel";
 import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import type { Course } from "@/lib/types";
@@ -134,6 +135,12 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           assignmentId={specification.assignment.id}
           refreshToken={specification.specification_version}
         />
+        {/*
+          The plan sits below the analysis on purpose. Planning reads a frozen
+          analysis contract and never the raw brief, so showing it first would
+          invite the reader to treat an unreviewed classification as a brief.
+        */}
+        <PlanPanel assignmentId={specification.assignment.id} />
         <HistorySection
           assignmentId={assignmentId}
           refreshToken={specification.specification_version}
