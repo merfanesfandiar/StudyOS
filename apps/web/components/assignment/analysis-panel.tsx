@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, LoadingState } from "@/components/ui";
 import { useAnalysis } from "@/lib/use-analysis";
 import {
@@ -133,6 +134,7 @@ function QuestionRow({
   onAnswer: (id: string, answer: string) => void;
   onDismiss: (id: string) => void;
 }) {
+  const { t } = usePreferences();
   const [draft, setDraft] = useState("");
   const settled = question.status !== "OPEN";
 
@@ -160,7 +162,7 @@ function QuestionRow({
             type="text"
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="Your answer…"
+            placeholder={t("analysis.yourAnswer")}
             aria-label={`Answer to ${question.code}`}
             className="flex-1 rounded border border-[var(--color-line-strong)] px-2 py-1 text-sm"
           />
@@ -171,7 +173,7 @@ function QuestionRow({
             disabled={busy || draft.trim().length === 0}
             onClick={() => onAnswer(question.id, draft.trim())}
           >
-            Save answer
+            {t("analysis.saveAnswer")}
           </button>
           <button
             type="button"
@@ -179,7 +181,7 @@ function QuestionRow({
             disabled={busy}
             onClick={() => onDismiss(question.id)}
           >
-            Dismiss
+            {t("analysis.dismiss")}
           </button>
         </div>
       ) : null}
@@ -199,8 +201,9 @@ function ClassificationEditor({
   onSetTypes: (types: AssignmentType[]) => void;
   onSetDomains: (domains: AcademicDomain[]) => void;
 }) {
+  const { t } = usePreferences();
   const [editing, setEditing] = useState(false);
-  const [types, setTypes] = useState<AssignmentType[]>(analysis.assignment_types.map((t) => t.type));
+  const [types, setTypes] = useState<AssignmentType[]>(analysis.assignment_types.map((item) => item.type));
   const [domains, setDomains] = useState<AcademicDomain[]>(
     analysis.academic_domains.map((d) => d.domain),
   );
@@ -217,7 +220,7 @@ function ClassificationEditor({
         className="btn-ghost mt-2 text-xs"
         onClick={() => setEditing(true)}
       >
-        Correct this classification
+        {t("analysis.correct")}
       </button>
     );
   }
@@ -268,14 +271,14 @@ function ClassificationEditor({
             setEditing(false);
           }}
         >
-          Save
+          {t("action.save")}
         </button>
         <button
           type="button"
           className="btn-ghost px-3 py-1 text-xs"
           onClick={() => setEditing(false)}
         >
-          Cancel
+          {t("action.cancel")}
         </button>
       </div>
     </div>
@@ -297,6 +300,7 @@ function ReviewBar({
   onReject: (note: string) => void;
   onReanalyze: () => void;
 }) {
+  const { t } = usePreferences();
   const [note, setNote] = useState("");
 
   if (analysis.is_stale) {
@@ -310,7 +314,7 @@ function ReviewBar({
           disabled={busy}
           onClick={onReanalyze}
         >
-          Analyze again
+          {t("analysis.analyzeAgain")}
         </button>
         . Your previous review stands until a new analysis replaces it.
       </Alert>
@@ -330,7 +334,7 @@ function ReviewBar({
           disabled={busy}
           onClick={onReanalyze}
         >
-          Analyze again
+          {t("analysis.analyzeAgain")}
         </button>
         .
       </Alert>
@@ -347,8 +351,8 @@ function ReviewBar({
         type="text"
         value={note}
         onChange={(event) => setNote(event.target.value)}
-        placeholder="Optional note"
-        aria-label="Review note"
+        placeholder={t("analysis.reviewNotePlaceholder")}
+        aria-label={t("analysis.reviewNote")}
         className="mt-2 w-full rounded border border-[var(--color-line-strong)] px-2 py-1 text-sm"
       />
       <div className="mt-2 flex gap-2">
@@ -359,7 +363,7 @@ function ReviewBar({
           disabled={busy}
           onClick={() => onAccept(note.trim())}
         >
-          Accept analysis
+          {t("analysis.accept")}
         </button>
         <button
           type="button"
@@ -368,7 +372,7 @@ function ReviewBar({
           disabled={busy}
           onClick={() => onReject(note.trim())}
         >
-          Reject
+          {t("analysis.reject")}
         </button>
       </div>
     </div>
@@ -383,6 +387,7 @@ function NotAnalyzed({
   busy: boolean;
   onAnalyze: () => void;
 }) {
+  const { t } = usePreferences();
   return (
     <section className="card p-6" id="analysis">
       <h2 className="section-title">Analysis</h2>
@@ -398,7 +403,7 @@ function NotAnalyzed({
         disabled={busy}
         onClick={onAnalyze}
       >
-        {busy ? "Analyzing…" : "Analyze this assignment"}
+        {busy ? t("analysis.analyzing") : t("analysis.analyzeThis")}
       </button>
     </section>
   );
@@ -411,6 +416,7 @@ export function AnalysisPanel({
   assignmentId: string;
   refreshToken?: number | string;
 }) {
+  const { t } = usePreferences();
   const {
     analysis,
     loading,
@@ -428,7 +434,7 @@ export function AnalysisPanel({
   } = useAnalysis(assignmentId, refreshToken);
 
   if (loading) {
-    return <LoadingState label="Loading analysis" />;
+    return <LoadingState label={t("analysis.loading")} />;
   }
 
   if (error) {
@@ -442,7 +448,7 @@ export function AnalysisPanel({
   const openQuestions = analysis.clarification_questions.filter((q) => q.status === "OPEN");
   const findings = [
     ...analysis.ambiguities.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: item.suggested_clarification })),
-    ...analysis.contradictions.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: item.clarification_needed ? "Needs clarification" : null })),
+    ...analysis.contradictions.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: item.clarification_needed ? t("analysis.needsClarification") : null })),
     ...analysis.missing_information.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: `Area: ${item.area}` })),
   ];
 
@@ -528,7 +534,7 @@ export function AnalysisPanel({
       />
 
       {analysis.objectives.length > 0 ? (
-        <Section title="Objectives">
+        <Section title={t("analysis.objectives")}>
           <ul className="space-y-1">
             {analysis.objectives.map((objective, index) => (
               <Bullet key={index}>
@@ -542,7 +548,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.normalized_requirements.length > 0 ? (
-        <Section title={`What you must do (${analysis.normalized_requirements.length} requirements)`}>
+        <Section title={t("analysis.mustDo", { count: analysis.normalized_requirements.length })}>
           <ul className="space-y-2">
             {analysis.normalized_requirements.map((requirement) => (
               <li
@@ -571,7 +577,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.constraints.length > 0 ? (
-        <Section title="Constraints from your brief">
+        <Section title={t("analysis.briefConstraints")}>
           <ul className="space-y-1">
             {analysis.constraints.map((constraint) => (
               <Bullet key={constraint.id}>
@@ -587,7 +593,7 @@ export function AnalysisPanel({
       ) : null}
 
       {findings.length > 0 ? (
-        <Section title="What needs your attention">
+        <Section title={t("analysis.attention")}>
           <ul className="space-y-2">
             {findings.map((finding) => (
               <li
@@ -612,7 +618,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.risks.length > 0 ? (
-        <Section title="Risks">
+        <Section title={t("analysis.risks")}>
           <ul className="space-y-1">
             {analysis.risks.map((risk) => (
               <Bullet key={risk.key}>
@@ -630,7 +636,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.assumptions.length > 0 ? (
-        <Section title="Assumptions this analysis made">
+        <Section title={t("analysis.assumptions")}>
           <ul className="space-y-1">
             {analysis.assumptions.map((assumption) => (
               <Bullet key={assumption.key}>
@@ -647,8 +653,8 @@ export function AnalysisPanel({
         <Section
           title={
             openQuestions.length > 0
-              ? `Questions only you can answer (${openQuestions.length} open)`
-              : "Clarification questions"
+              ? t("analysis.openQuestions", { count: openQuestions.length })
+              : t("analysis.clarificationQuestions")
           }
         >
           <ul className="space-y-2">
@@ -666,7 +672,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.deliverables.length > 0 ? (
-        <Section title="What you will hand in">
+        <Section title={t("analysis.deliverables")}>
           <ul className="space-y-2">
             {analysis.deliverables.map((deliverable) => (
               <li
@@ -687,10 +693,10 @@ export function AnalysisPanel({
                 ) : null}
                 <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
                   {deliverable.required === null
-                    ? "Whether it is required is unknown"
+                    ? t("analysis.requiredUnknown")
                     : deliverable.required
-                      ? "Required"
-                      : "Optional"}
+                      ? t("action.required")
+                      : t("action.optional")}
                   {" · "}source: {sourceKindLabel(deliverable.uncertainty)}
                   {deliverable.expected_content.length > 0
                     ? ` · expects: ${deliverable.expected_content.join(", ")}`
@@ -709,7 +715,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.evaluation.criteria.length > 0 || analysis.evaluation.implied_quality_expectations.length > 0 ? (
-        <Section title="How it will be judged">
+        <Section title={t("analysis.evaluation")}>
           {analysis.evaluation.rubric_available ? (
             <p className="text-sm text-[var(--color-ink-muted)]">A rubric was provided in your brief.</p>
           ) : (
@@ -753,7 +759,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.scope.overall !== "UNKNOWN" ? (
-        <Section title="Scope">
+        <Section title={t("analysis.scope")}>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
             <dt className="text-[var(--color-ink-muted)]">Breadth</dt>
             <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.breadth.level)}</dd>
@@ -778,7 +784,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.work_areas.length > 0 ? (
-        <Section title="Areas of work">
+        <Section title={t("analysis.areasOfWork")}>
           <ul className="space-y-1">
             {analysis.work_areas.map((area) => (
               <Bullet key={area.key}>
@@ -796,7 +802,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.dependencies.length > 0 ? (
-        <Section title="Ordering">
+        <Section title={t("analysis.ordering")}>
           <ul className="space-y-1">
             {analysis.dependencies.map((dependency, index) => (
               <Bullet key={index}>
@@ -809,7 +815,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.verification.items.length > 0 ? (
-        <Section title="How you should check your work">
+        <Section title={t("analysis.verification")}>
           <ul className="space-y-1">
             {analysis.verification.items.map((item, index) => (
               <Bullet key={index}>
@@ -825,7 +831,7 @@ export function AnalysisPanel({
       ) : null}
 
       {analysis.specialized_analysis.length > 0 ? (
-        <Section title="Domain-specific analysis">
+        <Section title={t("analysis.domainAnalysis")}>
           {analysis.specialized_analysis.map((item) => (
             <SpecializedSection key={item.analyzer} item={item} />
           ))}
@@ -833,10 +839,10 @@ export function AnalysisPanel({
       ) : null}
 
       <p className="mt-6 text-xs text-[var(--color-ink-subtle)]">
-        Analysis is generated, not authoritative. Your specification stays the source of truth,
-        and {analysis.provider}
-        {analysis.model ? `/${analysis.model}` : ""} produced this with prompt{" "}
-        {analysis.prompt_version}.
+        {t("analysis.disclaimer", {
+          provider: `${analysis.provider}${analysis.model ? `/${analysis.model}` : ""}`,
+          version: analysis.prompt_version,
+        })}
       </p>
     </section>
   );
