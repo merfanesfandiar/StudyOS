@@ -1430,3 +1430,233 @@ async def save_preferences(
         session_length=session,
         ai_mode=mode,
     )
+
+
+async def rederive_milestones(
+    db: AsyncSession,
+    plan: AcademicWorkPlan,
+    *,
+    contract: PlanningContractResponse,
+    reason: str,
+) -> AcademicWorkPlan:
+    """Write a new version that differs from ``plan`` only in its milestones.
+
+    The narrow regeneration a student actually wants when the plan is right and
+    the checkpoints are wrong. Every task, edge and traceability link is copied
+    verbatim, so the new version cannot quietly differ from the approved one in
+    any way the student did not ask for. Milestones are re-derived from the
+    stored graph, not copied, because a milestone that lists a deleted task is
+    the thing being fixed.
+
+    This path never calls a model: re-deriving checkpoints from the graph the
+    student already has is arithmetic, not generation.
+    """
+    from app.schemas.planning import MAX_MILESTONES
+
+    version = await _next_version(plan.assignment_id, db)
+    existing = list(
+        await db.scalars(
+            select(PlanTask).where(PlanTask.plan_id == plan.id).order_by(PlanTask.position)
+        )
+    )
+    if not existing:
+        raise AppError(409, "PLAN_EMPTY", "There are no tasks to derive milestones from.")
+
+    order = {task.key: index for index, task in enumerate(existing)}
+    previous = list(
+        await db.scalars(
+            select(PlanMilestone)
+            .where(PlanMilestone.plan_id == plan.id)
+            .order_by(PlanMilestone.position)
+        )
+    )
+    # Milestone membership is version-local payload metadata, not a column, so
+    # the previous version's map is read from there rather than from the rows.
+    previous_members = _milestone_task_keys_from_payload(plan, previous)
+    assigned: set[str] = set()
+    layers: list[tuple[str, str, list[str]]] = []
+    for milestone in previous:
+        keys = [key for key in previous_members.get(milestone.key, []) if key in order]
+        assigned.update(keys)
+        if keys:
+            layers.append(
+                (milestone.title, milestone.description or "", sorted(keys, key=order.__getitem__))
+            )
+    # A milestone that lost every one of its tasks is dropped rather than kept
+    # as an empty checkpoint the student can never complete.
+    layers = [layer for layer in layers if layer[2]]
+    leftovers = [task.key for task in existing if task.key not in assigned]
+    if leftovers:
+        layers.append(
+            (
+                "Remaining work",
+                "Tasks that were not part of any earlier milestone.",
+                sorted(leftovers, key=order.__getitem__),
+            )
+        )
+    if len(layers) > MAX_MILESTONES:
+        # Fold the tail into the last milestone rather than dropping tasks: a
+        # milestone cap must not make work disappear from the schedule.
+        head, tail = layers[: MAX_MILESTONES - 1], layers[MAX_MILESTONES - 1 :]
+        merged = list(tail[0][2])
+        for _title, _description, keys in tail[1:]:
+            merged.extend(keys)
+        layers = [*head, (tail[0][0], tail[0][1], sorted(merged, key=order.__getitem__))]
+
+    new_plan = AcademicWorkPlan(
+        assignment_id=plan.assignment_id,
+        analysis_id=plan.analysis_id,
+        version=version,
+        trigger=PlanTrigger.REGENERATED.value,
+        reason=reason,
+        changed_sections=[SECTION_MILESTONES],
+        title=plan.title,
+        summary=plan.summary,
+        status=PlanStatus.READY_FOR_REVIEW.value,
+        objectives=list(plan.objectives or []),
+        payload=plan.payload,
+        estimated_effort=plan.estimated_effort,
+        min_minutes=plan.min_minutes,
+        max_minutes=plan.max_minutes,
+    )
+    db.add(new_plan)
+    await db.flush()
+
+    rows: dict[str, PlanTask] = {}
+    for position, task in enumerate(existing):
+        rows[task.key] = PlanTask(
+            plan_id=new_plan.id,
+            key=task.key,
+            title=task.title,
+            description=task.description,
+            type=task.type,
+            status=task.status,
+            priority=task.priority,
+            position=position,
+            estimated_effort=task.estimated_effort,
+            min_minutes=task.min_minutes,
+            max_minutes=task.max_minutes,
+            verification_method=task.verification_method,
+            acceptance_criteria=list(task.acceptance_criteria or []),
+            resources=list(task.resources or []),
+            notes=task.notes,
+            is_user_authored=task.is_user_authored,
+        )
+        db.add(rows[task.key])
+    await db.flush()
+    await _copy_all_edges(db, plan.id, new_plan, existing, rows)
+    await _copy_all_traceability(db, plan.id, new_plan, existing, rows)
+
+    milestones_payload = []
+    for position, (title, description, keys) in enumerate(layers):
+        milestone_key = f"M{position + 1}"
+        db.add(
+            PlanMilestone(
+                plan_id=new_plan.id,
+                key=milestone_key,
+                title=title,
+                description=description,
+                position=position,
+                status=AcademicTaskStatus.PENDING.value,
+            )
+        )
+        # Milestone membership is version-local metadata and lives in the
+        # payload, matching how generation stores it.
+        milestones_payload.append(
+            {
+                "key": milestone_key,
+                "title": title,
+                "description": description,
+                "task_keys": list(keys),
+            }
+        )
+    new_plan.payload = {
+        **(new_plan.payload or {}),
+        "milestones": milestones_payload,
+        "rederived": "milestones",
+    }
+    await db.flush()
+    await _revalidate_or_conflict(db, new_plan)
+    return new_plan
+
+
+def _milestone_task_keys_from_payload(
+    plan: AcademicWorkPlan, milestones: Sequence[PlanMilestone]
+) -> dict[str, list[str]]:
+    """The previous version's milestone membership, read from its payload."""
+    return {
+        str(item.get("key")): list(item.get("task_keys", []))
+        for item in (plan.payload or {}).get("milestones", [])
+    }
+
+
+async def _copy_all_edges(
+    db: AsyncSession,
+    old_plan_id: UUID,
+    new_plan: AcademicWorkPlan,
+    existing: Sequence[PlanTask],
+    rows: dict[str, PlanTask],
+) -> None:
+    """Copy every dependency edge between the same task keys."""
+    old_id_to_key = {task.id: task.key for task in existing}
+    edges = list(
+        await db.scalars(
+            select(PlanTaskDependency).where(PlanTaskDependency.plan_id == old_plan_id)
+        )
+    )
+    for edge in edges:
+        predecessor = old_id_to_key.get(edge.predecessor_id)
+        successor = old_id_to_key.get(edge.successor_id)
+        if predecessor is None or successor is None:
+            continue
+        db.add(
+            PlanTaskDependency(
+                plan_id=new_plan.id,
+                predecessor_id=rows[predecessor].id,
+                successor_id=rows[successor].id,
+                reason=edge.reason,
+            )
+        )
+    await db.flush()
+
+
+async def _copy_all_traceability(
+    db: AsyncSession,
+    old_plan_id: UUID,
+    new_plan: AcademicWorkPlan,
+    existing: Sequence[PlanTask],
+    rows: dict[str, PlanTask],
+) -> None:
+    """Copy every requirement and deliverable link, keyed by task key."""
+    old_id_to_key = {task.id: task.key for task in existing}
+    requirement_rows = list(
+        await db.scalars(
+            select(PlanTaskRequirement).where(PlanTaskRequirement.plan_id == old_plan_id)
+        )
+    )
+    for old_requirement in requirement_rows:
+        key = old_id_to_key.get(old_requirement.task_id)
+        if key is not None:
+            db.add(
+                PlanTaskRequirement(
+                    plan_id=new_plan.id,
+                    task_id=rows[key].id,
+                    requirement_key=old_requirement.requirement_key,
+                )
+            )
+    deliverable_rows = list(
+        await db.scalars(
+            select(PlanTaskDeliverable).where(PlanTaskDeliverable.plan_id == old_plan_id)
+        )
+    )
+    for old_link in deliverable_rows:
+        key = old_id_to_key.get(old_link.task_id)
+        if key is not None:
+            db.add(
+                PlanTaskDeliverable(
+                    plan_id=new_plan.id,
+                    task_id=rows[key].id,
+                    deliverable_key=old_link.deliverable_key,
+                )
+            )
+    await db.flush()

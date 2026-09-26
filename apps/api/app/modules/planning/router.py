@@ -333,9 +333,11 @@ async def generate_plan_for_assignment(
         "Re-plans the assignment and writes the result as a new version. The previous version "
         "stays readable, and an approved version is never modified.\n\n"
         "Tasks the student authored or edited by hand are carried into the new version with "
-        "their content intact (unless `preserve_user_edits` is false). Dependencies between "
-        "those carried tasks are preserved; dependencies from them onto generated tasks are "
-        "dropped, because those tasks may not exist in the new plan."
+        "their content, dependencies and traceability links intact (unless "
+        "`preserve_user_edits` is false). Dependencies from them onto generated tasks are "
+        "dropped, because those tasks may not exist in the new plan.\n\n"
+        "`scope=MILESTONES` is the narrow case: every task, edge and traceability link is "
+        "copied verbatim and only the checkpoints are re-derived, with no model call."
     ),
 )
 async def regenerate_plan(
@@ -363,6 +365,31 @@ async def regenerate_plan(
     preserve: Sequence[PlanTask] = ()
     if payload.preserve_user_edits:
         preserve = tuple(await service.user_authored_tasks(current.id, db))
+
+    if payload.scope == "MILESTONES":
+        # Re-deriving checkpoints is arithmetic over the stored graph, not
+        # generation. Skipping the model here is the point of the scope: a
+        # student who only wants better milestones should not pay for a re-plan.
+        result_plan = await service.rederive_milestones(
+            db,
+            current,
+            contract=contract,
+            reason=payload.reason or "milestones re-derived",
+        )
+        await _record(
+            db,
+            assignment,
+            result_plan,
+            user,
+            AuditEventType.PLAN_REGENERATED,
+            entity_type="AcademicWorkPlan",
+            entity_id=result_plan.id,
+            metadata={"from_version": current.version, "scope": "MILESTONES"},
+        )
+        await db.commit()
+        return service.build_plan_response(
+            result_plan, assignment=assignment, graph=await service.load_plan_graph(db, result_plan)
+        )
 
     await record_audit(
         db,

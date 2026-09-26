@@ -201,10 +201,14 @@ class PlanGenerateRequest(BaseModel):
 class PlanRegenerateRequest(BaseModel):
     """Re-plan, preserving what the student authored.
 
-    ``scope`` narrows regeneration. ``NONE`` re-plans the whole plan;
-    ``MILESTONES`` re-derives milestones against the current tasks; ``TASKS``
-    re-derives tasks while keeping milestones that still apply. Regeneration
-    always creates a new version and never overwrites the approved one.
+    ``scope`` narrows regeneration. ``TASKS`` (the default) and ``NONE`` both
+    re-plan the whole plan from the analysis. ``MILESTONES`` re-derives the
+    checkpoints against the tasks already in the plan and copies everything else
+    verbatim, without calling a model at all.
+
+    Regeneration always creates a new version and never overwrites the approved
+    one. An approved plan can be read and regenerated from, but not edited in
+    place.
     """
 
     model_config = ConfigDict(extra="forbid")

@@ -557,3 +557,70 @@ async def test_task_edits_are_audited(client: AsyncClient, assignment: dict, db_
     assert updated.entity_type == "PlanTask"
     assert updated.metadata_json["task_key"] == key
     assert updated.metadata_json["version"] == plan["version"]
+
+
+async def test_milestone_scope_copies_the_plan_and_keeps_every_link(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """Re-deriving checkpoints must not quietly change anything else."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    covered = next(t for t in plan["tasks"] if t["related_requirements"])
+    await client.patch(f"{base}/tasks/{covered['key']}", json={"title": "Mine"})
+    # Compare against the edited plan, not the generated one: the edit is part
+    # of what the milestone re-derivation has to preserve.
+    edited = await client.get(base)
+    assert edited.status_code == 200, edited.text
+    plan = edited.json()
+
+    regenerated = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans/regenerate",
+        json={"scope": "MILESTONES"},
+    )
+    assert regenerated.status_code == 201, regenerated.text
+    body = regenerated.json()
+    assert body["version"] == 2
+    assert body["changed_sections"] == ["milestones"]
+
+    before = {t["key"]: t for t in plan["tasks"]}
+    after = {t["key"]: t for t in body["tasks"]}
+    assert set(before) == set(after), "no task may appear or disappear"
+    for key, old in before.items():
+        new = after[key]
+        assert new["title"] == old["title"]
+        assert new["description"] == old["description"]
+        assert sorted(new["depends_on"]) == sorted(old["depends_on"])
+        assert sorted(new["related_requirements"]) == sorted(old["related_requirements"])
+        assert sorted(new["related_deliverables"]) == sorted(old["related_deliverables"])
+        assert new["min_minutes"] == old["min_minutes"]
+        assert new["max_minutes"] == old["max_minutes"]
+
+    # Every task still belongs to a milestone, and no milestone points at a task
+    # that does not exist.
+    keys = set(after)
+    covered_by_milestone = {key for m in body["milestones"] for key in m["task_keys"]}
+    assert covered_by_milestone == keys
+    assert body["milestones"], "a plan with tasks must still have checkpoints"
+
+
+async def test_milestone_scope_drops_a_milestone_whose_tasks_are_gone(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """An empty checkpoint is not a checkpoint."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    first_milestone = plan["milestones"][0]
+    for key in first_milestone["task_keys"]:
+        assert (await client.delete(f"{base}/tasks/{key}")).status_code == 204
+
+    regenerated = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans/regenerate",
+        json={"scope": "MILESTONES"},
+    )
+    assert regenerated.status_code == 201, regenerated.text
+    body = regenerated.json()
+    remaining = {t["key"] for t in body["tasks"]}
+    for milestone in body["milestones"]:
+        assert set(milestone["task_keys"]) <= remaining
+    covered = {key for m in body["milestones"] for key in m["task_keys"]}
+    assert covered == remaining
