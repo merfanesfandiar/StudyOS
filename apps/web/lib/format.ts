@@ -1,14 +1,21 @@
 import type {
+  AcademicDomain,
   AssignmentStatus,
+  AssignmentType,
   CheckStatus,
   ClientSettableStatus,
   ConstraintSeverity,
   ConstraintType,
   DeliverableStatus,
   DeliverableType,
+  FindingSeverity,
+  QuestionPriority,
+  RequirementCategory,
   RequirementPriority,
   RequirementStatus,
   RequirementType,
+  ScopeLevel,
+  SourceKind,
   TechnologyCategory,
 } from "./types";
 
@@ -173,6 +180,136 @@ export const PRIORITY_OPTIONS = Object.keys(PRIORITIES) as RequirementPriority[]
 export const TECHNOLOGY_CATEGORY_OPTIONS = Object.keys(
   TECHNOLOGY_CATEGORIES,
 ) as TechnologyCategory[];
+
+// ---------------------------------------------------------------------------
+// Phase 3 analysis taxonomy
+// ---------------------------------------------------------------------------
+
+const ASSIGNMENT_TYPES: Record<AssignmentType, string> = {
+  PROGRAMMING: "Programming",
+  PROBLEM_SET: "Problem set",
+  MATHEMATICAL_PROOF: "Mathematical proof",
+  ESSAY: "Essay",
+  RESEARCH: "Research",
+  LITERATURE_REVIEW: "Literature review",
+  LAB_REPORT: "Lab report",
+  DATA_ANALYSIS: "Data analysis",
+  PRESENTATION: "Presentation",
+  READING: "Reading",
+  LANGUAGE: "Language work",
+  DESIGN: "Design",
+  GROUP_PROJECT: "Group project",
+  REPORT: "Report",
+  OTHER: "Other",
+};
+
+const ACADEMIC_DOMAINS: Record<AcademicDomain, string> = {
+  MATHEMATICS: "Mathematics",
+  COMPUTER_SCIENCE: "Computer science",
+  PHYSICS: "Physics",
+  CHEMISTRY: "Chemistry",
+  BIOLOGY: "Biology",
+  ENGINEERING: "Engineering",
+  ECONOMICS: "Economics",
+  BUSINESS: "Business",
+  SOCIAL_SCIENCES: "Social sciences",
+  HUMANITIES: "Humanities",
+  LANGUAGES: "Languages",
+  ART_AND_DESIGN: "Art and design",
+  OTHER: "Other",
+};
+
+const REQUIREMENT_CATEGORIES: Record<RequirementCategory, string> = {
+  CONTENT: "Content",
+  PROCESS: "Process",
+  DELIVERABLE: "Deliverable",
+  QUALITY: "Quality",
+  FORMAT: "Format",
+  ACADEMIC: "Academic",
+  METHODOLOGY: "Methodology",
+  EVALUATION: "Evaluation",
+  PRESENTATION: "Presentation",
+  TECHNICAL: "Technical",
+  OTHER: "Other",
+};
+
+const FINDING_SEVERITIES: Record<FindingSeverity, string> = {
+  INFO: "Info",
+  WARNING: "Warning",
+  IMPORTANT: "Important",
+  CRITICAL: "Critical",
+};
+
+const QUESTION_PRIORITIES: Record<QuestionPriority, string> = {
+  CRITICAL: "Critical",
+  IMPORTANT: "Important",
+  OPTIONAL: "Optional",
+};
+
+const SCOPE_LEVELS: Record<ScopeLevel, string> = {
+  NOT_APPLICABLE: "Not applicable",
+  LOW: "Low",
+  MEDIUM: "Medium",
+  HIGH: "High",
+  UNKNOWN: "Unknown",
+};
+
+/**
+ * Provenance, phrased the way a student needs to read it. `EXPLICIT` is the
+ * only kind backed by the brief itself; the rest are the model's word.
+ */
+const SOURCE_KIND_LABELS: Record<SourceKind, string> = {
+  EXPLICIT: "Stated in the brief",
+  AI_INFERENCE: "Inferred by AI",
+  UNCERTAIN: "Uncertain",
+  MISSING: "Not stated",
+};
+
+const SOURCE_KIND_SHORT: Record<SourceKind, string> = {
+  EXPLICIT: "Explicit",
+  AI_INFERENCE: "AI inference",
+  UNCERTAIN: "Uncertain",
+  MISSING: "Missing",
+};
+
+export const assignmentTypeLabel = (value: AssignmentType) => ASSIGNMENT_TYPES[value] ?? value;
+export const academicDomainLabel = (value: AcademicDomain) => ACADEMIC_DOMAINS[value] ?? value;
+export const requirementCategoryLabel = (value: RequirementCategory) =>
+  REQUIREMENT_CATEGORIES[value] ?? value;
+export const findingSeverityLabel = (value: FindingSeverity) =>
+  FINDING_SEVERITIES[value] ?? value;
+export const questionPriorityLabel = (value: QuestionPriority) =>
+  QUESTION_PRIORITIES[value] ?? value;
+export const scopeLevelLabel = (value: ScopeLevel) => SCOPE_LEVELS[value] ?? value;
+export const sourceKindLabel = (value: SourceKind) => SOURCE_KIND_LABELS[value] ?? value;
+export const sourceKindShort = (value: SourceKind) => SOURCE_KIND_SHORT[value] ?? value;
+
+export const ASSIGNMENT_TYPE_OPTIONS = Object.keys(ASSIGNMENT_TYPES) as AssignmentType[];
+export const ACADEMIC_DOMAIN_OPTIONS = Object.keys(ACADEMIC_DOMAINS) as AcademicDomain[];
+export const REQUIREMENT_CATEGORY_OPTIONS = Object.keys(
+  REQUIREMENT_CATEGORIES,
+) as RequirementCategory[];
+
+/**
+ * Confidence is never certainty, so it renders as a word plus the number. The
+ * thresholds are deliberately blunt: anything under 0.5 is not worth leaning on.
+ */
+export function confidenceLabel(confidence: number): string {
+  if (confidence >= 0.85) return "High";
+  if (confidence >= 0.6) return "Moderate";
+  if (confidence > 0) return "Low";
+  return "Not reported";
+}
+
+export function formatConfidence(confidence: number): string {
+  if (confidence <= 0) return "confidence not reported";
+  return `${Math.round(confidence * 100)}% confidence`;
+}
+
+/** Only the stated provenance is safe to plan against. */
+export function isExplicit(source: SourceKind): boolean {
+  return source === "EXPLICIT";
+}
 
 /** Weights arrive as decimal strings; show them with a percent sign. */
 export function formatWeight(value: string | number): string {

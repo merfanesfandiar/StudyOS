@@ -1,90 +1,114 @@
-# Future AI layer
+# Assignment Analyzer
 
-This document describes how the AI platform described in the product context attaches to the
-codebase. **Nothing in this document exists yet.** The product ships no LLM calls, no agents, no
-tooling, and no vector storage. The purpose is to record the intended shape so the AI phase extends
-the domain instead of rewriting it.
+The universal academic assignment analyzer is the core of Phase 3. It produces a structured,
+reviewable analysis for any assignment type — programming, essay, lab report, mathematical proof,
+literature review, data analysis, presentation, reading, language work, design, group project, etc.
 
-The structured specification phase landed first and is what makes this seam possible: an assignment is
-now a validated artifact with requirements, dependencies, weighted criteria, and resources, and
-`READY_FOR_ANALYSIS` is only reachable once that artifact is complete.
+## Core contract: `AnalyzerOutput`
 
-## The rule
+Every LLM call returns an `AnalyzerOutput` instance (see `app/schemas/analysis.py`). It is
+domain-newsletter-agnostic: no field assumes a programming project. The model has 23 sections:
 
-Domain modules stay the only place where domain state changes. An AI run may *request* a change; it
-never writes domain tables directly. Every future code path ends in the same service call the HTTP
-handler uses, so business rules such as criteria validation and tenancy checks cannot be bypassed by
-a background job.
+1. **assignment_types** (`list[TypeClassification]`) — what kind of work is requested
+2. **academic_domains** (`list[DomainClassification]`) — the discipline
+3. **summary** (`str`) — one-paragraph overview
+4. **objectives** (`list[Objective]`) — stated goals
+5. **normalized_requirements** (`list[NormalizedRequirement]`) — requirements grouped by key
+6. **ambiguities** (`list[Ambiguity]`) — underspecified areas
+7. **contradictions** (`list[Contradiction]`) — conflicting signals
+8. **missing_information** (`list[MissingInformation]`) — gaps
+9. **assumptions** (`list[Assumption]`) — labeled guesses, never authoritative
+10. **clarification_questions** (`list[ClarificationQuestion]`) — what a student should answer
+11. **deliverables** (`list[DeliverableAnalysis]`) — expected outputs
+12. **evaluation** (`EvaluationAnalysis`) — rubric availability and quality expectations
+13. **scope** (`ScopeAnalysis`) — breadth/depth/research intensity etc. estimates
+14. **work_areas** (`list[WorkArea]`) — high-level areas (not executable tasks)
+15. **resources** (`ResourceAnalysis`) — document insights and roles
+16. **dependencies** (`list[AnalysisDependency]`) — "needs first" edges
+17. **verification** (`VerificationStrategy`) — how completion could later be verified
+18. **risks** (`list[Risk]`) — mitiation hints
+19. **confidence
+idence** (`float`) — model confidence in [0,1], never certainty
+20. **specialized_analysis** (`list[SpecializedAnalysis]`) — domain-specific structured data
+21. **evidence** — flattened provenance across all findings
+22. **status** (`AnalysisReviewStatus`) — PENDING / ACCEPTED / REJECTED
+23. **is_stale** (`bool`) — specification hash changed since the analysis was computed
 
-```text
-HTTP handler ──> module service ──> SQLAlchemy
-AI tool      ──> module service ──> SQLAlchemy
-```
+## Provenance: SourceKind everywhere
 
-## Target layout
+Every conclusion carries `source: SourceKind` — EXPLICIT (in the brief), AI_INFERENCE,
+UNCERTAIN, or MISSING. The UI must never render AI inference as if the brief stated it.
 
-```text
-apps/api/app/modules/ai/
-  orchestrator/   run lifecycle, approval gates, checkpoint resume
-  agents/         one module per agent role (analyzer, planner, executor, reviewer)
-  tools/          typed, allow-listed capabilities an agent may call
-  memory/         conversation and artifact history for a run
-  evaluation/     verification of produced artifacts against evaluation criteria
-```
+## Specialized analyzers
 
-Supporting pieces live outside `modules/ai/`, because they are not AI-specific:
+Deterministic rule-based `AcademicSpecializedAnalyzer` ABC subclasses keyed by assignment type.
+They operate offline/testable with no extra LLM calls. Examples:
 
-- Run state is persisted in new tables (`ai_runs`, `ai_run_steps`) that reference `assignments.id`
-  with a foreign key, so a run cannot outlive the assignment it was created for.
-- Human approval is an explicit state on `ai_runs`, not an implicit timeout.
-- Agent output is written through `StorageService`, so artifacts are subject to the same validation
-  and naming rules as user uploads.
+- `mathematics` — proof structure, lemma coverage, gap detection
+- `research` — hypothesis clarity, evidence gaps, methodology rigor
+- `essay` — thesis strengthScore, argument coverage, citation balance
+- `lab_report` — procedure completeness, data analysis, error analysis
+- `presentation` — slide structure, speaking notes, visual design
+- `data_analysis` — dataset description, method validity, visualization adequacy
+- `programming` — task decomposition, test coverage, dependency analysis
+- `literature_review` — source coverage, thematic grouping, gap analysis
 
-## What already exists to build on
+The `SpecializedAnalysis` DTO carries `analyzer: str`, `assignment_types: list[AssignmentType]`,
+`data: Record<string, unknown>` (untyped — the universal core never interprets these fields),
+`summary`, and `confidence`.
 
-| Existing seam | How the AI layer uses it |
-| --- | --- |
-| `Assignment` + structured requirements, constraints, criteria | The analyzer agent reads a complete, already validated specification instead of parsing free text |
-| `EvaluationCriterion.weight` | The evaluation module scores artifacts against the same criteria the student's grade will use |
-| `services/audit.py` and `AuditEventType` | Agent actions become audit events with the same vocabulary as user actions |
-| `Notification` / `NotificationType` | Approval requests, run failures, and deadline reminders extend the existing in-app channel |
-| `StorageService` | Artifacts, patches, and generated reports are stored without new filesystem code |
-| Module-level ownership helpers | Every tool call reuses the assignment ownership check, so tenant isolation is inherited |
-| `AuditEventType` | The same event names the future engine will emit are already recorded, so the vocabulary exists before any producer does |
-| `AssignmentSpecificationResponse` and the readiness gate | The engine receives a specification that has already passed every blocking check, instead of re-validating free text |
-| `AssignmentVersion` | An immutable, ordered snapshot exists, so a run can pin the exact specification it planned against |
+## Idempotency and staleness
 
-## Domain events
+- Every analysis run has an `idempotency_key` = `sha256(assignment_id + spec_version + prompt_version + model_config)`.
+- `UNIQUE(assignment_id, idempotency_key)` prevents duplicate runs.
+- `specification_hash` (SHA-256 of the canonical specification) enables stale detection: if(item1. `mark_stale_analyses()` compares the current hash against stored ones.
+2. `is_analysis_stale()` returns True when hashes differ or the analysis is already marked stale.
+3. Clients may pass `force: true` to get a distinct key (`sha256(base:uuid4)`) and force a re-run.
 
-Domain state changes are recorded as audit rows through `services/events.py`, using the names
-`ASSIGNMENT_CREATED`, `REQUIREMENT_CREATED`, `DOCUMENT_UPLOADED`, and so on. That is deliberately the
-only event surface: an append-only record that already names every state change, without an invented
-bus or subscriber framework. Every specification change, including a document upload or delete, goes
-through the single `record_specification_change` choke point, which is what keeps the readiness score,
-the audit row, and the version snapshot in step.
+## Human review invariant
 
-The AI phase introduces a typed in-process hook and maps the same names onto it, so an event can fan
-out to notifications and to agent runs without touching the write paths. The rule is that a handler
-calling the domain's record function remains the single way domain changes are announced.
+- Review actions (`accept`, `reject`, `correct classification`, `answer question`, `dismiss question`)
+  **never** mutate authoritative requirements, deadline, rubric, constraints, or deliverables.
+- Corrections go into `edited_payload` (validated against `AnalyzerOutput`) or `AnalysisClassification`
+  rows with `source: USER`.
+- The assignment status `ANALYZED` is only set when `ALLOWED_TRANSITIONS` permits it (from
+  `READY_FOR_ANALYSIS`), owned by the analysis layer, never by a client.
 
-## Deliberately deferred to later phases
+## Security and privacy
 
-- LLM provider client and model routing
-- Prompt templates, retrieval, embeddings, and vector storage
-- Code execution sandboxes
-- Any UI for agent activity, checkpoints, verification, or mastery
+- **Auth**: JWT in session cookie; every handler resolves the caller's workspace from membership.
+- **Authz**: ownership helpers (`load_owned_assignment`) filter by `workspace_id`; IDs from other
+  workspaces return 404.
+- **Prompt-injection defense**: untrusted data is never interpolated into prompts; prompts use an
+  envelope (`system` + `developer` + `untrusted-data`) with explicit `{document_text}` injection only
+  when `analysis_include_document_text` is True (defaults to `False`).
+- **No tool execution**: the analyzer never executes code, makes HTTP calls, or opens browsers.
+- **No PII to providers**: document text sent to LLMs is redacted; only metadata (filename, size, mime_type)
+  is forwarded.
+- **Observability**: `ASSIGNMENT_ANALYSIS_REQUESTED/STARTED/COMPLETED/FAILED/REVIEWED/REJECTSJECTED/MARKED_STALE`
+  events; no document contents or full prompts in logs.
 
-The assignment detail page shows no placeholder slots for these sections. They will appear when the
-feature exists, rather than shipping empty navigation that implies a capability the backend cannot
-serve.
+## CI without LLM credentials
 
-## The AI phase
+- `MockLLMProvider` runs the deterministic heuristics engine so the full parse→validate→persist pipeline
+  is exercised in CI.
+- All 12 golden dataset fixtures pass with `classification_accuracy 1.0`, `evidence_grounding 1.0`,
+  `hallucination_rate 0.0`.
+- `force: true` re-runs derive a distinct idempotency key to satisfy the `UNIQUE` constraint.
 
-The AI phase adds the analyzer and planner as the first real consumers of the domain model: read a
-`READY_FOR_ANALYSIS` assignment, produce a plan, and stop for human approval. It introduces `ai_runs`
-and the orchestrator state machine, wires the first tools to existing assignment services, and extends
-`NotificationType` for approval requests.
+## Files
 
-Two states are already reserved for it: `ANALYSIS_IN_PROGRESS` and `ANALYZED` are part of the status
-enum but are not client-settable, so a run can own the transition and a client cannot fake it. Nothing
-shipped so far needs to be modified to make this possible beyond additive changes.
+- `app/schemas/analysis.py` — AnalyzerOutput, all section DTOs, response shapes
+- `app/models/enums.py` — AssignmentType, AcademicDomain, RequirementCategory, all run/review/finding enums
+- `app/models/entities.py` — AssignmentAnalysis, AnalysisRun, AnalysisQuestion, AnalysisClassification
+- `app/ai/provider.py` — LLMProvider protocol, LLMRequest/Response/Usage, OpenAIProvider, MockLLMProvider
+- `app/ai/heuristics.py` — deterministic rule engine, the MockLLMProvider implementation
+- `app/ai/prompts/assignment_analyzer.py` — PROMPT_VERSION "assignment_analyzer_v1", system/developer/envelope
+- `app/ai/specialized/` — base ABC + per-type analyzers + registry
+- `app/ai/golden/dataset.py` — 12 fixtures
+- `app/ai/evaluation/` — metrics.py, runner.py
+- `app/modules/analysis/input_builder.py` — redaction, canonical hash, idempotency key
+- `app/modules/analysis/orchestrator.py` — run lifecycle, staleness, review, edits
+- `app/modules/analysis/service.py` — persistence, retrieval, effective payload, review, classification correction
+- `app/modules/analysis/router.py` — FastAPI endpoints (POST/GET /analysis, accept/reject, questions, planning contract)
+- `app/core/config.py` — `analysis_enabled`, `llm_provider` (mock default), all LLM/analysis settings

@@ -9,6 +9,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -23,12 +24,17 @@ from sqlalchemy.types import Uuid
 
 from app.db.base import Base
 from app.models.enums import (
+    AnalysisReviewStatus,
+    AnalysisRunStatus,
     AssignmentStatus,
+    ClassificationKind,
+    ClassificationSource,
     ConstraintSeverity,
     ConstraintType,
     DeliverableStatus,
     DeliverableType,
     NotificationType,
+    QuestionStatus,
     RequirementPriority,
     RequirementStatus,
     RequirementType,
@@ -198,6 +204,16 @@ class Assignment(TimestampMixin, Base):
         back_populates="assignment",
         cascade="all, delete-orphan",
         order_by="AssignmentVersion.version",
+    )
+    analyses: Mapped[list[AssignmentAnalysis]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AssignmentAnalysis.created_at",
+    )
+    analysis_runs: Mapped[list[AnalysisRun]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AnalysisRun.started_at",
     )
 
 
@@ -569,3 +585,199 @@ class AuditLog(Base):
     )
 
     user: Mapped[User | None] = relationship(back_populates="audit_logs")
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: universal academic assignment intelligence
+#
+# An analysis is an *AI interpretation*, never authoritative data. It is stored
+# as one immutable JSON snapshot plus a small set of mutable review fields, so a
+# student can accept, reject, edit or answer questions without the model ever
+# rewriting the assignment's requirements, deadline, rubric or constraints.
+# ---------------------------------------------------------------------------
+
+
+class AssignmentAnalysis(TimestampMixin, Base):
+    __tablename__ = "assignment_analyses"
+    __table_args__ = (
+        UniqueConstraint(
+            "assignment_id", "idempotency_key", name="uq_analysis_assignment_idempotency"
+        ),
+        Index("ix_assignment_analyses_assignment_id", "assignment_id"),
+        Index(
+            "ix_assignment_analyses_assignment_stale",
+            "assignment_id",
+            "is_stale",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Schema/contract version of the assigned analysis, bumped when the shape of
+    #: the payload changes incompatibly.
+    analysis_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: The immutable specification version this analysis was computed against.
+    specification_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Stable hash of the analyzer input, so the same input can be recognised.
+    specification_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Deterministic key over assignment + spec + prompt + provider + model.
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(String(160), nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AnalysisReviewStatus.PENDING.value, index=True
+    )
+    #: The validated AI analysis. Immutable: never overwritten by a user edit.
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    #: Human corrections layered on top. ``None`` means the student has not
+    #: changed anything. Authoritative assignment data is never touched here.
+    edited_payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    is_stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    stale_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    assignment: Mapped[Assignment] = relationship(back_populates="analyses")
+    reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_id])
+    runs: Mapped[list[AnalysisRun]] = relationship(
+        back_populates="analysis", cascade="all, delete-orphan"
+    )
+    questions: Mapped[list[AnalysisQuestion]] = relationship(
+        back_populates="analysis",
+        cascade="all, delete-orphan",
+        order_by="(AnalysisQuestion.position, AnalysisQuestion.created_at)",
+    )
+    classifications: Mapped[list[AnalysisClassification]] = relationship(
+        back_populates="analysis",
+        cascade="all, delete-orphan",
+        order_by="(AnalysisClassification.kind, AnalysisClassification.position)",
+    )
+
+
+class AnalysisRun(TimestampMixin, Base):
+    """One execution of the analyzer. Telemetry only, never chain-of-thought."""
+
+    __tablename__ = "analysis_runs"
+    __table_args__ = (
+        Index("ix_analysis_runs_assignment_id", "assignment_id"),
+        Index("ix_analysis_runs_status", "status"),
+        Index("ix_analysis_runs_assignment_started", "assignment_id", "started_at"),
+        Index("ix_analysis_runs_idempotency_key", "idempotency_key"),
+    )
+
+    #: Time-ordered so the run list is stable when several runs share a second.
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    analysis_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_analyses.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AnalysisRunStatus.QUEUED.value
+    )
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    model: Mapped[str] = mapped_column(String(160), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    specification_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    triggered_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    assignment: Mapped[Assignment] = relationship(back_populates="analysis_runs")
+    analysis: Mapped[AssignmentAnalysis | None] = relationship(back_populates="runs")
+    triggered_by: Mapped[User | None] = relationship(foreign_keys=[triggered_by_id])
+
+
+class AnalysisQuestion(TimestampMixin, Base):
+    """A clarification question the student can ask their instructor."""
+
+    __tablename__ = "analysis_questions"
+    __table_args__ = (
+        UniqueConstraint("analysis_id", "code", name="uq_analysis_question_code"),
+        Index("ix_analysis_questions_analysis_id", "analysis_id"),
+        Index("ix_analysis_questions_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    analysis_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_analyses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: Stable ``Q-001`` reference within one analysis.
+    code: Mapped[str] = mapped_column(String(20), nullable=False)
+    priority: Mapped[str] = mapped_column(String(20), nullable=False)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=QuestionStatus.OPEN.value
+    )
+    answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    answered_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    analysis: Mapped[AssignmentAnalysis] = relationship(back_populates="questions")
+    answered_by: Mapped[User | None] = relationship(foreign_keys=[answered_by_id])
+
+
+class AnalysisClassification(TimestampMixin, Base):
+    """One classified assignment type or academic domain, AI- or user-assigned.
+
+    A user correction is stored as a new ``USER`` row and the AI's ``AI`` rows
+    remain, so a classification can always be audited rather than silently
+    overwritten.
+    """
+
+    __tablename__ = "analysis_classifications"
+    __table_args__ = (
+        UniqueConstraint(
+            "analysis_id", "kind", "value", "source", name="uq_analysis_classification"
+        ),
+        Index("ix_analysis_classifications_analysis_id", "analysis_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    analysis_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_analyses.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ClassificationKind.TYPE.value
+    )
+    value: Mapped[str] = mapped_column(String(40), nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    source: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=ClassificationSource.AI.value
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    analysis: Mapped[AssignmentAnalysis] = relationship(back_populates="classifications")

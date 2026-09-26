@@ -11,6 +11,7 @@ import { RequirementsSection } from "@/components/assignment/requirements-sectio
 import { ResourcesSection } from "@/components/assignment/resources-section";
 import { SummarySection } from "@/components/assignment/summary-section";
 import { DeliverablesSection, TaxonomySection } from "@/components/assignment/taxonomy-section";
+import { AnalysisPanel } from "@/components/assignment/analysis-panel";
 import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import type { Course } from "@/lib/types";
@@ -23,6 +24,7 @@ const SECTIONS = [
   { href: "#constraints", label: "Constraints" },
   { href: "#criteria", label: "Criteria" },
   { href: "#deliverables", label: "Deliverables" },
+  { href: "#analysis", label: "Analysis" },
   { href: "#stack", label: "Tools" },
   { href: "#resources", label: "Resources" },
   { href: "#summary", label: "Summary" },
@@ -128,6 +130,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
         </div>
         <ResourcesSection onChanged={refresh} specification={specification} />
         <SummarySection specification={specification} />
+        <AnalysisPanel assignmentId={specification.assignment.id} />
         <HistorySection
           assignmentId={assignmentId}
           refreshToken={specification.specification_version}

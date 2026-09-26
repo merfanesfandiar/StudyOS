@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestLoggingMiddleware
+from app.modules.analysis.router import router as analysis_router
 from app.modules.assignments import router as assignments_router
 from app.modules.assignments.content_router import router as assignment_content_router
 from app.modules.assignments.requirements_router import router as requirements_router
@@ -35,9 +36,10 @@ app = FastAPI(
     title="StudyOS API",
     version="0.1.0",
     description=(
-        "StudyOS API. Phase 2 adds the assignment specification engine: structured requirements, "
-        "constraints, evaluation criteria, deliverables, technologies, tags, a deterministic "
-        "readiness report, version history and a change feed."
+        "StudyOS API. Phase 3 adds the universal academic assignment intelligence layer: "
+        "AI-assisted assignment classification, a structured and reviewable AssignmentAnalysis "
+        "for every academic assignment type, specialized analyzers, analysis runs, evidence "
+        "tracking, stale-analysis detection and a stable Phase 4 planning contract."
     ),
     docs_url="/docs",
     redoc_url="/redoc",
@@ -61,6 +63,7 @@ app.include_router(requirements_router)
 app.include_router(assignment_content_router)
 app.include_router(taxonomy_router)
 app.include_router(specification_router)
+app.include_router(analysis_router)
 app.include_router(documents_router)
 app.include_router(dashboard_router)
 app.include_router(notifications_router)

@@ -216,13 +216,26 @@ API, and the API runs `alembic upgrade head` before serving. Data lives in two n
 
 ## Future phases
 
-There is deliberately no AI code yet. The seams a later engine plugs into are already in place: domain
-modules own their write paths, `services/audit.py` records state changes, `StorageService` isolates file
-IO, and `Notification` plus `AuditEventType` define the vocabulary an engine can publish. The
-specification model is the important one here: because a `READY_FOR_ANALYSIS` assignment already carries
-validated requirements, constraints, weighted criteria, deliverables, and technologies, a future engine
-consumes a checked artifact instead of parsing free text. How that engine is expected to attach is
-described in [future-ai.md](future-ai.md).
+Phase 3 — the Universal Academic Assignment Intelligence Layer — is now complete
+and production-ready. The AI layer is fully operational: analysis runs, classifications,
+questions, review, and idempotent re-exports all work without LLM credentials in CI
+(via the `MockLLMProvider`). The seams for a Phase 4 Planning Engine are already in
+place: a stable `PlanningContract` DTO, frozen analysis snapshots, and staleness
+detection. No LangGraph, no microservices, no tool execution.
+
+The remaining work is frontend integration (analysis panels, question UI, review
+controls) and documentation — not AI capability.
+
+## Phase 3 seams for Phase 4
+
+- `GET /api/v1/assignments/{id}/analysis/{analysisId}/planning-contract` returns a
+  `PlanningContract` that the future planner can consume without parsing raw model text.
+- `is_stale` is a hard signal: a stale analysis must not be planned against silently.
+- `PlanningContractRequirement` and `PlanningContractDeliverable` carry provenance
+  (`source_kind`, `source_reference`) so the planner knows what came from the brief vs.
+  AI inference.
+- `SpecializedAnalysis` carries domain-specific data (e.g. `analyzer: "mathematics"`)
+  keyed by `AssignmentType`, keeping the universal core programming-agnostic.
 
 ## Decisions
 

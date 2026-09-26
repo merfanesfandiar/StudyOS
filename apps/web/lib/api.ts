@@ -1,6 +1,10 @@
 import type {
   ActivityEvent,
+  AnalysisEditRequest,
+  AnalysisRequest,
+  AnalysisRun,
   Assignment,
+  AssignmentAnalysis,
   AssignmentFilters,
   AssignmentInput,
   AssignmentListItem,
@@ -20,6 +24,7 @@ import type {
   Document,
   Notification,
   PageResponse,
+  PlanningContract,
   Requirement,
   RequirementInput,
   Tag,
@@ -257,4 +262,49 @@ export const api = {
     link.remove();
     URL.revokeObjectURL(url);
   },
+
+  // -- Phase 3: assignment analysis -----------------------------------------
+  // Review actions return the whole analysis, so a mutation and a re-read are
+  // one round trip and the panel never shows a state the server rejected.
+
+  /**
+   * Analyze an assignment. Identical requests reuse the stored analysis, so
+   * this is safe to call on mount; pass `force` to genuinely re-run.
+   */
+  analyzeAssignment: (id: string, input: AnalysisRequest = {}) =>
+    request<AssignmentAnalysis>(`/assignments/${id}/analysis`, { method: "POST", ...json(input) }),
+  analysisRuns: (id: string, page = 1, pageSize = 10) =>
+    request<PageResponse<AnalysisRun>>(
+      `/assignments/${id}/analysis/runs${queryString({ page, page_size: pageSize })}`,
+    ),
+  analysis: (id: string, analysisId: string) =>
+    request<AssignmentAnalysis>(`/assignments/${id}/analysis/${analysisId}`),
+  planningContract: (id: string, analysisId: string) =>
+    request<PlanningContract>(`/assignments/${id}/analysis/${analysisId}/planning-contract`),
+  /** Correct classification or overlay human findings. Never edits the brief. */
+  editAnalysis: (id: string, analysisId: string, input: AnalysisEditRequest) =>
+    request<AssignmentAnalysis>(`/assignments/${id}/analysis/${analysisId}`, {
+      method: "PATCH",
+      ...json(input),
+    }),
+  acceptAnalysis: (id: string, analysisId: string, note?: string) =>
+    request<AssignmentAnalysis>(`/assignments/${id}/analysis/${analysisId}/accept`, {
+      method: "POST",
+      ...json({ note: note ?? null }),
+    }),
+  rejectAnalysis: (id: string, analysisId: string, note?: string) =>
+    request<AssignmentAnalysis>(`/assignments/${id}/analysis/${analysisId}/reject`, {
+      method: "POST",
+      ...json({ note: note ?? null }),
+    }),
+  answerQuestion: (id: string, analysisId: string, questionId: string, answer: string) =>
+    request<AssignmentAnalysis>(
+      `/assignments/${id}/analysis/${analysisId}/questions/${questionId}/answer`,
+      { method: "POST", ...json({ answer }) },
+    ),
+  dismissQuestion: (id: string, analysisId: string, questionId: string, reason?: string) =>
+    request<AssignmentAnalysis>(
+      `/assignments/${id}/analysis/${analysisId}/questions/${questionId}/dismiss`,
+      { method: "POST", ...json({ reason: reason ?? null }) },
+    ),
 };

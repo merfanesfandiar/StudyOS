@@ -21,6 +21,11 @@ it tells you when a brief is specific enough to act on.
   download URLs.
 - A dashboard with upcoming deadlines, progress counts, and in-app notifications.
 - Responsive, accessible UI with keyboard-friendly forms, loading states, and inline validation feedback.
+- **Phase 3: Universal Academic Assignment Intelligence Layer** — LLM-backed, domain-agnostic
+  analysis pipeline (classification → analysis → human review) producing structured, validated,
+  reviewable analysis for all academic assignment types. Classification, findings, questions, and
+  review state; idempotent re-runs; staleness detection; human review with AI never mutating
+  authoritative data.
 
 ## Stack
 
