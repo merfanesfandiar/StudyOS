@@ -30,9 +30,10 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Sized
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from app.models.enums import (
     AcademicTaskPriority,
@@ -809,8 +810,18 @@ def estimate_available_minutes(
     return max(0, int(remaining))
 
 
+class _Countable(Protocol):
+    """What the schedule check actually reads: how much there is to do."""
+
+    @property
+    def requirements(self) -> Sized: ...
+
+    @property
+    def deliverables(self) -> Sized: ...
+
+
 def schedule_risk(
-    contract: PlanningContractResponse,
+    contract: _Countable,
     *,
     min_minutes: int | None,
     max_minutes: int | None,
