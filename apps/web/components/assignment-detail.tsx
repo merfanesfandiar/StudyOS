@@ -15,25 +15,28 @@ import { AnalysisPanel } from "@/components/assignment/analysis-panel";
 import { PlanPanel } from "@/components/planning/plan-panel";
 import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
+import type { MessageKey } from "@/lib/i18n/messages";
 import type { Course } from "@/lib/types";
 import { useSpecification } from "@/lib/use-specification";
+import { usePreferences } from "@/components/preferences-provider";
 
-const SECTIONS = [
-  { href: "#brief", label: "Brief" },
-  { href: "#readiness", label: "Readiness" },
-  { href: "#requirements", label: "Requirements" },
-  { href: "#constraints", label: "Constraints" },
-  { href: "#criteria", label: "Criteria" },
-  { href: "#deliverables", label: "Deliverables" },
-  { href: "#analysis", label: "Analysis" },
-  { href: "#stack", label: "Tools" },
-  { href: "#resources", label: "Resources" },
-  { href: "#summary", label: "Summary" },
-  { href: "#history", label: "History" },
+const SECTIONS: { href: string; key: MessageKey }[] = [
+  { href: "#brief", key: "assignment.sections.brief" },
+  { href: "#readiness", key: "assignment.sections.readiness" },
+  { href: "#requirements", key: "assignment.sections.requirements" },
+  { href: "#constraints", key: "assignment.sections.constraints" },
+  { href: "#criteria", key: "assignment.sections.criteria" },
+  { href: "#deliverables", key: "assignment.sections.deliverables" },
+  { href: "#analysis", key: "assignment.sections.analysis" },
+  { href: "#stack", key: "assignment.sections.stack" },
+  { href: "#resources", key: "assignment.sections.resources" },
+  { href: "#summary", key: "assignment.sections.summary" },
+  { href: "#history", key: "assignment.sections.history" },
 ];
 
 export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
   const router = useRouter();
+  const { t } = usePreferences();
   const { specification, graph, loading, error, refresh } = useSpecification(assignmentId);
   const [courses, setCourses] = useState<Course[]>([]);
   const [deleteError, setDeleteError] = useState("");
@@ -64,31 +67,31 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
       router.refresh();
     } catch (caught) {
       setDeleteError(
-        caught instanceof ApiError ? caught.message : "Could not delete the assignment.",
+        caught instanceof ApiError ? caught.message : t("assignment.deleteFailed"),
       );
     }
   }
 
   if (loading && !specification) {
-    return <LoadingState label="Loading assignment" />;
+    return <LoadingState label={t("assignment.loading")} />;
   }
 
   if (!specification) {
-    return <Alert>{error || "Could not load this assignment."}</Alert>;
+    return <Alert>{error || t("assignment.loadFailed")}</Alert>;
   }
 
   return (
     <div id="main-content">
       <PageHeader
         action={
-          <nav aria-label="Specification sections" className="flex flex-wrap justify-end gap-1">
+          <nav aria-label={t("assignment.sectionsLabel")} className="flex flex-wrap justify-end gap-1">
             {SECTIONS.map((section) => (
               <a
                 className="rounded-md px-2 py-1 text-xs font-semibold text-[var(--color-ink-subtle)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-ink)]"
                 href={section.href}
                 key={section.href}
               >
-                {section.label}
+                {t(section.key)}
               </a>
             ))}
           </nav>

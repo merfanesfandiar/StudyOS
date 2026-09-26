@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, LoadingState, PageHeader, SubmitButton } from "./ui";
 import { ApiError, api } from "@/lib/api";
 import { toUtcDateTime } from "@/lib/format";
+import type { MessageKey } from "@/lib/i18n/messages";
 import type { Course } from "@/lib/types";
 
 export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: string }) {
@@ -14,7 +16,11 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
   const [courseId, setCourseId] = useState(initialCourseId ?? "");
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  // The cause plus the key for its fallback, resolved at render rather than in
+  // the catch, so the message follows the locale and eslint sees no `t` inside
+  // the effect.
+  const [failure, setFailure] = useState<{ caught: unknown; key: MessageKey } | null>(null);
+  const { t } = usePreferences();
 
   useEffect(() => {
     let active = true;
@@ -27,7 +33,7 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
         setCourseId(selectedExists ? initialCourseId ?? "" : items[0]?.id ?? "");
       })
       .catch((caught: unknown) => {
-        if (active) setError(caught instanceof ApiError ? caught.message : "Could not load courses.");
+        if (active) setFailure({ caught, key: "new.loadCoursesFailed" });
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -40,7 +46,7 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
   async function createAssignment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
-    setError("");
+    setFailure(null);
     const form = new FormData(event.currentTarget);
     try {
       const assignment = await api.createAssignment({
@@ -51,28 +57,33 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
       });
       router.push(`/assignments/${assignment.id}`);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not create the assignment.");
+      setFailure({ caught, key: "new.createFailed" });
       setPending(false);
     }
   }
 
-  if (loading) return <LoadingState label="Preparing assignment form" />;
+  const error = failure
+    ? failure.caught instanceof ApiError
+      ? failure.caught.message
+      : t(failure.key)
+    : "";
+
+  if (loading) return <LoadingState label={t("new.preparing")} />;
 
   return (
     <div className="mx-auto max-w-3xl" id="main-content">
       <PageHeader
-        description="Start with the course, brief, and deadline. Add requirements and grading criteria next to reach readiness."
-        title="New assignment"
+        description={t("new.description")}
+        title={t("new.title")}
       />
       <Link className="mb-5 inline-block text-sm font-semibold text-[var(--color-accent-hover)]" href="/assignments">
-        ← Back to assignments
+        {t("new.back")}
       </Link>
       <div className="card p-6 sm:p-8">
         {!courses.length ? (
           <Alert>
-            You need a course before creating an assignment.{" "}
-            <Link className="font-bold underline" href="/courses">
-              Add a course
+            {t("new.needCourse")} <Link className="font-bold underline" href="/courses">
+              {t("new.addCourse")}
             </Link>
             .
           </Alert>
@@ -80,7 +91,7 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
           <form className="space-y-5" onSubmit={createAssignment}>
             {error ? <Alert>{error}</Alert> : null}
             <label className="field">
-              <span>Course</span>
+              <span>{t("summary.course")}</span>
               <select onChange={(event) => setCourseId(event.target.value)} required value={courseId}>
                 {courses.map((course) => (
                   <option key={course.id} value={course.id}>
@@ -90,35 +101,35 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
               </select>
             </label>
             <label className="field">
-              <span>Assignment title</span>
+              <span>{t("new.fieldTitle")}</span>
               <input
                 autoFocus
                 maxLength={240}
                 name="title"
-                placeholder="e.g. Strategy game project"
+                placeholder={t("new.titlePlaceholder")}
                 required
                 type="text"
               />
             </label>
             <label className="field">
-              <span>Brief or description</span>
+              <span>{t("new.fieldBrief")}</span>
               <textarea
                 maxLength={20000}
                 name="description"
-                placeholder="Summarize the goal, context, and expected outcome."
+                placeholder={t("new.briefPlaceholder")}
               />
             </label>
             <label className="field">
-              <span>Deadline</span>
+              <span>{t("summary.deadline")}</span>
               <input name="deadline" type="datetime-local" />
-              <small className="text-[var(--color-ink-subtle)]">Times are entered in your local timezone.</small>
+              <small className="text-[var(--color-ink-subtle)]">{t("new.localTime")}</small>
             </label>
             <div className="flex justify-end gap-3 border-t border-[var(--color-surface-sunken)] pt-5">
               <Link className="btn-secondary" href="/assignments">
-                Cancel
+                {t("action.cancel")}
               </Link>
-              <SubmitButton className="btn-primary" pending={pending} pendingLabel="Creating…">
-                Create draft
+              <SubmitButton className="btn-primary" pending={pending} pendingLabel={t("action.creating")}>
+                {t("new.createDraft")}
               </SubmitButton>
             </div>
           </form>

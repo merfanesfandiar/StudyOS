@@ -60,10 +60,10 @@ export function AssignmentBrief({
         ...(statusChanged ? { status: nextStatus as ClientSettableStatus } : {}),
       });
       setEditing(false);
-      setNotice("Assignment details updated.");
+      setNotice(t("brief.updated"));
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not update the assignment.");
+      setError(caught instanceof ApiError ? caught.message : t("brief.updateFailed"));
     } finally {
       setPending(false);
     }
@@ -84,7 +84,7 @@ export function AssignmentBrief({
           onClick={() => setEditing((value) => !value)}
           type="button"
         >
-          {editing ? "Cancel edit" : "Edit details"}
+          {editing ? t("brief.cancelEdit") : t("brief.editDetails")}
         </button>
       </div>
 
@@ -102,7 +102,7 @@ export function AssignmentBrief({
       {editing ? (
         <form className="mt-5 grid gap-5 md:grid-cols-2" onSubmit={save}>
           <label className="field">
-            <span>Course</span>
+            <span>{t("summary.course")}</span>
             <select defaultValue={assignment.course_id} name="course_id">
               {courses.map((course) => (
                 <option key={course.id} value={course.id}>
@@ -112,7 +112,7 @@ export function AssignmentBrief({
             </select>
           </label>
           <label className="field">
-            <span>Deadline</span>
+            <span>{t("summary.deadline")}</span>
             <input
               defaultValue={toLocalDateTime(assignment.deadline)}
               name="deadline"
@@ -120,7 +120,7 @@ export function AssignmentBrief({
             />
           </label>
           <label className="field">
-            <span>Status</span>
+            <span>{t("brief.fieldStatus")}</span>
             <select defaultValue={assignment.status} name="status">
               {CLIENT_SETTABLE_STATUSES.map((status) => (
                 <option key={status} value={status}>
@@ -130,11 +130,11 @@ export function AssignmentBrief({
             </select>
           </label>
           <label className="field">
-            <span>Title</span>
+            <span>{t("requirements.fieldTitle")}</span>
             <input defaultValue={assignment.title} maxLength={240} name="title" required type="text" />
           </label>
           <label className="field md:col-span-2">
-            <span>Brief</span>
+            <span>{t("brief.fieldBrief")}</span>
             <textarea defaultValue={description ?? ""} maxLength={20000} name="description" />
           </label>
           <p className="text-sm text-[var(--color-ink-subtle)] md:col-span-2">
@@ -145,7 +145,7 @@ export function AssignmentBrief({
             <button className="btn-danger" onClick={onDelete} type="button">
               Delete assignment
             </button>
-            <SubmitButton pending={pending} pendingLabel="Saving…">
+            <SubmitButton pending={pending} pendingLabel={t("action.saving")}>
               Save changes
             </SubmitButton>
           </div>
@@ -154,7 +154,7 @@ export function AssignmentBrief({
         <div className="mt-5 grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]">
           <div>
             <p className="whitespace-pre-wrap leading-7 text-[var(--color-ink-muted)]">
-              {description || "No brief has been added yet. Use Edit details to add one."}
+              {description || t("brief.empty")}
             </p>
           </div>
           <dl className="space-y-4 rounded-xl bg-[var(--color-canvas)] p-4 text-sm">
