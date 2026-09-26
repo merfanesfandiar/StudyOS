@@ -20,6 +20,7 @@ from app.modules.dashboard import router as dashboard_router
 from app.modules.documents import router as documents_router
 from app.modules.health import router as health_router
 from app.modules.notifications import router as notifications_router
+from app.modules.planning.router import router as planning_router
 from app.storage import get_storage
 
 settings = get_settings()
@@ -64,6 +65,7 @@ app.include_router(assignment_content_router)
 app.include_router(taxonomy_router)
 app.include_router(specification_router)
 app.include_router(analysis_router)
+app.include_router(planning_router)
 app.include_router(documents_router)
 app.include_router(dashboard_router)
 app.include_router(notifications_router)

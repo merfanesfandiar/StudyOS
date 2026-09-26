@@ -190,6 +190,12 @@ class PlanGenerateRequest(BaseModel):
     planning_style: PlanningStyle | None = None
     guidance_level: GuidanceLevel | None = None
     session_length: SessionLength | None = None
+    ai_mode: AIMode | None = None
+    #: Caller-supplied deduplication key. A repeat with the same key returns the
+    #: plan that was already generated instead of creating a version and billing
+    #: a second call.
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=64)
+    reason: str | None = Field(default=None, max_length=200)
 
 
 class PlanRegenerateRequest(BaseModel):
@@ -206,6 +212,14 @@ class PlanRegenerateRequest(BaseModel):
     scope: str = Field(default="TASKS", max_length=20)
     reason: str | None = Field(default=None, max_length=200)
     force: bool = False
+    planning_style: PlanningStyle | None = None
+    guidance_level: GuidanceLevel | None = None
+    session_length: SessionLength | None = None
+    ai_mode: AIMode | None = None
+    #: When false, tasks the student authored or edited by hand are carried into
+    #: the new version. When true, the new version is entirely the planner's.
+    preserve_user_edits: bool = True
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=64)
 
     @field_validator("scope")
     @classmethod
@@ -236,8 +250,27 @@ class PlanUpdateRequest(BaseModel):
 
     title: str | None = Field(default=None, min_length=1, max_length=240)
     summary: str | None = Field(default=None, max_length=2000)
-    status: PlanStatus | None = None
-    is_stale: bool | None = None
+    #: ``status`` is deliberately not editable here. Approval and staleness are
+    #: state transitions owned by their own endpoints: a client that can PATCH a
+    #: plan straight to ``APPROVED`` would skip the graph check and the staleness
+    #: check, and produce an approved plan nobody ever reviewed.
+    #: ``is_stale`` is likewise derived, and a client that can clear it can
+    #: silence the one warning that their plan no longer matches the assignment.
+
+    def changes(self) -> dict[str, Any]:
+        """The fields the client actually set.
+
+        Absent fields are dropped so ``update_plan`` does not null out values the
+        client never mentioned.
+        """
+        return {
+            name: value
+            for name, value in (
+                ("title", self.title),
+                ("summary", self.summary),
+            )
+            if value is not None
+        }
 
 
 class TaskCreateRequest(BaseModel):
@@ -262,6 +295,18 @@ class TaskCreateRequest(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
     position: int | None = Field(default=None, ge=0, le=1000)
 
+    def service_kwargs(self) -> dict[str, Any]:
+        """Map onto ``service.add_task``, which stores enum *values*.
+
+        Kept here so the router never has to know that a request enum becomes a
+        string column, and so a new field has one obvious place to be wired.
+        """
+        data = self.model_dump(exclude={"type", "priority", "estimated_effort"})
+        data["task_type"] = self.type.value
+        data["priority"] = self.priority.value
+        data["estimated_effort"] = self.estimated_effort.value
+        return data
+
 
 class TaskUpdateRequest(BaseModel):
     """Edit a task. Every field is optional; unset fields are left alone."""
@@ -283,6 +328,37 @@ class TaskUpdateRequest(BaseModel):
     acceptance_criteria: list[str] | None = None
     resources: list[str] | None = None
     notes: str | None = Field(default=None, max_length=2000)
+
+    def service_kwargs(self) -> dict[str, Any]:
+        """Split into scalar column changes and whole-list relationship replaces.
+
+        Scalars go through ``changes`` so an omitted field is left alone.
+        ``depends_on`` and the two traceability lists are *replacements*, not
+        merges, so they are only passed when the client actually sent them.
+        """
+        scalar = (
+            "title",
+            "description",
+            "status",
+            "priority",
+            "estimated_effort",
+            "min_minutes",
+            "max_minutes",
+            "verification_method",
+            "acceptance_criteria",
+            "resources",
+            "notes",
+        )
+        changes = {name: getattr(self, name) for name in scalar if getattr(self, name) is not None}
+        changes = {k: v for k, v in changes.items() if k not in {"type"}}
+        kwargs: dict[str, Any] = {"changes": changes}
+        if self.type is not None:
+            changes["type"] = self.type
+        for name in ("depends_on", "related_requirements", "related_deliverables"):
+            value = getattr(self, name)
+            if value is not None:
+                kwargs[name] = value
+        return kwargs
 
 
 class TaskReorderRequest(BaseModel):

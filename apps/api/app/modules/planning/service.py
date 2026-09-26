@@ -49,6 +49,7 @@ from app.models.enums import (
     AcademicTaskPriority,
     AcademicTaskStatus,
     AcademicTaskType,
+    AIMode,
     ComplexityLevel,
     EffortLevel,
     GuidanceLevel,
@@ -57,6 +58,7 @@ from app.models.enums import (
     PlanningStyle,
     PlanStatus,
     PlanTrigger,
+    SessionLength,
 )
 from app.modules.planning.graph import (
     PlanGraphError,
@@ -72,6 +74,8 @@ from app.schemas.planning import (
     MilestoneResponse,
     PlannedTask,
     PlannerOutput,
+    PlanningPreferencesRequest,
+    PlanningPreferencesResponse,
     PlanRiskResponse,
     PlanSummaryResponse,
     ScheduleRiskResponse,
@@ -126,16 +130,28 @@ async def latest_plan(
 
 
 async def list_plan_versions(
-    assignment_id: UUID, db: AsyncSession, *, limit: int = 50
+    assignment_id: UUID, db: AsyncSession, *, limit: int = 50, offset: int = 0
 ) -> list[AcademicWorkPlan]:
+    """One page of versions, newest first. Paging is the caller's concern."""
     stmt = (
         select(AcademicWorkPlan)
         .where(AcademicWorkPlan.assignment_id == assignment_id)
         .order_by(AcademicWorkPlan.version.desc())
         .limit(limit)
+        .offset(offset)
     )
     found: list[AcademicWorkPlan] = list(await db.scalars(stmt))
     return found
+
+
+async def count_plan_versions(assignment_id: UUID, db: AsyncSession) -> int:
+    """How many versions exist, so a page can report its real total."""
+    stmt = (
+        select(func.count())
+        .select_from(AcademicWorkPlan)
+        .where(AcademicWorkPlan.assignment_id == assignment_id)
+    )
+    return int((await db.scalar(stmt)) or 0)
 
 
 async def approved_plan(assignment_id: UUID, db: AsyncSession) -> AcademicWorkPlan | None:
@@ -342,13 +358,32 @@ async def mark_stale_plans(db: AsyncSession, assignment_id: UUID) -> int:
     return len(plans)
 
 
-def is_plan_stale(plan: AcademicWorkPlan, analysis: AssignmentAnalysis | None) -> bool:
-    """True when the plan no longer reflects the current analysis."""
+def is_plan_stale(
+    plan: AcademicWorkPlan,
+    analysis: AssignmentAnalysis | None,
+    assignment: Assignment | None = None,
+) -> bool:
+    """True when the plan no longer reflects the current analysis.
+
+    Derived from the assignment, not just the stored flags, because the flags
+    only change when something remembers to change them. A plan is out of date
+    when it was flagged stale, when a newer analysis has replaced the one it was
+    built on, or when the analysis it was built on no longer matches the
+    assignment as it stands now.
+    """
     if plan.is_stale:
         return True
     if analysis is None or plan.analysis_id is None:
         return False
-    return plan.analysis_id != analysis.id
+    if plan.analysis_id != analysis.id:
+        return True
+    if assignment is None:
+        return False
+    # The plan's analysis can still be the newest one and already out of date,
+    # because the assignment itself changed after that analysis was produced.
+    from app.modules.analysis.service import is_analysis_stale
+
+    return is_analysis_stale(analysis, assignment)
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +405,8 @@ async def persist_plan(
     idempotency_key: str | None = None,
     preserve: Sequence[PlanTask] = (),
     changed_sections: Sequence[str] = (),
+    used_fallback: bool = False,
+    rejection_reasons: Sequence[str] = (),
 ) -> AcademicWorkPlan:
     """Write a validated plan as a new version.
 
@@ -399,7 +436,14 @@ async def persist_plan(
         max_minutes=plan_output.max_minutes,
         idempotency_key=idempotency_key,
     )
-    plan.payload = {**(plan.payload or {}), "preferences": asdict(preferences)}
+    plan.payload = {
+        **(plan.payload or {}),
+        "preferences": asdict(preferences),
+        # Why this plan is not the model's answer. Persisted on the plan so the
+        # record of a fallback outlives the response that mentioned it.
+        "used_fallback": used_fallback,
+        "rejection_reasons": list(rejection_reasons)[:5],
+    }
     db.add(plan)
     await db.flush()
 
@@ -545,6 +589,12 @@ async def _carry_over_user_tasks(
       old ``T3`` are different tasks, so keeping the key would either collide or
       quietly retarget the student's traceability. Preserved tasks are given a
       distinct ``U`` prefix and old keys are remapped on both sides of any edge.
+
+    Traceability *is* copied. A requirement the student deliberately linked to
+    their own task is a statement about their work, not about the generated plan,
+    so dropping it on regeneration would lose the very link regeneration exists to
+    protect. Requirement and deliverable keys are stable across versions, so no
+    remapping is needed for them.
     """
     carried = [task for task in preserve if task.is_user_authored]
     if not carried:
@@ -605,7 +655,54 @@ async def _carry_over_user_tasks(
                 reason=edge.reason,
             )
         )
+    await _copy_traceability(db, plan, carried, rows, remap)
     await db.flush()
+
+
+async def _copy_traceability(
+    db: AsyncSession,
+    plan: AcademicWorkPlan,
+    carried: Sequence[PlanTask],
+    rows: dict[str, PlanTask],
+    remap: dict[str, str],
+) -> None:
+    """Copy requirement and deliverable links from the previous version.
+
+    Requirement and deliverable keys are stable across versions, so only the task
+    key needs remapping.
+    """
+    new_id_by_old_id = {
+        previous.id: rows[remap[previous.key]].id for previous in carried if previous.key in remap
+    }
+    if not new_id_by_old_id:
+        return
+    old_ids = list(new_id_by_old_id)
+    requirement_rows = list(
+        await db.scalars(
+            select(PlanTaskRequirement).where(PlanTaskRequirement.task_id.in_(old_ids))
+        )
+    )
+    for old_requirement in requirement_rows:
+        new_id = new_id_by_old_id.get(old_requirement.task_id)
+        if new_id is not None:
+            db.add(
+                PlanTaskRequirement(
+                    plan_id=plan.id, task_id=new_id, requirement_key=old_requirement.requirement_key
+                )
+            )
+    deliverable_rows = list(
+        await db.scalars(
+            select(PlanTaskDeliverable).where(PlanTaskDeliverable.task_id.in_(old_ids))
+        )
+    )
+    for old_link in deliverable_rows:
+        new_id = new_id_by_old_id.get(old_link.task_id)
+        if new_id is not None:
+            db.add(
+                PlanTaskDeliverable(
+                    plan_id=plan.id, task_id=new_id, deliverable_key=old_link.deliverable_key
+                )
+            )
 
 
 def _validate_persisted_graph_sync(
@@ -619,6 +716,24 @@ def _validate_persisted_graph_sync(
     """
     try:
         _check_persisted(tasks, edges)
+    except PlanGraphError as exc:
+        raise AppError(
+            409,
+            "PLAN_GRAPH_INVALID",
+            "That change would produce a plan that cannot be executed.",
+            {"violations": exc.violations},
+        ) from exc
+
+
+async def _revalidate_or_conflict(db: AsyncSession, plan: AcademicWorkPlan) -> None:
+    """Re-check the graph as stored and surface violations as a 409.
+
+    The re-read is deliberate: the validator must judge the graph that will be
+    committed, not the object graph the caller happened to be holding.
+    """
+    try:
+        rows = list(await db.scalars(select(PlanTask).where(PlanTask.plan_id == plan.id)))
+        _check_persisted(rows, await _load_persisted_edges(db, plan, rows))
     except PlanGraphError as exc:
         raise AppError(
             409,
@@ -669,16 +784,32 @@ async def _validate_persisted_graph(db: AsyncSession, plan: AcademicWorkPlan) ->
 
 
 async def approve_plan(
-    db: AsyncSession, plan: AcademicWorkPlan, *, user_id: UUID, note: str | None = None
+    db: AsyncSession,
+    plan: AcademicWorkPlan,
+    *,
+    user_id: UUID,
+    note: str | None = None,
+    analysis: AssignmentAnalysis | None = None,
+    assignment: Assignment | None = None,
 ) -> AcademicWorkPlan:
     """Approve a plan. This is the moment it becomes the authoritative schedule."""
     if plan.status == PlanStatus.APPROVED.value:
         return plan
     if plan.status == PlanStatus.ARCHIVED.value:
         raise AppError(409, "PLAN_ARCHIVED", "An archived plan cannot be approved.")
-    if plan.is_stale:
-        # Clearing the flag here would make an out-of-date plan look current, and
-        # the flag is the only thing telling the student to regenerate.
+    # Staleness is derived, not just read off the row. A plan is out of date if
+    # it was flagged stale *or* if it was built on an analysis that is no longer
+    # the current one. Trusting the stored flag alone would let a plan through
+    # the moment the assignment changed and nothing had rewritten the row yet.
+    if is_plan_stale(plan, analysis, assignment):
+        # The flag is persisted here so the student sees the warning in listings
+        # too, but it is never cleared by approving: a plan that is out of date
+        # cannot become current by being agreed to.
+        plan.is_stale = True
+        plan.stale_at = plan.stale_at or datetime.now(UTC)
+        if plan.status in {PlanStatus.DRAFT.value, PlanStatus.READY_FOR_REVIEW.value}:
+            plan.status = PlanStatus.STALE.value
+        await db.flush()
         raise AppError(
             409,
             "PLAN_STALE",
@@ -746,29 +877,31 @@ async def add_task(
     assert_editable(plan)
     existing = list(await db.scalars(select(PlanTask).where(PlanTask.plan_id == plan.id)))
     key = await _next_task_key(plan.id, db)
-    task = PlanTask(
-        plan_id=plan.id,
-        key=key,
-        title=title,
-        description=description,
-        type=task_type,
-        status=AcademicTaskStatus.PENDING.value,
-        priority=priority,
-        position=len(existing) if position is None else position,
-        estimated_effort=estimated_effort,
-        verification_method=verification_method,
-        acceptance_criteria=list(acceptance_criteria),
-        notes=notes,
-        is_user_authored=True,
-    )
-    db.add(task)
-    await db.flush()
-    for reference in related_requirements:
-        db.add(PlanTaskRequirement(plan_id=plan.id, task_id=task.id, requirement_key=reference))
-    for reference in related_deliverables:
-        db.add(PlanTaskDeliverable(plan_id=plan.id, task_id=task.id, deliverable_key=reference))
-    await _replace_dependencies(db, plan, task, depends_on)
-    await _validate_persisted_graph(db, plan)
+    async with db.begin_nested():
+        task = PlanTask(
+            plan_id=plan.id,
+            key=key,
+            title=title,
+            description=description,
+            type=task_type,
+            status=AcademicTaskStatus.PENDING.value,
+            priority=priority,
+            position=len(existing) if position is None else position,
+            estimated_effort=estimated_effort,
+            verification_method=verification_method,
+            acceptance_criteria=list(acceptance_criteria),
+            notes=notes,
+            is_user_authored=True,
+        )
+        db.add(task)
+        await db.flush()
+        for reference in related_requirements:
+            db.add(PlanTaskRequirement(plan_id=plan.id, task_id=task.id, requirement_key=reference))
+        for reference in related_deliverables:
+            db.add(PlanTaskDeliverable(plan_id=plan.id, task_id=task.id, deliverable_key=reference))
+        await _replace_dependencies(db, plan, task, depends_on)
+        # A refused task must not linger as a half-inserted row either.
+        await _revalidate_or_conflict(db, plan)
     return task
 
 
@@ -784,30 +917,34 @@ async def update_task(
 ) -> PlanTask:
     """Edit one task and re-check the graph it belongs to."""
     assert_editable(plan)
-    for field, value in changes.items():
-        if value is None:
-            continue
-        setattr(task, field, value.value if hasattr(value, "value") else value)
-    # An edited task is the student's work now, even if the model proposed it.
-    task.is_user_authored = True
-    await db.flush()
-    if related_requirements is not None:
-        await _replace_traceability(
-            db, plan, task, related_requirements, PlanTaskRequirement, "requirement_key"
-        )
-    if related_deliverables is not None:
-        await _replace_traceability(
-            db, plan, task, related_deliverables, PlanTaskDeliverable, "deliverable_key"
-        )
-    if depends_on is not None:
-        await _replace_dependencies(db, plan, task, depends_on)
+    # The whole edit is a savepoint. If the student creates a cycle, the
+    # savepoint rolls the edit back, so the refused change is not left behind in
+    # the session for a later commit to pick up.
+    async with db.begin_nested():
+        for field, value in changes.items():
+            if value is None:
+                continue
+            setattr(task, field, value.value if hasattr(value, "value") else value)
+        # An edited task is the student's work now, even if the model proposed it.
+        task.is_user_authored = True
+        await db.flush()
+        if related_requirements is not None:
+            await _replace_traceability(
+                db, plan, task, related_requirements, PlanTaskRequirement, "requirement_key"
+            )
+        if related_deliverables is not None:
+            await _replace_traceability(
+                db, plan, task, related_deliverables, PlanTaskDeliverable, "deliverable_key"
+            )
+        if depends_on is not None:
+            await _replace_dependencies(db, plan, task, depends_on)
 
-    # Re-read rather than trust the session: the validator must see the graph as
-    # stored, and an edit that failed part way through must not be committed as a
-    # half-applied change.
-    await db.flush()
-    rows = list(await db.scalars(select(PlanTask).where(PlanTask.plan_id == plan.id)))
-    _validate_persisted_graph_sync(rows, await _load_persisted_edges(db, plan, rows))
+        # Re-read rather than trust the session: the validator must see the graph
+        # as stored, and an edit that failed part way through must not be
+        # committed as a half-applied change.
+        await db.flush()
+        rows = list(await db.scalars(select(PlanTask).where(PlanTask.plan_id == plan.id)))
+        _validate_persisted_graph_sync(rows, await _load_persisted_edges(db, plan, rows))
     return task
 
 
@@ -819,24 +956,21 @@ async def delete_task(db: AsyncSession, plan: AcademicWorkPlan, task: PlanTask) 
     on the next write.
     """
     assert_editable(plan)
-    await db.execute(
-        select(PlanTaskDependency).where(
-            (PlanTaskDependency.predecessor_id == task.id)
-            | (PlanTaskDependency.successor_id == task.id)
-        )
-    )
-    for edge in list(
-        await db.scalars(
-            select(PlanTaskDependency).where(
-                (PlanTaskDependency.predecessor_id == task.id)
-                | (PlanTaskDependency.successor_id == task.id)
+    # Deleting is an edit like any other: a refused delete must leave the task
+    # in place rather than half-removed in the session.
+    async with db.begin_nested():
+        for edge in list(
+            await db.scalars(
+                select(PlanTaskDependency).where(
+                    (PlanTaskDependency.predecessor_id == task.id)
+                    | (PlanTaskDependency.successor_id == task.id)
+                )
             )
-        )
-    ):
-        await db.delete(edge)
-    await db.delete(task)
-    await db.flush()
-    await _validate_persisted_graph(db, plan)
+        ):
+            await db.delete(edge)
+        await db.delete(task)
+        await db.flush()
+        await _revalidate_or_conflict(db, plan)
 
 
 async def reorder_tasks(
@@ -948,6 +1082,8 @@ class PlanGraphView:
     milestones: list[PlanMilestone]
     #: milestone key -> the task keys that version of the plan assigned to it.
     milestone_keys: dict[str, list[str]]
+    #: Problems found in the stored graph. Empty when the plan is sound.
+    violations: list[str]
 
 
 async def load_plan_graph(db: AsyncSession, plan: AcademicWorkPlan) -> PlanGraphView:
@@ -980,11 +1116,31 @@ async def load_plan_graph(db: AsyncSession, plan: AcademicWorkPlan) -> PlanGraph
         requirements=_group(requirement_rows, "requirement_key"),
         deliverables=_group(deliverable_rows, "deliverable_key"),
         milestones=milestones,
+        violations=_stored_violations(tasks, dependencies),
         milestone_keys={
             str(item.get("key")): list(item.get("task_keys", []))
             for item in payload.get("milestones", [])
         },
     )
+
+
+def _stored_violations(tasks: Sequence[PlanTask], edges: Sequence[PlanTaskDependency]) -> list[str]:
+    """Validate the loaded graph, returning problems instead of raising.
+
+    A read path should be able to show a plan that has a problem, and say what
+    the problem is, rather than refusing to render it.
+    """
+    by_id = {task.id: task for task in tasks}
+    pairs = [
+        (by_id[edge.predecessor_id].key, by_id[edge.successor_id].key)
+        for edge in edges
+        if edge.predecessor_id in by_id and edge.successor_id in by_id
+    ]
+    try:
+        _check_persisted(tasks, pairs)
+    except PlanGraphError as exc:
+        return exc.violations
+    return []
 
 
 def _group(rows: Iterable[Any], attribute: str) -> dict[UUID, list[str]]:
@@ -1156,4 +1312,121 @@ async def build_plan_summary(plan: AcademicWorkPlan, graph: PlanGraphView) -> Pl
         estimated_effort=plan.estimated_effort,
         created_at=plan.created_at,
         approved_at=plan.approved_at,
+    )
+
+
+async def user_authored_tasks(plan_id: UUID, db: AsyncSession) -> list[PlanTask]:
+    """The tasks a student wrote or edited by hand, in plan order.
+
+    This is what a regeneration preserves. Generated tasks are the planner's to
+    rewrite; these are not.
+    """
+    found: list[PlanTask] = list(
+        await db.scalars(
+            select(PlanTask)
+            .where(PlanTask.plan_id == plan_id, PlanTask.is_user_authored.is_(True))
+            .order_by(PlanTask.position)
+        )
+    )
+    return found
+
+
+async def task_by_key(plan_id: UUID, key: str, db: AsyncSession) -> PlanTask:
+    """Load one task by its plan-local key, or 404."""
+    task = (
+        await db.scalars(select(PlanTask).where(PlanTask.plan_id == plan_id, PlanTask.key == key))
+    ).one_or_none()
+    if task is None:
+        raise AppError(404, "TASK_NOT_FOUND", f"No task with key {key!r} in this plan.")
+    return task
+
+
+def staleness_warnings(plan: AcademicWorkPlan) -> list[str]:
+    """What to tell the student about a plan that no longer matches the analysis.
+
+    A warning rather than an error: a stale plan is still readable and still says
+    what was agreed at the time, and hiding it would make the history lie.
+    """
+    if not plan.is_stale:
+        return []
+    return [
+        "This plan was built on an earlier analysis of the assignment and may no longer "
+        "match the current requirements. Regenerate it before relying on it."
+    ]
+
+
+def build_task_response(task: PlanTask, graph: PlanGraphView) -> TaskResponse:
+    """Render one task, including what blocks it.
+
+    ``blocked_by`` is the useful half for a student: a task with a long dependency
+    chain is not the same problem as a task blocked by one missing thing.
+    """
+    by_id = {row.id: row for row in graph.tasks}
+    blocked = sorted(
+        by_id[edge.predecessor_id].key
+        for edge in graph.dependencies
+        if edge.successor_id == task.id and edge.predecessor_id in by_id
+    )
+    return TaskResponse(
+        id=task.id,
+        key=task.key,
+        title=task.title,
+        description=task.description or "",
+        type=AcademicTaskType(task.type),
+        status=AcademicTaskStatus(task.status),
+        priority=AcademicTaskPriority(task.priority),
+        position=task.position,
+        estimated_effort=EffortLevel(task.estimated_effort) if task.estimated_effort else None,
+        min_minutes=task.min_minutes,
+        max_minutes=task.max_minutes,
+        verification_method=task.verification_method,
+        acceptance_criteria=list(task.acceptance_criteria or []),
+        resources=list(task.resources or []),
+        notes=task.notes,
+        is_user_authored=task.is_user_authored,
+        depends_on=blocked,
+        related_requirements=sorted(graph.requirements.get(task.id, [])),
+        related_deliverables=sorted(graph.deliverables.get(task.id, [])),
+        blocked_by=blocked,
+    )
+
+
+async def get_preferences(workspace_id: UUID, db: AsyncSession) -> PlanningPreferencesResponse:
+    """The preferences a new plan for this workspace will use."""
+    stored = await load_preferences(workspace_id, db)
+    return PlanningPreferencesResponse(
+        planning_style=PlanningStyle(stored.planning_style),
+        guidance_level=GuidanceLevel(stored.guidance_level),
+        session_length=SessionLength(stored.session_length),
+        ai_mode=AIMode(stored.ai_mode),
+    )
+
+
+async def save_preferences(
+    workspace_id: UUID,
+    db: AsyncSession,
+    request: PlanningPreferencesRequest,
+) -> PlanningPreferencesResponse:
+    """Store preferences for the next generated plan.
+
+    Existing versions keep the preferences they were built with. Re-planning under
+    new preferences is what changes a plan, never a retroactive edit.
+    """
+    stored = await load_preferences(workspace_id, db)
+    style = request.planning_style or PlanningStyle(stored.planning_style)
+    guidance = request.guidance_level or GuidanceLevel(stored.guidance_level)
+    # Every preference column is NOT NULL with a server default, so a stored row
+    # always has a value to fall back to.
+    session = request.session_length or SessionLength(stored.session_length)
+    mode = request.ai_mode or AIMode(stored.ai_mode)
+    stored.planning_style = style.value
+    stored.guidance_level = guidance.value
+    stored.session_length = session.value
+    stored.ai_mode = mode.value
+    await db.flush()
+    return PlanningPreferencesResponse(
+        planning_style=style,
+        guidance_level=guidance,
+        session_length=session,
+        ai_mode=mode,
     )

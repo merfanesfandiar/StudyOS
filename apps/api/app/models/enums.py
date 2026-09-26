@@ -326,6 +326,10 @@ class AuditEventType(StrEnum):
     # Phase 4: planning lifecycle. Recorded so a plan's history is answerable
     # without reading the run table, and so the assignment activity feed can tell
     # the student who changed what.
+    #: Recorded before the provider call so an attempt that never completes is
+    #: still attributable to a request and a tier.
+    PLAN_REQUESTED = "PLAN_REQUESTED"
+    PLAN_REGENERATION_REQUESTED = "PLAN_REGENERATION_REQUESTED"
     PLAN_GENERATED = "PLAN_GENERATED"
     PLAN_GENERATION_FAILED = "PLAN_GENERATION_FAILED"
     PLAN_REGENERATED = "PLAN_REGENERATED"

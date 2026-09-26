@@ -37,7 +37,7 @@ from app.core.errors import AppError
 from app.models import AcademicWorkPlan, Assignment, AssignmentAnalysis, PlanTask
 from app.models.enums import PlanningRunStatus, PlanTrigger
 from app.modules.planning.complexity import score_complexity
-from app.modules.planning.graph import PlanGraphError, validate_graph
+from app.modules.planning.graph import PlanGraphError, ValidatedGraph, validate_graph
 from app.modules.planning.planner import PlanningPreferences, synthesize_plan
 from app.modules.planning.service import (
     PlanGraphView,
@@ -68,7 +68,9 @@ class GenerationResult:
 
     plan: AcademicWorkPlan
     graph: PlanGraphView
-    run_id: UUID
+    #: The planning run that produced this plan, or ``None`` when an existing
+    #: plan was returned unchanged and no run happened.
+    run_id: UUID | None
     #: True when the deterministic engine answered instead of the model.
     used_fallback: bool
     warnings: list[str]
@@ -109,6 +111,7 @@ async def generate_plan(
     hours_per_grade_point: float = 45.0,
     fallback_enabled: bool = True,
     prompt_version: str = "academic_planner_v1",
+    force: bool = False,
 ) -> GenerationResult:
     """Produce a validated plan and persist it as a new version."""
     complexity = score_complexity(contract)
@@ -124,16 +127,17 @@ async def generate_plan(
 
     # A repeated request with the same key must not produce a second version or a
     # second model call. Checked before anything is written, so a double-clicked
-    # button costs nothing.
-    if idempotency_key is not None:
+    # button costs nothing. `force` is the explicit way to ask for a fresh plan
+    # anyway, so it is the one thing that skips this.
+    if idempotency_key is not None and not force:
         existing = await find_idempotent_plan(assignment.id, key, db)
         if existing is not None:
             graph = await load_plan_graph(db, existing)
             return GenerationResult(
                 plan=existing,
                 graph=graph,
-                run_id=existing.id,
-                used_fallback=False,
+                run_id=None,
+                used_fallback=bool((existing.payload or {}).get("used_fallback")),
                 warnings=["this plan was already generated and has been returned unchanged"],
             )
 
@@ -154,37 +158,41 @@ async def generate_plan(
 
     started = time.monotonic()
     proposed: PlannerOutput | None = None
+    validated: ValidatedGraph
+    validation_warnings: list[str] = []
     rejections: list[str] = []
     token_usage: dict[str, Any] | None = None
     cost: float | None = None
 
-    if fallback_enabled or True:
-        # The model is always asked. `fallback_enabled` governs degrading to the
-        # cheaper *tier*, not whether the model is consulted at all: a plan
-        # produced without asking any model is a different product decision.
-        try:
-            response = await provider.complete(
-                build_planner_request(
-                    contract,
-                    preferences=preferences,
-                    model=provider.model,
-                    prompt_version=prompt_version,
-                    max_task_count=max_task_count,
-                )
+    # The model is always asked. `fallback_enabled` governs degrading to the
+    # cheaper *tier* and whether a failed call may fall back at all, not whether
+    # the model is consulted: a plan produced without asking any model is a
+    # different product decision.
+    try:
+        response = await provider.complete(
+            build_planner_request(
+                contract,
+                preferences=preferences,
+                model=provider.model,
+                prompt_version=prompt_version,
+                max_task_count=max_task_count,
             )
-            token_usage = response.usage.as_dict()
-            cost = round((response.usage.total_tokens / 1000) * COST_PER_1K_TOKENS, 6)
-            candidate = _parse_planner_output(response.content)
-            try:
-                validate_graph(candidate, contract)
-            except PlanGraphError as exc:
-                rejections = exc.violations
-            else:
-                proposed = candidate
-        except LLMError as exc:
-            rejections = [f"the model call failed: {exc.code or exc.__class__.__name__}"]
+        )
+        token_usage = response.usage.as_dict()
+        cost = round((response.usage.total_tokens / 1000) * COST_PER_1K_TOKENS, 6)
+        candidate = _parse_planner_output(response.content)
+        validated = validate_graph(candidate, contract)
+        validation_warnings = list(validated.warnings)
+        proposed = candidate
+    except LLMError as exc:
+        if not fallback_enabled:
+            raise
+        rejections = [f"the model call failed: {exc.code or exc.__class__.__name__}"]
+    except PlanGraphError as exc:
+        if not fallback_enabled:
+            raise
+        rejections = exc.violations
 
-    validation_warnings: list[str] = []
     used_fallback = proposed is None
     if proposed is None:
         # The deterministic engine is the floor. Whatever the model did, the
@@ -211,6 +219,8 @@ async def generate_plan(
         idempotency_key=key,
         preserve=preserve,
         changed_sections=_changed_sections(proposed, rejections),
+        used_fallback=used_fallback,
+        rejection_reasons=rejections,
     )
 
     warnings = list(validation_warnings)

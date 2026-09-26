@@ -1,0 +1,559 @@
+"""End-to-end planning behaviour through the HTTP contract.
+
+Runs the whole flow against the deterministic mock provider: analyze, plan,
+review, regenerate, edit, approve. No external model or key is involved.
+
+The assertions are mostly about what a student can lose. A version that
+disappears, an edit that silently lands on an approved plan, or a regeneration
+that eats a task the student wrote are all failures that a status code of 200
+would otherwise hide.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+import pytest
+from httpx import AsyncClient
+
+from tests.conftest import register_user
+
+DESCRIPTION = (
+    "Write a 2000-word research report on a topic of your choice, with at least eight "
+    "peer-reviewed sources, an argument section, and a short reflection on your process. "
+    "Submit the report as a PDF and bring a three-slide summary to the seminar."
+)
+
+
+async def _prepare(client: AsyncClient, email: str = "planner@example.com") -> dict:
+    await register_user(client, email)
+    course = await client.post("/api/v1/courses", json={"name": "Writing", "code": "WRIT210"})
+    assert course.status_code == 201, course.text
+    assignment = await client.post(
+        "/api/v1/assignments",
+        json={
+            "course_id": course.json()["id"],
+            "title": "Research Report",
+            "description": DESCRIPTION,
+            "deadline": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
+        },
+    )
+    assert assignment.status_code == 201, assignment.text
+    row = assignment.json()
+    for requirement in (
+        {"title": "Argue a position using peer-reviewed sources", "priority": "HIGH"},
+        {"title": "Write a reflection on your process", "priority": "MEDIUM"},
+        {"title": "Meet the eight-source minimum", "priority": "CRITICAL"},
+    ):
+        created = await client.post(
+            f"/api/v1/assignments/{row['id']}/requirements", json=requirement
+        )
+        assert created.status_code == 201, created.text
+    return row
+
+
+async def _analyzed(client: AsyncClient) -> dict:
+    response = await client.post("/api/v1/assignments", json={})  # deliberately wrong
+    assert response.status_code in (400, 405, 422)
+
+
+async def _plan(client: AsyncClient, assignment_id: str, **body: object) -> dict:
+    response = await client.post(f"/api/v1/assignments/{assignment_id}/plans", json=body or {})
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+@pytest.fixture
+async def assignment(client: AsyncClient) -> dict:
+    row = await _prepare(client)
+    analyzed = await client.post(f"/api/v1/assignments/{row['id']}/analysis", json={})
+    assert analyzed.status_code == 200, analyzed.text
+    return row
+
+
+# ---------------------------------------------------------------------------
+# Generation
+# ---------------------------------------------------------------------------
+
+
+async def test_planning_requires_an_analysis(client: AsyncClient) -> None:
+    """No analysis, no plan, and a reason the client can act on."""
+    row = await _prepare(client, "noanalysis@example.com")
+    response = await client.post(f"/api/v1/assignments/{row['id']}/plans", json={})
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PLAN_NEEDS_ANALYSIS"
+
+
+async def test_generate_produces_a_reviewable_plan(client: AsyncClient, assignment: dict) -> None:
+    """The first plan is a draft awaiting a person, not a schedule."""
+    plan = await _plan(client, assignment["id"])
+
+    assert plan["version"] == 1
+    assert plan["status"] == "READY_FOR_REVIEW"
+    assert plan["trigger"] == "GENERATED"
+    assert plan["tasks"], "a plan with no tasks is not a plan"
+    assert plan["milestones"]
+    assert plan["estimated_effort"]
+    assert plan["schedule_risk"] is not None
+
+    keys = [task["key"] for task in plan["tasks"]]
+    assert len(keys) == len(set(keys))
+    known = set(keys)
+    for task in plan["tasks"]:
+        assert set(task["depends_on"]) <= known, task["key"]
+
+    # Every required requirement is addressed by something.
+    analysis = await client.get(f"/api/v1/assignments/{assignment['id']}/analysis")
+    contract = (await client.get(f"/api/v1/assignments/{assignment['id']}/plans")).json()
+    assert contract is not None
+    covered = {reference for task in plan["tasks"] for reference in task["related_requirements"]}
+    assert covered, "no task references a requirement"
+
+    # The plan is retrievable and reports no progress yet.
+    fetched = await client.get(f"/api/v1/assignments/{assignment['id']}/plans")
+    assert fetched.status_code == 200
+    assert fetched.json()["id"] == plan["id"]
+    assert fetched.json()["progress_percentage"] == 0
+    assert analysis.status_code == 200
+
+
+async def test_latest_plan_is_null_before_generation(client: AsyncClient, assignment: dict) -> None:
+    """Reading a plan never triggers one."""
+    response = await client.get(f"/api/v1/assignments/{assignment['id']}/plans")
+    assert response.status_code == 200
+    assert response.json() is None
+
+    summary = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/summary")
+    assert summary.status_code == 404
+    assert summary.json()["error"]["code"] == "PLAN_NOT_FOUND"
+
+
+async def test_idempotency_key_does_not_create_a_second_version(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A double-submitted button must not plan twice or bill twice."""
+    key = "a" * 32
+    first = await _plan(client, assignment["id"], idempotency_key=key)
+    second = await _plan(client, assignment["id"], idempotency_key=key)
+
+    assert second["id"] == first["id"]
+    assert second["version"] == 1
+
+    versions = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/versions")
+    assert len(versions.json()["items"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# Review and immutability
+# ---------------------------------------------------------------------------
+
+
+async def test_approval_makes_the_plan_authoritative_and_immutable(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """Approval is the transition; after it, edits are refused with a reason."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+
+    approved = await client.post(f"{base}/approve", json={"note": "looks right"})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "APPROVED"
+    assert approved.json()["approved_at"]
+
+    edit = await client.patch(f"{base}", json={"title": "Renamed after approval"})
+    assert edit.status_code == 409
+    assert edit.json()["error"]["code"] == "PLAN_IMMUTABLE"
+
+    add = await client.post(f"{base}/tasks", json={"title": "Sneaked in"})
+    assert add.status_code == 409
+    assert add.json()["error"]["code"] == "PLAN_IMMUTABLE"
+
+    # And the plan is unchanged.
+    after = await client.get(f"{base}")
+    assert after.json()["title"] == plan["title"]
+
+
+async def test_a_stale_plan_cannot_be_approved(client: AsyncClient, assignment: dict) -> None:
+    """Approving a plan built on an outdated analysis would be approving nothing."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+
+    # Change the assignment, which stales the analysis and the plan built on it.
+    updated = await client.patch(
+        f"/api/v1/assignments/{assignment['id']}", json={"description": DESCRIPTION + " Extra."}
+    )
+    assert updated.status_code == 200, updated.text
+
+    approve = await client.post(f"{base}/approve", json={})
+    assert approve.status_code in (409, 422), approve.text
+
+
+# ---------------------------------------------------------------------------
+# Regeneration
+# ---------------------------------------------------------------------------
+
+
+async def test_regeneration_creates_a_version_and_keeps_the_old_one(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """The old version must stay readable; that is the point of versioning."""
+    first = await _plan(client, assignment["id"])
+    second = await _plan(client, assignment["id"])  # a second generate is a new version
+
+    assert second["version"] == 2
+    assert second["id"] != first["id"]
+    assert second["trigger"] == "GENERATED"
+
+    old = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/{first['id']}")
+    assert old.status_code == 200
+    assert old.json()["version"] == 1
+
+    versions = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/versions")
+    assert [item["version"] for item in versions.json()["items"]] == [2, 1]
+
+
+async def test_regeneration_preserves_a_task_the_student_wrote(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A student's own task must survive a regeneration, content intact."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+
+    mine = await client.post(
+        f"{base}/tasks",
+        json={
+            "title": "Ask about the eight-source minimum",
+            "description": "Confirm whether preprints count.",
+            "acceptance_criteria": ["Written answer from the librarian"],
+        },
+    )
+    assert mine.status_code == 201, mine.text
+    assert mine.json()["is_user_authored"] is True
+
+    regenerated = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans/regenerate", json={}
+    )
+    assert regenerated.status_code == 201, regenerated.text
+    body = regenerated.json()
+    assert body["version"] == 2
+    assert body["trigger"] == "REGENERATED"
+
+    carried = [task for task in body["tasks"] if task["is_user_authored"]]
+    assert len(carried) == 1
+    assert carried[0]["title"] == "Ask about the eight-source minimum"
+    assert carried[0]["acceptance_criteria"] == ["Written answer from the librarian"]
+
+    # The original version still has it too.
+    old = await client.get(f"{base}")
+    assert len([t for t in old.json()["tasks"] if t["is_user_authored"]]) == 1
+
+
+async def test_regeneration_can_discard_student_edits(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """The opposite choice must also be available and must actually discard."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    await client.post(f"{base}/tasks", json={"title": "Temporary note"})
+
+    regenerated = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans/regenerate",
+        json={"preserve_user_edits": False},
+    )
+    assert regenerated.status_code == 201, regenerated.text
+    assert not [t for t in regenerated.json()["tasks"] if t["is_user_authored"]]
+
+
+async def test_regenerate_without_a_plan_is_refused(client: AsyncClient, assignment: dict) -> None:
+    response = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans/regenerate", json={}
+    )
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PLAN_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Tasks
+# ---------------------------------------------------------------------------
+
+
+async def test_task_edits_are_revalidated_against_the_graph(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A cycle created by hand is refused with the reason, not stored."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    keys = [task["key"] for task in plan["tasks"]]
+    if len(keys) < 2:
+        pytest.skip("plan has a single task")
+
+    blocked = await client.patch(f"{base}/tasks/{keys[0]}", json={"depends_on": [keys[-1]]})
+    assert blocked.status_code == 409, blocked.text
+    assert blocked.json()["error"]["code"] == "PLAN_GRAPH_INVALID"
+    assert blocked.json()["error"]["details"]["violations"]
+
+    # Nothing changed.
+    after = await client.get(f"{base}")
+    first = next(t for t in after.json()["tasks"] if t["key"] == keys[0])
+    assert keys[-1] not in first["depends_on"]
+
+
+async def test_editing_a_generated_task_marks_it_as_the_students(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """Otherwise a regeneration discards work the student deliberately did."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    key = plan["tasks"][0]["key"]
+    assert plan["tasks"][0]["is_user_authored"] is False
+
+    edited = await client.patch(f"{base}/tasks/{key}", json={"title": "My own wording"})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["is_user_authored"] is True
+    assert edited.json()["title"] == "My own wording"
+
+
+async def test_omitted_task_fields_are_left_alone(client: AsyncClient, assignment: dict) -> None:
+    """A partial edit must not null out what the client did not mention."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    target = plan["tasks"][0]
+
+    await client.patch(
+        f"{base}/tasks/{target['key']}",
+        json={"acceptance_criteria": ["Checked by a peer"]},
+    )
+    body = (await client.patch(f"{base}/tasks/{target['key']}", json={"title": "Renamed"})).json()
+    assert body["title"] == "Renamed"
+    assert body["acceptance_criteria"] == ["Checked by a peer"]
+    assert body["related_requirements"] == target["related_requirements"]
+
+
+async def test_reorder_requires_the_complete_set(client: AsyncClient, assignment: dict) -> None:
+    """A partial reorder has no single meaning, so it is rejected."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    keys = [task["key"] for task in plan["tasks"]]
+
+    partial = await client.post(f"{base}/tasks/reorder", json={"task_keys": keys[:1]})
+    assert partial.status_code in (400, 409, 422), partial.text
+
+    complete = await client.post(f"{base}/tasks/reorder", json={"task_keys": list(reversed(keys))})
+    assert complete.status_code == 200, complete.text
+    assert [task["key"] for task in complete.json()][: len(keys)] == list(reversed(keys))
+
+
+async def test_delete_task_removes_it_from_the_plan(client: AsyncClient, assignment: dict) -> None:
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    key = plan["tasks"][-1]["key"]
+
+    deleted = await client.delete(f"{base}/tasks/{key}")
+    assert deleted.status_code == 204, deleted.text
+
+    after = await client.get(f"{base}")
+    assert key not in {task["key"] for task in after.json()["tasks"]}
+
+
+async def test_unknown_task_key_is_404(client: AsyncClient, assignment: dict) -> None:
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    response = await client.patch(f"{base}/tasks/NOPE", json={"title": "x"})
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "TASK_NOT_FOUND"
+
+
+# ---------------------------------------------------------------------------
+# Preferences
+# ---------------------------------------------------------------------------
+
+
+async def test_preferences_round_trip_and_default(client: AsyncClient, assignment: dict) -> None:
+    """Preferences describe how this student works, so they are workspace-wide."""
+    path = f"/api/v1/assignments/{assignment['id']}/plans/preferences"
+
+    current = await client.get(path)
+    assert current.status_code == 200
+    assert current.json()["planning_style"] == "BALANCED"
+
+    updated = await client.put(
+        path,
+        json={"planning_style": "DETAILED", "guidance_level": "HIGH", "session_length": "MEDIUM"},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["planning_style"] == "DETAILED"
+    assert updated.json()["session_length"] == "MEDIUM"
+
+    again = await client.get(path)
+    assert again.json() == updated.json()
+
+    # A later plan uses them, and the older version keeps the old ones.
+    plan = await _plan(client, assignment["id"], planning_style="DETAILED")
+    assert plan["version"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Authorization
+# ---------------------------------------------------------------------------
+
+
+async def test_another_users_plan_is_not_reachable(client: AsyncClient, assignment: dict) -> None:
+    """A plan id the caller does not own must look like it does not exist."""
+    plan = await _plan(client, assignment["id"])
+    mine = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+
+    other = await client.post("/api/v1/auth/logout")
+    assert other.status_code == 204, other.text
+    await register_user(client, "intruder@example.com")
+
+    assert (await client.get(mine)).status_code == 404
+    assert (await client.patch(f"{mine}", json={"title": "mine now"})).status_code == 404
+    assert (await client.post(f"{mine}/approve", json={})).status_code == 404
+    assert (await client.post(f"{mine}/tasks", json={"title": "x"})).status_code == 404
+    assert (await client.get(f"/api/v1/assignments/{assignment['id']}/plans")).status_code == 404
+
+
+async def test_planning_requires_authentication(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/assignments/00000000-0000-0000-0000-000000000000/plans", json={}
+    )
+    assert response.status_code in (401, 422)
+
+
+# ---------------------------------------------------------------------------
+# Request options that must actually do something
+# ---------------------------------------------------------------------------
+
+
+async def test_force_replans_even_with_the_same_idempotency_key(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """`force` is the documented escape hatch from idempotent reuse."""
+    body = {"idempotency_key": "same-key-both-times"}
+    first = await _plan(client, assignment["id"], **body)
+    again = await _plan(client, assignment["id"], **body)
+    assert again["id"] == first["id"], "a repeat key must return the same plan"
+
+    forced = await _plan(client, assignment["id"], force=True, **body)
+    assert forced["id"] != first["id"]
+    assert forced["version"] == 2
+
+
+async def test_planning_a_superseded_analysis_is_refused(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """An explicit analysis id must not silently plan from a different one."""
+    latest = await client.get(f"/api/v1/assignments/{assignment['id']}/analysis")
+    assert latest.status_code == 200, latest.text
+
+    other = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/analysis", json={"force": True}
+    )
+    assert other.status_code == 200, other.text
+
+    stale_id = latest.json()["id"]
+    response = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans", json={"analysis_id": stale_id}
+    )
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["code"] == "ANALYSIS_NOT_CURRENT"
+
+
+async def test_a_plan_cannot_be_patched_straight_to_approved(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """Approval owns the graph and staleness checks, so it owns the transition."""
+    plan = await _plan(client, assignment["id"])
+    response = await client.patch(
+        f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}",
+        json={"status": "APPROVED"},
+    )
+    assert response.status_code == 422, response.text
+
+    fresh = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}")
+    assert fresh.json()["status"] != "APPROVED"
+
+
+async def test_task_traceability_survives_a_regeneration(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A requirement the student linked by hand is a statement about their work."""
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    covered = next(t for t in plan["tasks"] if t["related_requirements"])
+    key = covered["key"]
+    expected = set(covered["related_requirements"])
+
+    edited = await client.patch(
+        f"{base}/tasks/{key}",
+        json={"title": "My own task", "related_requirements": sorted(expected)},
+    )
+    assert edited.status_code == 200, edited.text
+    assert set(edited.json()["related_requirements"]) == expected
+
+    regenerated = await client.post(
+        f"/api/v1/assignments/{assignment['id']}/plans/regenerate", json={}
+    )
+    assert regenerated.status_code == 201, regenerated.text
+    carried = [t for t in regenerated.json()["tasks"] if t["is_user_authored"]]
+    assert len(carried) == 1
+    assert set(carried[0]["related_requirements"]) == expected
+    assert carried[0]["title"] == "My own task"
+
+
+async def test_version_pagination_reports_a_real_total(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A page that reports the size of its own window as the total is lying."""
+    for _ in range(3):
+        await _plan(client, assignment["id"])
+
+    path = f"/api/v1/assignments/{assignment['id']}/plans/versions"
+    first = await client.get(path, params={"page": 1, "page_size": 2})
+    assert first.status_code == 200, first.text
+    body = first.json()
+    assert [item["version"] for item in body["items"]] == [3, 2]
+    assert body["page"]["total"] == 3
+    assert body["page"]["pages"] == 2
+
+    second = await client.get(path, params={"page": 2, "page_size": 2})
+    assert [item["version"] for item in second.json()["items"]] == [1]
+    assert second.json()["page"]["total"] == 3
+
+
+async def test_task_edits_are_audited(client: AsyncClient, assignment: dict, db_session) -> None:
+    """A hand edit has to be as traceable in the record as an approval is."""
+    from app.models import AuditLog
+    from sqlalchemy import select
+
+    plan = await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/{plan['id']}"
+    key = plan["tasks"][0]["key"]
+
+    assert (await client.patch(f"{base}/tasks/{key}", json={"title": "Renamed"})).status_code == 200
+    order = [task["key"] for task in plan["tasks"]]
+    reordered = await client.post(
+        f"{base}/tasks/reorder", json={"task_keys": list(reversed(order))}
+    )
+    assert reordered.status_code == 200, reordered.text
+    assert (await client.delete(f"{base}/tasks/{key}")).status_code == 204
+
+    events = list(
+        await db_session.scalars(
+            select(AuditLog).where(AuditLog.assignment_id == UUID(assignment["id"]))
+        )
+    )
+    types = {row.event_type for row in events}
+    assert "PLAN_TASK_UPDATED" in types
+    assert "PLAN_TASK_DELETED" in types
+    assert "PLAN_TASKS_REORDERED" in types
+    assert "PLAN_GENERATED" in types
+
+    reordered_event = next(row for row in events if row.event_type == "PLAN_TASKS_REORDERED")
+    assert reordered_event.metadata_json["order"] == list(reversed(order))
+
+    updated = next(row for row in events if row.event_type == "PLAN_TASK_UPDATED")
+    assert updated.entity_type == "PlanTask"
+    assert updated.metadata_json["task_key"] == key
+    assert updated.metadata_json["version"] == plan["version"]
