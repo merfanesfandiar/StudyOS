@@ -1,7 +1,7 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { renderWithPreferences } from "./render";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AssignmentDetail } from "@/components/assignment-detail";
-import { PreferencesProvider } from "@/components/preferences-provider";
 import type {
   AssignmentSpecification,
   CompletenessCheck,
@@ -152,8 +152,8 @@ const course: Course = {
 /**
  * Routes the fake server by method and path so each test states only what it needs.
  *
- * `renderPage` wraps the component in `PreferencesProvider`, because the page
- * now contains the plan panel and every status label in it goes through the
+ * `renderWithPreferences` wraps the component in `PreferencesProvider`, because
+ * the page contains the plan panel and every status label in it goes through the
  * translator. `PLAN_ROUTES` covers the plan reads, which the page issues on
  * mount; an unrouted request is rejected loudly rather than silently 404ing.
  */
@@ -162,10 +162,6 @@ const PLAN_ROUTES: Record<string, () => Response> = {
   "GET /assignments/a1/plans/runs": () =>
     jsonResponse({ items: [], page: { page: 1, page_size: 5, total: 0, pages: 0 } }),
 };
-
-function renderPage(node: React.ReactElement) {
-  return render(<PreferencesProvider>{node}</PreferencesProvider>);
-}
 
 
 function route(routes: Record<string, () => Response>) {
@@ -201,7 +197,7 @@ describe("AssignmentDetail", () => {
         jsonResponse({ items: [], page: { page: 1, page_size: 20, total: 0, pages: 0 } }),
     });
 
-    renderPage(<AssignmentDetail assignmentId="a1" />);
+    renderWithPreferences(<AssignmentDetail assignmentId="a1" />);
 
     expect(
       await screen.findByRole("heading", { name: "Build a Java Strategy Game" }),
@@ -236,7 +232,7 @@ describe("AssignmentDetail", () => {
         jsonResponse({ items: [], page: { page: 1, page_size: 20, total: 0, pages: 0 } }),
     });
 
-    renderPage(<AssignmentDetail assignmentId="a1" />);
+    renderWithPreferences(<AssignmentDetail assignmentId="a1" />);
 
     const panel = await screen.findByTestId("readiness-panel");
     const button = await within(panel).findByRole("button", { name: "Mark ready for analysis" });
@@ -267,7 +263,7 @@ describe("AssignmentDetail", () => {
       },
     });
 
-    renderPage(<AssignmentDetail assignmentId="a1" />);
+    renderWithPreferences(<AssignmentDetail assignmentId="a1" />);
 
     const panel = await screen.findByTestId("readiness-panel");
     fireEvent.click(await within(panel).findByRole("button", { name: "Mark ready for analysis" }));
@@ -291,7 +287,7 @@ describe("AssignmentDetail", () => {
       },
     });
 
-    renderPage(<AssignmentDetail assignmentId="a1" />);
+    renderWithPreferences(<AssignmentDetail assignmentId="a1" />);
 
     const section = await screen.findByTestId("requirements-section");
     fireEvent.change(within(section).getByLabelText("Title"), {
@@ -308,7 +304,7 @@ describe("AssignmentDetail", () => {
         jsonResponse({ error: { code: "NOT_FOUND", message: "Assignment not found." } }, 404),
     });
 
-    renderPage(<AssignmentDetail assignmentId="a1" />);
+    renderWithPreferences(<AssignmentDetail assignmentId="a1" />);
 
     expect(await screen.findByText("Assignment not found.")).toBeInTheDocument();
   });

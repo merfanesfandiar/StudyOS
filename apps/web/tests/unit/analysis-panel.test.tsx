@@ -1,4 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { renderWithPreferences } from "./render";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AnalysisPanel } from "@/components/assignment/analysis-panel";
 import type {
@@ -240,7 +241,7 @@ describe("AnalysisPanel", () => {
   it("offers to analyze an assignment that has never been analyzed", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(NOT_ANALYZED, 404));
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
 
     expect(await screen.findByTestId("analyze")).toBeEnabled();
     expect(screen.getByText(/never changes your specification/i)).toBeInTheDocument();
@@ -251,7 +252,7 @@ describe("AnalysisPanel", () => {
       .mockResolvedValueOnce(jsonResponse(NOT_ANALYZED, 404))
       .mockResolvedValueOnce(jsonResponse(analysis(), 201));
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
     fireEvent.click(await screen.findByTestId("analyze"));
 
     expect(await screen.findByTestId("analysis-summary")).toHaveTextContent(
@@ -275,7 +276,7 @@ describe("AnalysisPanel", () => {
       jsonResponse({ error: { code: "ASSIGNMENT_NOT_FOUND", message: "Not found." } }, 404),
     );
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
 
     expect(await screen.findByText("Not found.")).toBeInTheDocument();
     expect(screen.queryByTestId("analyze")).not.toBeInTheDocument();
@@ -291,7 +292,7 @@ describe("AnalysisPanel", () => {
       .mockResolvedValueOnce(jsonResponse(analysis()))
       .mockResolvedValueOnce(jsonResponse(accepted));
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
     fireEvent.click(await screen.findByTestId("accept-analysis"));
 
     expect(await screen.findByText(/You accepted this analysis/i)).toBeInTheDocument();
@@ -304,7 +305,7 @@ describe("AnalysisPanel", () => {
       .mockResolvedValueOnce(jsonResponse(analysis()))
       .mockResolvedValueOnce(jsonResponse(analysis({ status: "REJECTED" })));
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
     fireEvent.click(await screen.findByTestId("reject-analysis"));
 
     expect(await screen.findByText(/You rejected this analysis/i)).toBeInTheDocument();
@@ -319,7 +320,7 @@ describe("AnalysisPanel", () => {
         jsonResponse({ error: { code: "ANALYSIS_ALREADY_RUNNING", message: "Already running." } }, 409),
       );
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
     fireEvent.click(await screen.findByTestId("accept-analysis"));
 
     expect(await screen.findByText("Already running.")).toBeInTheDocument();
@@ -339,7 +340,7 @@ describe("AnalysisPanel", () => {
         ),
       );
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
     const input = await screen.findByLabelText("Answer to Q1");
     fireEvent.change(input, { target: { value: "Epsilon-N only." } });
     fireEvent.click(screen.getByTestId("answer-question"));
@@ -361,7 +362,7 @@ describe("AnalysisPanel", () => {
       jsonResponse(analysis({ is_stale: true, stale_at: "2026-02-03T00:00:00Z" })),
     );
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
 
     expect(await screen.findByText(/out of date/i)).toBeInTheDocument();
     expect(screen.getByTestId("reanalyze")).toBeEnabled();
@@ -372,7 +373,7 @@ describe("AnalysisPanel", () => {
       .mockResolvedValueOnce(jsonResponse(analysis()))
       .mockResolvedValueOnce(jsonResponse(analysis({ edited: true })));
 
-    render(<AnalysisPanel assignmentId="as-1" />);
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
     fireEvent.click(await screen.findByTestId("edit-classification"));
 
     const editor = screen.getByTestId("classification-editor");
@@ -392,7 +393,7 @@ describe("AnalysisPanel", () => {
     // that change the panel kept showing the old analysis as fresh.
     fetchMock.mockResolvedValueOnce(jsonResponse(analysis()));
 
-    const { rerender } = render(<AnalysisPanel assignmentId="as-1" refreshToken={4} />);
+    const { rerender } = renderWithPreferences(<AnalysisPanel assignmentId="as-1" refreshToken={4} />);
     expect(await screen.findByTestId("analysis-summary")).toBeInTheDocument();
 
     fetchMock.mockResolvedValueOnce(jsonResponse(analysis({ is_stale: true })));

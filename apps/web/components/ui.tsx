@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from "react";
 import type { AssignmentStatus, CheckStatus } from "@/lib/types";
 import { CHECK_LABELS, statusLabel } from "@/lib/format";
+import { usePreferences } from "./preferences-provider";
 
 const subscribeToNothing = () => () => {};
 const clientHydrated = () => true;
@@ -99,12 +100,13 @@ export function Alert({
   return <div className={`rounded-xl border px-4 py-3 text-sm ${styles[tone]}`}>{children}</div>;
 }
 
-export function LoadingState({ label = "Loading" }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const { t } = usePreferences();
   return (
     <div className="flex min-h-40 items-center justify-center" role="status">
       <div className="flex items-center gap-3 text-sm font-medium text-[var(--color-ink-muted)]">
         <span className="size-5 animate-spin rounded-full border-2 border-[var(--color-line-strong)] border-t-[var(--color-accent)]" />
-        {label}…
+        {label ?? t("common.loading")}
       </div>
     </div>
   );
@@ -130,7 +132,7 @@ export function EmptyState({
 
 export function SubmitButton({
   pending,
-  pendingLabel = "Working…",
+  pendingLabel,
   disabled = false,
   children,
   className = "btn-primary",
@@ -142,10 +144,11 @@ export function SubmitButton({
   className?: string;
 }) {
   const hydrated = useSyncExternalStore(subscribeToNothing, clientHydrated, serverHydrated);
+  const { t } = usePreferences();
 
   return (
     <button className={className} disabled={pending || disabled || !hydrated} type="submit">
-      {pending ? pendingLabel : children}
+      {pending ? (pendingLabel ?? t("common.working")) : children}
     </button>
   );
 }
