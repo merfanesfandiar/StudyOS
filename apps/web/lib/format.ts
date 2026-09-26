@@ -69,6 +69,13 @@ export function statusLabel(t: Translate, status: AssignmentStatus): string {
   return key ? t(key) : status;
 }
 
+/**
+ * Requirement statuses are a separate enum from assignment statuses, with
+ * `TODO` and `VERIFIED` having no assignment equivalent. They get their own map
+ * rather than being squeezed into `STATUS_KEYS`, so a future member of either
+ * union fails to compile instead of silently rendering as the other kind of
+ * label.
+ */
 /** Only these states may be set from the UI; the rest need the readiness gate. */
 export const CLIENT_SETTABLE_STATUSES: readonly ClientSettableStatus[] = [
   "DRAFT",
@@ -83,80 +90,80 @@ export const CHECK_LABELS: Record<CheckStatus, string> = {
   FAIL: "Missing",
 };
 
-const REQUIREMENT_TYPES: Record<RequirementType, string> = {
-  FUNCTIONAL: "Functional",
-  TECHNICAL: "Technical",
-  DESIGN: "Design",
-  DOCUMENTATION: "Documentation",
-  CONSTRAINT: "Constraint",
-  PERFORMANCE: "Performance",
-  SECURITY: "Security",
-  TESTING: "Testing",
-  OTHER: "Other",
+const REQUIREMENT_TYPES_KEYS: Record<RequirementType, MessageKey> = {
+  FUNCTIONAL: "enum.requirementType.functional",
+  TECHNICAL: "enum.requirementType.technical",
+  DESIGN: "enum.requirementType.design",
+  DOCUMENTATION: "enum.requirementType.documentation",
+  CONSTRAINT: "enum.requirementType.constraint",
+  PERFORMANCE: "enum.requirementType.performance",
+  SECURITY: "enum.requirementType.security",
+  TESTING: "enum.requirementType.testing",
+  OTHER: "enum.requirementType.other",
 };
 
-const CONSTRAINT_TYPES: Record<ConstraintType, string> = {
-  TECHNOLOGY: "Technology",
-  TIME: "Time",
-  RESOURCE: "Resource",
-  FORMAT: "Format",
-  LANGUAGE: "Language",
-  LIBRARY: "Library",
-  PLATFORM: "Platform",
-  ACADEMIC: "Academic",
-  SECURITY: "Security",
-  PERFORMANCE: "Performance",
-  OTHER: "Other",
+const CONSTRAINT_TYPES_KEYS: Record<ConstraintType, MessageKey> = {
+  TECHNOLOGY: "enum.constraintType.technology",
+  TIME: "enum.constraintType.time",
+  RESOURCE: "enum.constraintType.resource",
+  FORMAT: "enum.constraintType.format",
+  LANGUAGE: "enum.constraintType.language",
+  LIBRARY: "enum.constraintType.library",
+  PLATFORM: "enum.constraintType.platform",
+  ACADEMIC: "enum.constraintType.academic",
+  SECURITY: "enum.constraintType.security",
+  PERFORMANCE: "enum.constraintType.performance",
+  OTHER: "enum.constraintType.other",
 };
 
-const CONSTRAINT_SEVERITIES: Record<ConstraintSeverity, string> = {
-  INFO: "Info",
-  WARNING: "Warning",
-  IMPORTANT: "Important",
-  CRITICAL: "Critical",
+const CONSTRAINT_SEVERITIES_KEYS: Record<ConstraintSeverity, MessageKey> = {
+  INFO: "enum.constraintSeverity.info",
+  WARNING: "enum.constraintSeverity.warning",
+  IMPORTANT: "enum.constraintSeverity.important",
+  CRITICAL: "enum.constraintSeverity.critical",
 };
 
-const DELIVERABLE_TYPES: Record<DeliverableType, string> = {
-  SOURCE_CODE: "Source code",
-  DOCUMENT: "Document",
-  DATASET: "Dataset",
-  PRESENTATION: "Presentation",
-  TEST_SUITE: "Test suite",
-  VIDEO: "Video",
-  OTHER: "Other",
+const DELIVERABLE_TYPES_KEYS: Record<DeliverableType, MessageKey> = {
+  SOURCE_CODE: "enum.deliverableType.sourceCode",
+  DOCUMENT: "enum.deliverableType.document",
+  DATASET: "enum.deliverableType.dataset",
+  PRESENTATION: "enum.deliverableType.presentation",
+  TEST_SUITE: "enum.deliverableType.testSuite",
+  VIDEO: "enum.deliverableType.video",
+  OTHER: "enum.deliverableType.other",
 };
 
-const DELIVERABLE_STATUSES: Record<DeliverableStatus, string> = {
-  PENDING: "Not started",
-  IN_PROGRESS: "In progress",
-  COMPLETED: "Submitted",
-  VERIFIED: "Verified",
+const DELIVERABLE_STATUSES_KEYS: Record<DeliverableStatus, MessageKey> = {
+  PENDING: "enum.deliverableStatus.pending",
+  IN_PROGRESS: "enum.deliverableStatus.inProgress",
+  COMPLETED: "enum.deliverableStatus.completed",
+  VERIFIED: "enum.deliverableStatus.verified",
 };
 
-const REQUIREMENT_STATUSES: Record<RequirementStatus, string> = {
-  TODO: "Not started",
-  IN_PROGRESS: "In progress",
-  BLOCKED: "Blocked",
-  COMPLETED: "Completed",
-  VERIFIED: "Verified",
+const REQUIREMENT_STATUSES_KEYS: Record<RequirementStatus, MessageKey> = {
+  TODO: "enum.requirementStatus.todo",
+  IN_PROGRESS: "enum.requirementStatus.inProgress",
+  BLOCKED: "enum.requirementStatus.blocked",
+  COMPLETED: "enum.requirementStatus.completed",
+  VERIFIED: "enum.requirementStatus.verified",
 };
 
-const PRIORITIES: Record<RequirementPriority, string> = {
-  LOW: "Low",
-  MEDIUM: "Medium",
-  HIGH: "High",
-  CRITICAL: "Critical",
+const PRIORITIES_KEYS: Record<RequirementPriority, MessageKey> = {
+  LOW: "enum.requirementPriority.low",
+  MEDIUM: "enum.requirementPriority.medium",
+  HIGH: "enum.requirementPriority.high",
+  CRITICAL: "enum.requirementPriority.critical",
 };
 
-const TECHNOLOGY_CATEGORIES: Record<TechnologyCategory, string> = {
-  LANGUAGE: "Language",
-  FRAMEWORK: "Framework",
-  DATABASE: "Database",
-  INFRASTRUCTURE: "Infrastructure",
-  LIBRARY: "Library",
-  TOOL: "Tool",
-  PROTOCOL: "Protocol",
-  OTHER: "Other",
+const TECHNOLOGY_CATEGORIES_KEYS: Record<TechnologyCategory, MessageKey> = {
+  LANGUAGE: "enum.technologyCategory.language",
+  FRAMEWORK: "enum.technologyCategory.framework",
+  DATABASE: "enum.technologyCategory.database",
+  INFRASTRUCTURE: "enum.technologyCategory.infrastructure",
+  LIBRARY: "enum.technologyCategory.library",
+  TOOL: "enum.technologyCategory.tool",
+  PROTOCOL: "enum.technologyCategory.protocol",
+  OTHER: "enum.technologyCategory.other",
 };
 
 export function humanize(key: string): string {
@@ -167,35 +174,40 @@ export function humanize(key: string): string {
     .join(" ");
 }
 
-export const requirementTypeLabel = (value: RequirementType) => REQUIREMENT_TYPES[value] ?? value;
-export const constraintTypeLabel = (value: ConstraintType) => CONSTRAINT_TYPES[value] ?? value;
-export const constraintSeverityLabel = (value: ConstraintSeverity) =>
-  CONSTRAINT_SEVERITIES[value] ?? value;
-export const deliverableTypeLabel = (value: DeliverableType) => DELIVERABLE_TYPES[value] ?? value;
-export const deliverableStatusLabel = (value: DeliverableStatus) =>
-  DELIVERABLE_STATUSES[value] ?? value;
-export const requirementStatusLabel = (value: RequirementStatus) =>
-  REQUIREMENT_STATUSES[value] ?? value;
-export const priorityLabel = (value: RequirementPriority) => PRIORITIES[value] ?? value;
-export const technologyCategoryLabel = (value: TechnologyCategory) =>
-  TECHNOLOGY_CATEGORIES[value] ?? value;
+export function requirementTypeLabel(t: Translate, value: RequirementType): string {
+  return t(REQUIREMENT_TYPES_KEYS[value]) || value;
+}
+export function constraintTypeLabel(t: Translate, value: ConstraintType): string {
+  return t(CONSTRAINT_TYPES_KEYS[value]) || value;
+}
+export function constraintSeverityLabel(t: Translate, value: ConstraintSeverity): string {
+  return t(CONSTRAINT_SEVERITIES_KEYS[value]) || value;
+}
+export function deliverableTypeLabel(t: Translate, value: DeliverableType): string {
+  return t(DELIVERABLE_TYPES_KEYS[value]) || value;
+}
+export function deliverableStatusLabel(t: Translate, value: DeliverableStatus): string {
+  return t(DELIVERABLE_STATUSES_KEYS[value]) || value;
+}
+/** Catalogue-backed, like `statusLabel`, for the same reason. */
+export function requirementStatusLabel(t: Translate, value: RequirementStatus): string {
+  return t(REQUIREMENT_STATUSES_KEYS[value]) || value;
+}
+export function priorityLabel(t: Translate, value: RequirementPriority): string {
+  return t(PRIORITIES_KEYS[value]) || value;
+}
+export function technologyCategoryLabel(t: Translate, value: TechnologyCategory): string {
+  return t(TECHNOLOGY_CATEGORIES_KEYS[value]) || value;
+}
 
-export const REQUIREMENT_TYPE_OPTIONS = Object.keys(REQUIREMENT_TYPES) as RequirementType[];
-export const CONSTRAINT_TYPE_OPTIONS = Object.keys(CONSTRAINT_TYPES) as ConstraintType[];
-export const CONSTRAINT_SEVERITY_OPTIONS = Object.keys(
-  CONSTRAINT_SEVERITIES,
-) as ConstraintSeverity[];
-export const DELIVERABLE_TYPE_OPTIONS = Object.keys(DELIVERABLE_TYPES) as DeliverableType[];
-export const DELIVERABLE_STATUS_OPTIONS = Object.keys(
-  DELIVERABLE_STATUSES,
-) as DeliverableStatus[];
-export const REQUIREMENT_STATUS_OPTIONS = Object.keys(
-  REQUIREMENT_STATUSES,
-) as RequirementStatus[];
-export const PRIORITY_OPTIONS = Object.keys(PRIORITIES) as RequirementPriority[];
-export const TECHNOLOGY_CATEGORY_OPTIONS = Object.keys(
-  TECHNOLOGY_CATEGORIES,
-) as TechnologyCategory[];
+export const REQUIREMENT_TYPE_OPTIONS = Object.keys(REQUIREMENT_TYPES_KEYS) as RequirementType[];
+export const CONSTRAINT_TYPE_OPTIONS = Object.keys(CONSTRAINT_TYPES_KEYS) as ConstraintType[];
+export const CONSTRAINT_SEVERITY_OPTIONS = Object.keys(CONSTRAINT_SEVERITIES_KEYS) as ConstraintSeverity[];
+export const DELIVERABLE_TYPE_OPTIONS = Object.keys(DELIVERABLE_TYPES_KEYS) as DeliverableType[];
+export const DELIVERABLE_STATUS_OPTIONS = Object.keys(DELIVERABLE_STATUSES_KEYS) as DeliverableStatus[];
+export const REQUIREMENT_STATUS_OPTIONS = Object.keys(REQUIREMENT_STATUSES_KEYS) as RequirementStatus[];
+export const PRIORITY_OPTIONS = Object.keys(PRIORITIES_KEYS) as RequirementPriority[];
+export const TECHNOLOGY_CATEGORY_OPTIONS = Object.keys(TECHNOLOGY_CATEGORIES_KEYS) as TechnologyCategory[];
 
 // ---------------------------------------------------------------------------
 // Phase 3 analysis taxonomy

@@ -11,6 +11,7 @@ import {
   requirementTypeLabel,
 } from "@/lib/format";
 import type { AssignmentSpecification, DependencyGraph, Requirement } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, SubmitButton } from "@/components/ui";
 
 /** Requirements carry the codes everything else refers to, so they lead. */
@@ -24,6 +25,7 @@ export function RequirementsSection({
   onChanged: () => Promise<void>;
 }) {
   const [pending, setPending] = useState<string | null>(null);
+  const { t } = usePreferences();
   const [error, setError] = useState("");
   const [dependencyFor, setDependencyFor] = useState<string | null>(null);
   const { requirements, assignment } = specification;
@@ -90,10 +92,10 @@ export function RequirementsSection({
                 ) : null}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--color-ink-subtle)]">
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
-                    {requirementTypeLabel(requirement.type)}
+                    {requirementTypeLabel(t, requirement.type)}
                   </span>
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
-                    {priorityLabel(requirement.priority)}
+                    {priorityLabel(t, requirement.priority)}
                   </span>
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {requirement.is_required ? "Required" : "Optional"}
@@ -127,7 +129,7 @@ export function RequirementsSection({
                 >
                   {REQUIREMENT_STATUS_OPTIONS.map((value) => (
                     <option key={value} value={value}>
-                      {requirementStatusLabel(value)}
+                      {requirementStatusLabel(t, value)}
                     </option>
                   ))}
                 </select>
@@ -216,7 +218,7 @@ export function RequirementsSection({
             <select defaultValue="FUNCTIONAL" name="type">
               {REQUIREMENT_TYPE_OPTIONS.map((value) => (
                 <option key={value} value={value}>
-                  {requirementTypeLabel(value)}
+                  {requirementTypeLabel(t, value)}
                 </option>
               ))}
             </select>
@@ -232,7 +234,7 @@ export function RequirementsSection({
             <select defaultValue="MEDIUM" name="priority">
               {PRIORITY_OPTIONS.map((value) => (
                 <option key={value} value={value}>
-                  {priorityLabel(value)}
+                  {priorityLabel(t, value)}
                 </option>
               ))}
             </select>

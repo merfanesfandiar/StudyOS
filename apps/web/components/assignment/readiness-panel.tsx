@@ -26,8 +26,15 @@ export function ReadinessPanel({
   onChanged: () => Promise<void>;
 }) {
   const [pending, setPending] = useState<"ready" | "incomplete" | "validate" | null>(null);
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState<{ text: string; status: string } | null>(null);
+  const [failure, setFailure] = useState<unknown>(null);
+  // The notice is a catalogue key plus its arguments, not a finished sentence,
+  // so it reads in the reader's language rather than the language active when
+  // the click happened.
+  const [notice, setNotice] = useState<{
+    key: "readiness.markedReady" | "readiness.reopened" | "readiness.valid";
+    vars?: { score: number; missing: string };
+    status: string;
+  } | null>(null);
   const { t } = usePreferences();
   const { readiness, assignment, summary } = specification;
   const canMarkReady = readiness.is_ready_for_analysis;
@@ -35,51 +42,57 @@ export function ReadinessPanel({
 
   async function run(action: "ready" | "incomplete" | "validate") {
     setPending(action);
-    setError("");
+    setFailure(null);
     setNotice(null);
     try {
       if (action === "ready") {
         const updated = await api.markReady(assignment.id);
         setNotice({
-          text: `Marked ready for analysis (${updated.readiness_score}%).`,
+          key: "readiness.markedReady",
+          vars: { score: updated.readiness_score, missing: "" },
           status: updated.status,
         });
       } else if (action === "incomplete") {
         const updated = await api.markIncomplete(assignment.id);
         setNotice({
-          text: "Reopened. This assignment is incomplete again.",
+          key: "readiness.reopened",
           status: updated.status,
         });
       } else {
         const report = await api.validate(assignment.id);
         setNotice({
-          text: report.is_valid
-            ? `Validated: ${report.readiness.score}% complete, nothing blocking.`
-            : `Validated: still missing ${report.readiness.failing_checks
-                .map(humanize)
-                .join(", ")}.`,
+          key: "readiness.valid",
+          vars: {
+            score: report.readiness.score,
+            missing: report.readiness.failing_checks.map(humanize).join(", "),
+          },
           status: assignment.status,
         });
       }
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "The readiness gate refused that change.");
+      setFailure(caught);
     } finally {
       setPending(null);
     }
   }
 
+  const error = failure
+    ? failure instanceof ApiError
+      ? failure.message
+      : t("readiness.refused")
+    : "";
   // A confirmation only applies to the state it confirmed, so a later demotion
   // cannot leave "marked ready" on screen next to an incomplete badge.
-  const shownNotice = notice?.status === assignment.status ? notice.text : "";
+  const shownNotice = notice?.status === assignment.status ? t(notice.key, notice.vars) : "";
 
   return (
     <section className="card p-6" data-testid="readiness-panel" id="readiness">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="section-title">Readiness</h2>
+          <h2 className="section-title">{t("readiness.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-            A weighted checklist of what this specification still needs.
+            {t("readiness.description")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -95,9 +108,9 @@ export function ReadinessPanel({
         <p className="mt-2 text-xs text-[var(--color-ink-subtle)]">
           {readiness.is_ready_for_analysis
             ? isReady
-              ? "Ready for analysis. Any edit that breaks a blocking check sends it back."
-              : "Every blocking check passes. Mark it ready when the brief is final."
-            : "Blocking checks are still failing, so this cannot be marked ready."}
+              ? t("readiness.stateReady")
+              : t("readiness.stateCanMark")
+            : t("readiness.stateBlocked")}
         </p>
       </div>
 
@@ -114,7 +127,7 @@ export function ReadinessPanel({
 
       {readiness.failing_checks.length ? (
         <div className="mt-4 rounded-xl border border-[var(--color-critical-soft)] bg-[var(--color-critical-soft)] p-4">
-          <p className="text-sm font-bold text-[var(--color-critical)]">Blocking</p>
+          <p className="text-sm font-bold text-[var(--color-critical)]">{t("readiness.blocking")}</p>
           <ul className="mt-2 space-y-1 text-sm text-[var(--color-critical)]">
             {readiness.failing_checks.map((field) => (
               <li key={field}>
@@ -134,7 +147,7 @@ export function ReadinessPanel({
               <span className="font-semibold text-[var(--color-ink)]">{check.label}</span>{" "}
               <span className="text-xs text-[var(--color-ink-subtle)]">
                 {CHECK_LABELS[check.status]} · {check.weight}%
-                {check.blocking ? " · required" : ""}
+                {check.blocking ? ` · ${t("readiness.required")}` : ""}
               </span>
               <span className="block text-xs leading-5 text-[var(--color-ink-subtle)]">{check.message}</span>
             </span>
@@ -150,17 +163,17 @@ export function ReadinessPanel({
             onClick={() => void run("incomplete")}
             type="button"
           >
-            {pending === "incomplete" ? "Reopening…" : "Reopen for editing"}
+            {pending === "incomplete" ? t("readiness.reopening") : t("readiness.reopen")}
           </button>
         ) : (
           <button
             className="btn-primary"
             disabled={pending !== null || !canMarkReady}
             onClick={() => void run("ready")}
-            title={canMarkReady ? undefined : "Resolve the blocking checks first."}
+            title={canMarkReady ? undefined : t("readiness.resolveFirst")}
             type="button"
           >
-            {pending === "ready" ? "Marking…" : "Mark ready for analysis"}
+            {pending === "ready" ? t("readiness.marking") : t("readiness.markReady")}
           </button>
         )}
         <button
@@ -169,11 +182,16 @@ export function ReadinessPanel({
           onClick={() => void run("validate")}
           type="button"
         >
-          {pending === "validate" ? "Validating…" : "Re-check"}
+          {pending === "validate" ? t("readiness.validating") : t("readiness.recheck")}
         </button>
         <span className="self-center text-xs text-[var(--color-ink-subtle)]">
-          {summary.requirements_total} requirements · {summary.criteria_count} criteria ·{" "}
-          {summary.criteria_balanced ? "weights total 100%" : "weights do not total 100%"}
+          {t("readiness.tally", {
+            requirements: summary.requirements_total,
+            criteria: summary.criteria_count,
+            weights: summary.criteria_balanced
+              ? t("readiness.weightsBalanced")
+              : t("readiness.weightsUnbalanced"),
+          })}
         </span>
       </div>
       <p className="sr-only">{statusLabel(t, assignment.status)}</p>

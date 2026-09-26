@@ -10,6 +10,7 @@ import {
   formatWeight,
 } from "@/lib/format";
 import type { AssignmentSpecification, Constraint } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, SubmitButton } from "@/components/ui";
 
 const SEVERITY_STYLES: Record<Constraint["severity"], string> = {
@@ -27,6 +28,7 @@ export function ConstraintsSection({
   onChanged: () => Promise<void>;
 }) {
   const [pending, setPending] = useState<string | null>(null);
+  const { t } = usePreferences();
   const [error, setError] = useState("");
   const { constraints, assignment } = specification;
 
@@ -70,10 +72,10 @@ export function ConstraintsSection({
                 ) : null}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs">
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5 text-[var(--color-ink-muted)]">
-                    {constraintTypeLabel(constraint.type)}
+                    {constraintTypeLabel(t, constraint.type)}
                   </span>
                   <span className={`rounded px-2 py-0.5 ${SEVERITY_STYLES[constraint.severity]}`}>
-                    {constraintSeverityLabel(constraint.severity)}
+                    {constraintSeverityLabel(t, constraint.severity)}
                   </span>
                 </div>
               </div>
@@ -128,7 +130,7 @@ export function ConstraintsSection({
             <select defaultValue="OTHER" name="type">
               {CONSTRAINT_TYPE_OPTIONS.map((value) => (
                 <option key={value} value={value}>
-                  {constraintTypeLabel(value)}
+                  {constraintTypeLabel(t, value)}
                 </option>
               ))}
             </select>
@@ -148,7 +150,7 @@ export function ConstraintsSection({
             <select defaultValue="WARNING" name="severity">
               {CONSTRAINT_SEVERITY_OPTIONS.map((value) => (
                 <option key={value} value={value}>
-                  {constraintSeverityLabel(value)}
+                  {constraintSeverityLabel(t, value)}
                 </option>
               ))}
             </select>

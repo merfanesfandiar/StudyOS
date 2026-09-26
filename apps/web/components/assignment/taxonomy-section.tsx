@@ -12,6 +12,7 @@ import {
   technologyCategoryLabel,
 } from "@/lib/format";
 import type { AssignmentSpecification, Deliverable, Technology } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, SubmitButton } from "@/components/ui";
 
 export function DeliverablesSection({
@@ -22,6 +23,7 @@ export function DeliverablesSection({
   onChanged: () => Promise<void>;
 }) {
   const [pending, setPending] = useState<string | null>(null);
+  const { t } = usePreferences();
   const [error, setError] = useState("");
   const { deliverables, assignment } = specification;
 
@@ -62,7 +64,7 @@ export function DeliverablesSection({
                 ) : null}
                 <div className="mt-2 flex flex-wrap gap-2 text-xs text-[var(--color-ink-subtle)]">
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
-                    {deliverableTypeLabel(deliverable.type)}
+                    {deliverableTypeLabel(t, deliverable.type)}
                   </span>
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
                     {deliverable.is_required ? "Required" : "Optional"}
@@ -87,7 +89,7 @@ export function DeliverablesSection({
                 >
                   {DELIVERABLE_STATUS_OPTIONS.map((value) => (
                     <option key={value} value={value}>
-                      {deliverableStatusLabel(value)}
+                      {deliverableStatusLabel(t, value)}
                     </option>
                   ))}
                 </select>
@@ -141,7 +143,7 @@ export function DeliverablesSection({
             <select defaultValue="SOURCE_CODE" name="type">
               {DELIVERABLE_TYPE_OPTIONS.map((value) => (
                 <option key={value} value={value}>
-                  {deliverableTypeLabel(value)}
+                  {deliverableTypeLabel(t, value)}
                 </option>
               ))}
             </select>
@@ -168,6 +170,7 @@ export function TaxonomySection({
 }) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const { t } = usePreferences();
   const { technologies, tags, assignment } = specification;
 
   async function run(key: string, action: () => Promise<unknown>) {
@@ -213,7 +216,7 @@ export function TaxonomySection({
                     <span className="text-[var(--color-ink-subtle)]"> {technology.version}</span>
                   ) : null}
                   <span className="block text-xs text-[var(--color-ink-subtle)]">
-                    {technologyCategoryLabel(technology.category)}
+                    {technologyCategoryLabel(t, technology.category)}
                   </span>
                 </span>
                 <button
@@ -266,7 +269,7 @@ export function TaxonomySection({
                 <select defaultValue="LANGUAGE" name="category">
                   {TECHNOLOGY_CATEGORY_OPTIONS.map((value) => (
                     <option key={value} value={value}>
-                      {technologyCategoryLabel(value)}
+                      {technologyCategoryLabel(t, value)}
                     </option>
                   ))}
                 </select>
