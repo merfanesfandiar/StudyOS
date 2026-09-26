@@ -41,10 +41,10 @@ from app.models.enums import (
     GuidanceLevel,
     ModelTier,
     NotificationType,
-    PlanStatus,
-    PlanTrigger,
     PlanningRunStatus,
     PlanningStyle,
+    PlanStatus,
+    PlanTrigger,
     QuestionStatus,
     RequirementPriority,
     RequirementStatus,
@@ -865,7 +865,9 @@ class AcademicWorkPlan(TimestampMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     #: Why this version exists. Shown to the student so a regeneration is legible
     #: rather than surprising.
-    reason: Mapped[str] = mapped_column(String(200), nullable=False, default=PlanTrigger.GENERATED.value)
+    reason: Mapped[str] = mapped_column(
+        String(200), nullable=False, default=PlanTrigger.GENERATED.value
+    )
     trigger: Mapped[str] = mapped_column(
         String(20), nullable=False, default=PlanTrigger.GENERATED.value
     )
@@ -1009,9 +1011,7 @@ class PlanTaskRequirement(Base):
 
     __tablename__ = "plan_task_requirements"
     __table_args__ = (
-        UniqueConstraint(
-            "task_id", "requirement_key", name="uq_plan_task_requirement"
-        ),
+        UniqueConstraint("task_id", "requirement_key", name="uq_plan_task_requirement"),
         Index("ix_plan_task_requirements_plan_id", "plan_id"),
         Index("ix_plan_task_requirements_task_id", "task_id"),
         Index("ix_plan_task_requirements_key", "plan_id", "requirement_key"),
@@ -1075,9 +1075,7 @@ class PlanTaskDependency(Base):
 
     __tablename__ = "plan_task_dependencies"
     __table_args__ = (
-        UniqueConstraint(
-            "predecessor_id", "successor_id", name="uq_plan_task_dependency"
-        ),
+        UniqueConstraint("predecessor_id", "successor_id", name="uq_plan_task_dependency"),
         Index("ix_plan_task_dependencies_plan_id", "plan_id"),
         Index("ix_plan_task_dependencies_predecessor", "predecessor_id"),
         Index("ix_plan_task_dependencies_successor", "successor_id"),
