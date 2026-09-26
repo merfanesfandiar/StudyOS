@@ -43,11 +43,12 @@ const STATUS_STYLES: Record<AssignmentStatus, string> = {
 
 export function StatusBadge({ status }: { status: AssignmentStatus }) {
   const styles = STATUS_STYLES;
+  const { t } = usePreferences();
   return (
     <span
       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles[status]}`}
     >
-      {statusLabel(status)}
+      {statusLabel(t, status)}
     </span>
   );
 }

@@ -7,7 +7,11 @@ import {
   toLocalDateTime,
   toUtcDateTime,
 } from "@/lib/format";
+import { translate } from "@/lib/i18n/translate";
 import type { AssignmentStatus } from "@/lib/types";
+
+const enTranslate = (key: Parameters<typeof translate>[1], vars?: Parameters<typeof translate>[2]) =>
+  translate("en", key, vars);
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -48,7 +52,14 @@ describe("statusLabel", () => {
   ];
 
   it.each(cases)("turns %s into %s", (status, expected) => {
-    expect(statusLabel(status)).toBe(expected);
+    // `statusLabel` takes the reader's translator rather than returning a fixed
+    // English string, so the label is resolved through the real catalogue here
+    // rather than against a table that could drift from it.
+    expect(statusLabel(enTranslate, status)).toBe(expected);
+  });
+
+  it("falls back to the raw enum member for a value with no label", () => {
+    expect(statusLabel(enTranslate, "NOT_A_STATUS" as AssignmentStatus)).toBe("NOT_A_STATUS");
   });
 });
 

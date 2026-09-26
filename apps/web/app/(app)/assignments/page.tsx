@@ -3,32 +3,38 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AssignmentCard } from "@/components/assignment-card";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { statusLabel } from "@/lib/format";
+import type { MessageKey } from "@/lib/i18n/messages";
 import type { AssignmentFilters, AssignmentListItem, AssignmentStatus, Page } from "@/lib/types";
+import { useDocumentTitle } from "@/lib/use-document-title";
 
-const STATUS_FILTERS: Array<{ label: string; value: "ALL" | AssignmentStatus }> = [
-  { label: "All", value: "ALL" },
-  { label: "Draft", value: "DRAFT" },
-  { label: "Incomplete", value: "INCOMPLETE" },
-  { label: "Ready", value: "READY_FOR_ANALYSIS" },
-  { label: "Analyzed", value: "ANALYZED" },
-  { label: "Completed", value: "COMPLETED" },
-  { label: "Archived", value: "ARCHIVED" },
+// The label is a message key rather than a string, so a filter reads in the
+// user's language. The value stays the API's enum: translating the wire format
+// would make the request disagree with the server's contract.
+const STATUS_FILTERS: Array<{ label: MessageKey; value: "ALL" | AssignmentStatus }> = [
+  { label: "filters.all", value: "ALL" },
+  { label: "status.draft", value: "DRAFT" },
+  { label: "filters.incomplete", value: "INCOMPLETE" },
+  { label: "filters.ready", value: "READY_FOR_ANALYSIS" },
+  { label: "filters.analyzed", value: "ANALYZED" },
+  { label: "status.completed", value: "COMPLETED" },
+  { label: "status.archived", value: "ARCHIVED" },
 ];
 
-const READINESS_FILTERS: Array<{ label: string; value: "ANY" | "READY" | "NOT_READY" }> = [
-  { label: "Any readiness", value: "ANY" },
-  { label: "Ready for analysis", value: "READY" },
-  { label: "Not ready", value: "NOT_READY" },
+const READINESS_FILTERS: Array<{ label: MessageKey; value: "ANY" | "READY" | "NOT_READY" }> = [
+  { label: "filters.anyReadiness", value: "ANY" },
+  { label: "status.ready_for_analysis", value: "READY" },
+  { label: "filters.notReady", value: "NOT_READY" },
 ];
 
-const SORTS: Array<{ label: string; value: NonNullable<AssignmentFilters["sort_by"]> }> = [
-  { label: "Deadline", value: "deadline" },
-  { label: "Title", value: "title" },
-  { label: "Readiness", value: "readiness_score" },
-  { label: "Recently updated", value: "updated_at" },
+const SORTS: Array<{ label: MessageKey; value: NonNullable<AssignmentFilters["sort_by"]> }> = [
+  { label: "common.deadline", value: "deadline" },
+  { label: "common.title", value: "title" },
+  { label: "readiness.title", value: "readiness_score" },
+  { label: "dashboard.recentlyUpdated", value: "updated_at" },
 ];
 
 const PAGE_SIZE = 12;
@@ -47,6 +53,9 @@ export default function AssignmentsPage() {
   const [sortBy, setSortBy] = useState<NonNullable<AssignmentFilters["sort_by"]>>("deadline");
   const [search, setSearch] = useState("");
   const [pageNumber, setPageNumber] = useState(1);
+  const { t, count } = usePreferences();
+
+  useDocumentTitle(t("nav.assignments"));
 
   const key = JSON.stringify([status, readiness, sortBy, search, pageNumber]);
 
@@ -72,7 +81,10 @@ export default function AssignmentsPage() {
             key,
             items: [],
             page: { page: 1, page_size: PAGE_SIZE, total: 0, pages: 0 },
-            error: caught instanceof ApiError ? caught.message : "Could not load assignments.",
+            // Kept as the caught value, translated at render: putting `t` in here
+            // would re-run the fetch whenever the locale changed.
+            error:
+              caught instanceof ApiError ? caught.message : t("assignments.loadFailed"),
           });
         });
     }, 200);
@@ -81,6 +93,9 @@ export default function AssignmentsPage() {
       active = false;
       clearTimeout(timer);
     };
+    // `t` is intentionally absent. It is stable for a given locale, and depending
+    // on it would refetch the list on a theme or language change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, pageNumber, readiness, search, sortBy, status]);
 
   const loading = state?.key !== key;
@@ -97,11 +112,11 @@ export default function AssignmentsPage() {
       <PageHeader
         action={
           <Link className="btn-primary" href="/assignments/new">
-            New assignment
+            {t("assignments.new")}
           </Link>
         }
-        description="Turn each course brief into a structured, executable assignment plan."
-        title="Assignments"
+        description={t("assignments.description")}
+        title={t("nav.assignments")}
       />
       {error ? (
         <div className="mb-6">
@@ -110,7 +125,7 @@ export default function AssignmentsPage() {
       ) : null}
 
       <div className="card mb-6 space-y-4 p-4">
-        <div aria-label="Filter assignments" className="flex flex-wrap gap-2">
+        <div aria-label={t("assignments.filterLabel")} className="flex flex-wrap gap-2">
           {STATUS_FILTERS.map((item) => (
             <button
               className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
@@ -125,25 +140,25 @@ export default function AssignmentsPage() {
               }}
               type="button"
             >
-              {item.label}
+              {t(item.label)}
             </button>
           ))}
         </div>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
           <label className="field sm:max-w-xs sm:flex-1">
-            <span className="sr-only">Search assignments</span>
+            <span className="sr-only">{t("assignments.search")}</span>
             <input
               onChange={(event) => {
                 setSearch(event.target.value);
                 resetPaging();
               }}
-              placeholder="Search title, brief, or course"
+              placeholder={t("assignments.searchPlaceholder")}
               type="search"
               value={search}
             />
           </label>
           <label className="field sm:max-w-[12rem]">
-            <span className="sr-only">Filter by readiness</span>
+            <span className="sr-only">{t("assignments.filterByReadiness")}</span>
             <select
               onChange={(event) => {
                 setReadiness(event.target.value as typeof readiness);
@@ -153,13 +168,13 @@ export default function AssignmentsPage() {
             >
               {READINESS_FILTERS.map((item) => (
                 <option key={item.value} value={item.value}>
-                  {item.label}
+                  {t(item.label)}
                 </option>
               ))}
             </select>
           </label>
           <label className="field sm:max-w-[12rem]">
-            <span className="sr-only">Sort assignments</span>
+            <span className="sr-only">{t("assignments.sort")}</span>
             <select
               onChange={(event) => {
                 setSortBy(event.target.value as typeof sortBy);
@@ -169,7 +184,7 @@ export default function AssignmentsPage() {
             >
               {SORTS.map((item) => (
                 <option key={item.value} value={item.value}>
-                  Sort: {item.label}
+                  {t("assignments.sortPrefix", { label: t(item.label) })}
                 </option>
               ))}
             </select>
@@ -177,7 +192,7 @@ export default function AssignmentsPage() {
         </div>
       </div>
 
-      {loading ? <LoadingState label="Loading assignments" /> : null}
+      {loading ? <LoadingState /> : null}
 
       {!loading && assignments.length ? (
         <>
@@ -188,7 +203,7 @@ export default function AssignmentsPage() {
           </div>
           {pager && pager.pages > 1 ? (
             <nav
-              aria-label="Assignment pages"
+              aria-label={t("assignments.pagesLabel")}
               className="mt-8 flex items-center justify-between text-sm"
             >
               <button
@@ -197,10 +212,11 @@ export default function AssignmentsPage() {
                 onClick={() => setPageNumber((value) => Math.max(1, value - 1))}
                 type="button"
               >
-                Previous
+                {t("common.previous")}
               </button>
               <span className="text-[var(--color-ink-subtle)]">
-                Page {pager.page} of {pager.pages} · {pager.total} assignments
+                {t("assignments.pageOf", { page: pager.page, pages: pager.pages })} ·{" "}
+                {count("assignments.total", pager.total)}
               </span>
               <button
                 className="btn-secondary"
@@ -208,7 +224,7 @@ export default function AssignmentsPage() {
                 onClick={() => setPageNumber((value) => value + 1)}
                 type="button"
               >
-                Next
+                {t("common.next")}
               </button>
             </nav>
           ) : null}
@@ -219,15 +235,20 @@ export default function AssignmentsPage() {
         <EmptyState
           action={
             <Link className="btn-primary" href="/assignments/new">
-              Create an assignment
+              {t("assignments.create")}
             </Link>
           }
           description={
             status === "ALL" && !search
-              ? "Create an assignment from one of your courses."
-              : `No assignments match ${status === "ALL" ? "this search" : statusLabel(status)}.`
+              ? t("assignments.emptyBody")
+              : t("assignments.noMatch", {
+                  filter:
+                    status === "ALL"
+                      ? t("assignments.thisSearch")
+                      : statusLabel(t, status),
+                })
           }
-          title={status === "ALL" && !search ? "No assignments yet" : "No matching assignments"}
+          title={status === "ALL" && !search ? t("assignments.empty") : t("assignments.noMatchTitle")}
         />
       ) : null}
     </div>

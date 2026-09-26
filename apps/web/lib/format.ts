@@ -18,6 +18,8 @@ import type {
   SourceKind,
   TechnologyCategory,
 } from "./types";
+import type { MessageKey } from "./i18n/messages";
+import type { Translate } from "./i18n/translate";
 
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "No deadline";
@@ -38,19 +40,33 @@ export function formatDateOnly(value: string | null | undefined): string {
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value));
 }
 
-const STATUS_LABELS: Record<AssignmentStatus, string> = {
-  DRAFT: "Draft",
-  INCOMPLETE: "Incomplete",
-  READY_FOR_ANALYSIS: "Ready for analysis",
-  ANALYSIS_IN_PROGRESS: "Analysis in progress",
-  ANALYZED: "Analyzed",
-  COMPLETED: "Completed",
-  ARCHIVED: "Archived",
-  ACTIVE: "Active",
+/**
+ * A status value to the key that labels it, rather than to a display string.
+ *
+ * The display strings used to live here, which meant every caller got English
+ * regardless of the reader's language and this module had to be told which
+ * locale to use. Returning the key instead lets the caller's translator resolve
+ * it, and keeps one mapping of enum to label.
+ */
+const STATUS_KEYS: Record<AssignmentStatus, MessageKey> = {
+  DRAFT: "status.draft",
+  INCOMPLETE: "filters.incomplete",
+  READY_FOR_ANALYSIS: "status.ready_for_analysis",
+  ANALYSIS_IN_PROGRESS: "status.analysisInProgress",
+  ANALYZED: "filters.analyzed",
+  COMPLETED: "status.completed",
+  ARCHIVED: "status.archived",
+  ACTIVE: "status.active",
 };
 
-export function statusLabel(status: AssignmentStatus): string {
-  return STATUS_LABELS[status] ?? status;
+export function statusKey(status: AssignmentStatus): MessageKey {
+  return STATUS_KEYS[status] ?? ("status.unknown" as MessageKey);
+}
+
+/** Translate a status, falling back to the raw value for an unknown enum member. */
+export function statusLabel(t: Translate, status: AssignmentStatus): string {
+  const key = STATUS_KEYS[status];
+  return key ? t(key) : status;
 }
 
 /** Only these states may be set from the UI; the rest need the readiness gate. */

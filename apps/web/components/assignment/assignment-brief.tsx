@@ -6,11 +6,13 @@ import {
   CLIENT_SETTABLE_STATUSES,
   formatDate,
   formatWeight,
+  statusKey,
   statusLabel,
   toLocalDateTime,
   toUtcDateTime,
 } from "@/lib/format";
 import type { AssignmentSpecification, ClientSettableStatus, Course } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, SubmitButton } from "@/components/ui";
 
 /**
@@ -32,6 +34,7 @@ export function AssignmentBrief({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const { t } = usePreferences();
   const { assignment, description, criteria_total: criteriaTotal } = specification;
   const locked = assignment.status !== "DRAFT" && assignment.status !== "INCOMPLETE";
 
@@ -121,7 +124,7 @@ export function AssignmentBrief({
             <select defaultValue={assignment.status} name="status">
               {CLIENT_SETTABLE_STATUSES.map((status) => (
                 <option key={status} value={status}>
-                  {statusLabel(status)}
+                  {statusLabel(t, status)}
                 </option>
               ))}
             </select>
@@ -171,8 +174,7 @@ export function AssignmentBrief({
 
       {locked && !editing ? (
         <p className="mt-4 text-xs text-[var(--color-ink-subtle)]">
-          This assignment is {statusLabel(assignment.status).toLowerCase()}. Edits are still allowed,
-          but anything that breaks a blocking check sends it back to incomplete.
+          {t("brief.lockedNote", { status: t(statusKey(assignment.status)) })}
         </p>
       ) : null}
     </section>

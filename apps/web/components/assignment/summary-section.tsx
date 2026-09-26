@@ -2,6 +2,7 @@
 
 import { formatDate, formatWeight, humanize, statusLabel } from "@/lib/format";
 import type { AssignmentSpecification } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { StatusBadge } from "@/components/ui";
 
 /**
@@ -9,6 +10,7 @@ import { StatusBadge } from "@/components/ui";
  * the numbers here cannot drift from the readiness gate.
  */
 export function SummarySection({ specification }: { specification: AssignmentSpecification }) {
+  const { t } = usePreferences();
   const { summary, assignment, updated_at: updatedAt, specification_version: version } =
     specification;
   const requirementsByStatus = Object.entries(summary.requirements_by_status).filter(
@@ -33,7 +35,7 @@ export function SummarySection({ specification }: { specification: AssignmentSpe
         </Fact>
         <Fact label="Deadline">{formatDate(assignment.deadline)}</Fact>
         <Fact label="Readiness">
-          {summary.readiness_score}% · {statusLabel(summary.readiness)}
+          {summary.readiness_score}% · {statusLabel(t, summary.readiness)}
         </Fact>
         <Fact label="Requirements">
           {summary.requirements_total} total · {summary.requirements_required} required ·{" "}

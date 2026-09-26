@@ -22,6 +22,8 @@ function interpolate(template: string, vars?: TranslateVars): string {
  * a user is worse than showing English text in a Persian page, and it is
  * trivially greppable; that is a better failure mode than a blank button.
  */
+export type Translate = (key: MessageKey, vars?: TranslateVars) => string;
+
 export function translate(
   locale: Locale,
   key: MessageKey,

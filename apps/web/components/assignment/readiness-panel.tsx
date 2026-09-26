@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ApiError, api } from "@/lib/api";
 import { CHECK_LABELS, humanize, statusLabel } from "@/lib/format";
 import type { AssignmentSpecification } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, CheckDot, ReadinessMeter, StatusBadge } from "@/components/ui";
 
 function failureMessage(specification: AssignmentSpecification, field: string): string {
@@ -27,6 +28,7 @@ export function ReadinessPanel({
   const [pending, setPending] = useState<"ready" | "incomplete" | "validate" | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState<{ text: string; status: string } | null>(null);
+  const { t } = usePreferences();
   const { readiness, assignment, summary } = specification;
   const canMarkReady = readiness.is_ready_for_analysis;
   const isReady = assignment.status === "READY_FOR_ANALYSIS";
@@ -174,7 +176,7 @@ export function ReadinessPanel({
           {summary.criteria_balanced ? "weights total 100%" : "weights do not total 100%"}
         </span>
       </div>
-      <p className="sr-only">{statusLabel(assignment.status)}</p>
+      <p className="sr-only">{statusLabel(t, assignment.status)}</p>
     </section>
   );
 }
