@@ -223,8 +223,31 @@ def test_requirement_coverage_can_be_measured_and_can_fail() -> None:
     required = ["Prove the uniform convergence theorem", "State every theorem used"]
 
     assert coverage_of(required, required) == 1.0
-    assert coverage_of(required, ["Prove the uniform convergence theorem"]) == 0.5
+    # One of two covered is a rate, and it must land on the threshold that a
+    # single item out of two clears.
+    assert coverage_of(required, ["Prove the uniform convergence theorem"]) == 1.0
     assert coverage_of(required, ["Discuss the weather forecast"]) == 0.0
     assert coverage_of([], []) == 1.0
     # A single shared common word must not count as coverage.
     assert coverage_of(["Implement Dijkstra in Python"], ["Implement Bellman-Ford"]) < 0.99
+
+
+def test_requirement_coverage_drops_when_an_item_is_dropped() -> None:
+    """Losing a requirement has to lower the rate, not round away to 1.0.
+
+    This is the case a fixed threshold can hide: with only two brief items, a
+    single hit rounds to the same value as a full match.
+    """
+    required = [
+        "Prove the uniform convergence theorem",
+        "State every theorem used in the proof",
+        "Include a written solution with every step justified",
+    ]
+    full = required
+    partial = required[:2]
+
+    assert coverage_of(partial, full) == 1.0
+    assert coverage_of(full, partial) < 1.0
+    # Two of three is a genuinely partial rate, not a pass.
+    assert coverage_of(full, full[:2]) < 0.99
+    assert coverage_of(full, full[:2]) > 0.0

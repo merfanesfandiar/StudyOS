@@ -80,6 +80,12 @@ def _tokens(text: str) -> set[str]:
     }
 
 
+#: Fraction of a brief item's content words an analyzer statement must carry for
+#: that item to count as covered. Low enough to accept paraphrase, high enough
+#: that one shared content word is still not coverage.
+COVERAGE_OVERLAP = 0.4
+
+
 def coverage_of(required: list[str], produced: list[str]) -> float:
     """Fraction of ``required`` items that ``produced`` substantively covers.
 
@@ -96,8 +102,14 @@ def coverage_of(required: list[str], produced: list[str]) -> float:
         wanted = _tokens(item)
         if not wanted:
             continue
-        # Substantial overlap, not a single shared common word.
-        if len(wanted & produced_tokens) / len(wanted) >= 0.6:
+        # Substantial overlap, not a single shared common word. The threshold is
+        # 0.4 rather than something higher because a real model paraphrases: the
+        # brief's "Prove Theorem 4.2 using the definition of uniform convergence"
+        # legitimately comes back as "Justify the argument directly from the
+        # definition of uniform convergence", which shares three content words
+        # out of seven. Requiring more overlap would score correct paraphrases
+        # as missing requirements, which is the failure mode that matters.
+        if len(wanted & produced_tokens) / len(wanted) >= COVERAGE_OVERLAP:
             hits += 1
     return round(hits / len(required), 4)
 

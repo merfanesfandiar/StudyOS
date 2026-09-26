@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
 
     summary, problems = asyncio.run(build_report())
 
-    print("Golden analysis evaluation (mock provider, no network)")
+    print("Golden analysis evaluation (recorded transcripts, no network)")
     print(json.dumps(summary, indent=2, sort_keys=True))
     if problems:
         print("\nFAILED:", file=sys.stderr)

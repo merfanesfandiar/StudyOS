@@ -29,7 +29,11 @@ All settings are in `app/core/config.py` and read from `.env`:
 
 ### Mock provider (CI default)
 
-When `LLM_PROVIDER=mock`, the full pipeline (parse → validate → persist) runs using the deterministic heuristics engine (`MockLLMProvider`). The mock provider runs without an API key and produces structured output that passes validation. The 12 golden dataset fixtures in `tests/test_golden_analysis.py` verify that all fixtures pass with `classification_accuracy 1.0`, `evidence_grounding 1.0`, `hallucination_rate 0.0`.
+When `LLM_PROVIDER=mock`, the full pipeline (parse → validate → persist) runs using the deterministic heuristics engine (`MockLLMProvider`). The mock provider runs without an API key and produces structured output that passes validation.
+
+The golden evaluation gate does **not** use the mock provider. `python -m app.ai.evaluation.report` replays twelve hand-written transcripts through `RecordedTranscriptProvider`, so the gate scores the pipeline against output the heuristic engine did not produce. `tests/test_evaluation_independence.py` asserts that separation by parsing the evaluation modules' AST and by checking every recorded transcript parses, validates and stays grounded. All 12 fixtures pass with `classification_accuracy 1.0`, `evidence_grounding 1.0`, `hallucination_rate 0.0`, and all 36 planted defects are caught.
+
+The one thing this does not measure is how a real model answers the analyzer prompt; that needs an API key and is deliberately not in CI.
 
 ### OpenAI provider (live LLM)
 
@@ -56,9 +60,10 @@ The Phase 3 migrations create 4 tables (`assignment_analyses`, `analysis_runs`,
 Commands that must stay green. From `apps/api`:
 
 ```bash
-python -m pytest -q                       # 135 passed
+python -m pytest -q                       # 146 passed
 python -m ruff check app tests alembic    # clean
-python -m mypy app                        # 95 source files
+python -m ruff format --check app tests   # 115 files already formatted
+python -m mypy app                        # 97 source files
 python -m app.ai.evaluation.report        # golden gate, exit 0
 ```
 

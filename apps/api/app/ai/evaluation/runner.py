@@ -1,13 +1,20 @@
-"""Run the analyzer over the golden dataset and produce a structural report.
+"""Run the analyzer pipeline over the golden dataset using recorded transcripts.
 
 The report answers two questions separately:
 
-* Did the analyzer do its job on each fixture? (quality rates)
+* Did the pipeline do its job on each fixture? (quality rates)
 * Would the report notice if it had not? (mutation detection)
 
 The second question is the point. A suite that reports 1.0 on everything tells you
 nothing unless it can also fail, so every fixture's output is corrupted in ways a
 real system could ship and the checks must reject each one.
+
+The answers being scored are **recorded**, not computed. ``RecordedTranscriptProvider``
+replays hand-written model-style outputs from ``app.ai.evaluation.transcripts``, so
+the thing under test is the pipeline (parsing, schema and semantic validation,
+coverage, grounding) rather than the heuristic engine that used to generate the very
+words being graded. This still does not measure how a real model would answer; that
+needs credentials and is deliberately not in CI.
 """
 
 from __future__ import annotations
@@ -23,11 +30,11 @@ from app.ai.evaluation.metrics import (
     tally_grounding,
 )
 from app.ai.evaluation.metrics_types import MutationResult
+from app.ai.evaluation.provider import RecordedTranscriptProvider
 from app.ai.golden import GoldenFixture, golden_fixtures
 from app.ai.parsing import parse_analyzer_output
 from app.ai.prompts import PROMPT_VERSION, analyzer_response_schema, build_analyzer_messages
 from app.ai.provider import LLMRequest
-from app.ai.providers.mock import MockLLMProvider
 from app.ai.validation import ValidationContext, validate_analysis
 from app.models.enums import EvidenceSourceType
 from app.schemas.analysis import AnalyzerOutput
@@ -87,13 +94,20 @@ def _brief_deliverables(payload: dict[str, Any]) -> list[str]:
 
 
 async def _analyze(fixture: GoldenFixture) -> AnalyzerOutput:
-    provider = MockLLMProvider()
+    # Recorded transcripts, not MockLLMProvider. The mock provider runs the
+    # heuristic engine, so using it here meant the golden dataset scored the
+    # engine against metrics derived from the engine.
+    provider = RecordedTranscriptProvider()
     response = await provider.complete(
         LLMRequest(
             messages=build_analyzer_messages(fixture.payload, include_questions=True),
             response_schema=analyzer_response_schema(),
             prompt_version=PROMPT_VERSION,
-            metadata={"analyzer_input": fixture.payload, "include_questions": True},
+            metadata={
+                "analyzer_input": fixture.payload,
+                "include_questions": True,
+                "fixture_name": fixture.name,
+            },
         )
     )
     output = parse_analyzer_output(response.content)

@@ -4,10 +4,11 @@
 
 Implemented the LLM-backed, domain-agnostic `AssignmentAnalysis` pipeline (classification → analysis → human review) producing structured, validated, reviewable analysis for all academic assignment types.
 
-Every gate passes against the numbers recorded at the end of this report: 135 API
+Every gate passes against the numbers recorded at the end of this report: 146 API
 tests, 70 web unit tests, 6 end-to-end tests, ruff, mypy, tsc, eslint, a clean
 production build, a clean `0001 -> 0004` migration cycle, and a golden evaluation
-gate that catches 36 of 36 planted defects. All work is uncommitted.
+gate that catches 36 of 36 planted defects against recorded transcripts whose
+provenance is independent of the code under test.
 
 The end-to-end run was worth more than the unit tests here: it found two defects
 that every unit test had passed over, described in *Quality gate verification*
@@ -48,6 +49,8 @@ below.
 - `apps/api/app/ai/specialized/registry.py` — Analyzer registry.
 - `apps/api/app/ai/golden/dataset.py` — 12 golden dataset fixtures.
 - `apps/api/app/ai/evaluation/metrics.py` — Evaluation metrics.
+- `apps/api/app/ai/evaluation/transcripts.py` — Twelve hand-written recorded transcripts.
+- `apps/api/app/ai/evaluation/provider.py` — `RecordedTranscriptProvider`, replays transcripts with no engine fallback.
 - `apps/api/app/ai/evaluation/runner.py` — Evaluation runner.
 
 ### Backend — Application layer
@@ -189,15 +192,16 @@ No microservices. No LangGraph. AI providers are in infrastructure; orchestratio
 
 ## Quality gate verification
 
-All gates were run locally against SQLite with the mock provider. No LLM
-credentials and no network were used.
+All gates were run locally against SQLite. The golden gate replays recorded
+transcripts, and the application pipeline in CI runs on the mock provider. No
+LLM credentials and no network were used.
 
 | Gate | Command | Result |
 |------|---------|--------|
-| API tests | `python -m pytest -q` | **135 passed** |
+| API tests | `python -m pytest -q` | **146 passed** |
 | Lint | `python -m ruff check app tests alembic` | **All checks passed** |
-| Format | `python -m ruff format --check app tests` | **9 pre-existing files unformatted, untouched here** |
-| Types | `python -m mypy app` | **Success, no issues in 95 source files** |
+| Format | `python -m ruff format --check app tests` | **115 files already formatted** |
+| Types | `python -m mypy app` | **Success, no issues in 97 source files** |
 | Golden gate | `python -m app.ai.evaluation.report` | **12/12 fixtures, 36/36 mutations, exit 0** |
 | Migrations | `alembic downgrade base && alembic upgrade head` | **0001 -> 0004 clean** |
 | Web types | `npx tsc --noEmit` | **Clean** |
@@ -245,12 +249,17 @@ These are the real remaining gaps. Everything not listed here is covered by a te
    all pinned. What is *not* verified is how a real model answers the analyzer prompt: prompt
    quality against a live endpoint is unmeasured, and `LLM_PROVIDER=openai` has never been run.
 
-2. **The golden dataset is scored against the heuristic engine.** `MockLLMProvider` calls
-   `heuristics.analyze()`, so the golden fixtures measure the *pipeline* (parsing, validation,
-   grounding, coverage), not model quality. This is stated rather than hidden: the evaluation is
-   gated on detecting deliberately planted defects, and the metrics were rewritten specifically
-   because the previous ones could not fail. A live-model quality harness needs provider
-   credentials and is deliberately not in CI.
+2. **The golden dataset measures the pipeline, not model quality.** The evaluation replays
+   twelve recorded transcripts (`app/ai/evaluation/transcripts.py`) through
+   `RecordedTranscriptProvider` rather than asking `MockLLMProvider`, which runs
+   `heuristics.analyze()`. That removes the circularity: the thing being measured and the thing
+   doing the measuring are no longer the same code, so a metric tuned against the engine cannot
+   score 1.0 by construction. What the gate now proves is that parsing, schema validation,
+   semantic validation, coverage, grounding and defect detection work on output the engine did
+   not write. It still says nothing about how a real model answers the analyzer prompt, which
+   needs credentials and is deliberately not in CI. `tests/test_evaluation_independence.py`
+   asserts the separation by parsing the evaluation modules' AST, so the two cannot drift back
+   together without a test failing.
 
 3. **Image resources are not read.** PDF, DOCX, PPTX, XLSX, CSV, TXT and MD are extracted for
    real. PNG/JPG/JPEG are stored, listed and reach the analyzer as metadata, but no text is read
@@ -266,10 +275,14 @@ These are the real remaining gaps. Everything not listed here is covered by a te
    precisely so it runs unchanged on both engines, but the Postgres run itself
    happens in CI, not locally.
 
-7. **Nine files in the repository are not `ruff format` clean.** They predate
-   this work and are not in the diff, so they were deliberately left alone
-   rather than mixed into a Phase 3 change. `ruff format --check` therefore
-   reports them. Formatting them is a mechanical, separate commit.
+7. **Evaluation threshold is lexical, not semantic.** `requirement_coverage` and
+   `deliverable_recall` compare content-word overlap at `COVERAGE_OVERLAP = 0.4` rather than
+   reading meaning, so a correct answer phrased in entirely different words can still be scored
+   as missing. The threshold is set where it is because a real model paraphrases: the brief's
+   "Prove Theorem 4.2 using the definition of uniform convergence" legitimately returns as
+   "Justify the argument directly from the definition of uniform convergence". The known failure
+   mode is a false negative, not a false pass. Closing it needs an embedding or model-based
+   comparison, which is out of scope for an offline gate.
 
 ---
 
