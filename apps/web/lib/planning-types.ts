@@ -37,44 +37,59 @@ export type EffortLevel =
   | "UNKNOWN";
 
 export type AcademicTaskType =
-  | "READING"
-  | "WRITING"
-  | "ANALYSIS"
-  | "IMPLEMENTATION"
+  | "READ"
+  | "RESEARCH"
+  | "UNDERSTAND"
+  | "ANALYZE"
+  | "SOLVE"
+  | "PROVE"
+  | "WRITE"
+  | "IMPLEMENT"
   | "EXPERIMENT"
-  | "STUDY"
-  | "PRACTICE"
+  | "COLLECT_DATA"
+  | "ANALYZE_DATA"
+  | "DESIGN"
   | "REVIEW"
+  | "REVISE"
+  | "PRACTICE"
+  | "PRESENT"
+  | "VERIFY"
+  | "SUBMIT"
   | "OTHER";
 
-export type AcademicTaskStatus =
-  | "PENDING"
-  | "IN_PROGRESS"
-  | "BLOCKED"
-  | "IN_REVIEW"
-  | "DONE"
-  | "SKIPPED";
+export type AcademicTaskStatus = "PENDING" | "IN_PROGRESS" | "BLOCKED" | "COMPLETED" | "SKIPPED";
 
 export type AcademicTaskPriority = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
-export type PlanStatus = "DRAFT" | "IN_REVIEW" | "APPROVED" | "ARCHIVED";
+export type PlanStatus =
+  | "DRAFT"
+  | "GENERATING"
+  | "READY_FOR_REVIEW"
+  | "APPROVED"
+  | "IN_PROGRESS"
+  | "COMPLETED"
+  | "ARCHIVED"
+  | "STALE";
 
 export type PlanTrigger = "GENERATED" | "REGENERATED" | "EDITED" | "APPROVED";
 
 export type PlanningRunStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 
-export type ModelTier = "FAST" | "BALANCED" | "DEEP";
+/**
+ * Which of the two configured models a request was routed to.
+ *
+ * Named by capability, never by provider: the product must not leak vendor or
+ * model names into the domain layer or the default interface. `EFFICIENT` and
+ * `ADVANCED` are also not quality judgements about the work -- they are the two
+ * endpoints the operator configured, and the router picks between them.
+ */
+export type ModelTier = "EFFICIENT" | "ADVANCED";
 
-export type AIMode = "AUTO" | "FAST" | "THOROUGH" | "OFF";
+export type AIMode = "AUTO" | "FAST" | "BALANCED" | "DEEP";
 
-export type PlanningStyle =
-  | "BALANCED"
-  | "DEEP_DIVE"
-  | "PRACTICE_FOCUSED"
-  | "FAST_TRACK"
-  | "THESIS_LIKE";
+export type PlanningStyle = "MINIMAL" | "BALANCED" | "DETAILED";
 
-export type GuidanceLevel = "MINIMAL" | "MODERATE" | "DETAILED";
+export type GuidanceLevel = "LOW" | "MEDIUM" | "HIGH";
 
 export type SessionLength = "SHORT" | "MEDIUM" | "LONG";
 
@@ -180,6 +195,17 @@ export interface WorkPlan {
   schedule_risk: ScheduleRisk | null;
   progress_percentage: number;
   validation_warnings: string[];
+  /**
+   * True when the deterministic planning engine produced this version because
+   * the model was unreachable or its proposal did not validate.
+   *
+   * A first-class field rather than something inferred from the wording of
+   * `validation_warnings`: matching on English prose means the notice silently
+   * disappears the first time the server rewords the sentence.
+   */
+  used_fallback: boolean;
+  /** One string per failed check, so the client can say *why* in its own words. */
+  rejection_reasons: string[];
 }
 
 /** A plan without its tasks, for list views. */

@@ -119,8 +119,10 @@ export const en = {
   "plan.overview": "Overview",
   "plan.duration": "Duration",
   "plan.totalHours": "Total hours",
-  "plan.taskCount": "{count} tasks",
-  "plan.milestoneCount": "{count} milestones",
+  "plan.taskCount.one": "{count} task",
+  "plan.taskCount.other": "{count} tasks",
+  "plan.milestoneCount.one": "{count} milestone",
+  "plan.milestoneCount.other": "{count} milestones",
   "plan.estimate": "Estimate",
   "plan.rationale": "Why this plan",
   "plan.changedSections": "What changed",
@@ -176,6 +178,96 @@ export const en = {
   "status.graded": "Graded",
   "status.completed": "Completed",
   "status.cancelled": "Cancelled",
+
+  // -- status vocabulary ----------------------------------------------------
+  //
+  // One label per value the API can send, addressed as `status.<group>.<value>`.
+  // Deriving the key from the value means a new enum member with no label shows
+  // up as a missing key in the i18n test rather than as a raw `READY_FOR_REVIEW`
+  // in the interface.
+
+  "status.task.pending": "Not started",
+  "status.task.in_progress": "In progress",
+  "status.task.blocked": "Blocked",
+  "status.task.completed": "Completed",
+  "status.task.skipped": "Skipped",
+
+  "status.plan.draft": "Draft",
+  "status.plan.generating": "Generating",
+  "status.plan.ready_for_review": "Ready for review",
+  "status.plan.approved": "Approved",
+  "status.plan.in_progress": "In progress",
+  "status.plan.completed": "Completed",
+  "status.plan.archived": "Archived",
+  "status.plan.stale": "Out of date",
+
+  "status.effort.very_low": "Very light",
+  "status.effort.low": "Light",
+  "status.effort.medium": "Moderate",
+  "status.effort.high": "Substantial",
+  "status.effort.very_high": "Heavy",
+  "status.effort.unknown": "Not estimated",
+
+  "status.complexity.low": "Low",
+  "status.complexity.medium": "Medium",
+  "status.complexity.high": "High",
+  "status.complexity.very_high": "Very high",
+
+  "status.priority.low": "Low priority",
+  "status.priority.medium": "Medium priority",
+  "status.priority.high": "High priority",
+  "status.priority.critical": "Critical",
+
+  "status.tier.efficient": "Standard model",
+  "status.tier.advanced": "Advanced model",
+
+  "status.type.read": "Read",
+  "status.type.research": "Research",
+  "status.type.understand": "Understand",
+  "status.type.analyze": "Analyse",
+  "status.type.solve": "Solve",
+  "status.type.prove": "Prove",
+  "status.type.write": "Write",
+  "status.type.implement": "Implement",
+  "status.type.experiment": "Experiment",
+  "status.type.collect_data": "Collect data",
+  "status.type.analyze_data": "Analyse data",
+  "status.type.design": "Design",
+  "status.type.review": "Review",
+  "status.type.revise": "Revise",
+  "status.type.practice": "Practise",
+  "status.type.present": "Present",
+  "status.type.verify": "Verify",
+  "status.type.submit": "Submit",
+  "status.type.other": "Other",
+
+  "status.run.queued": "Queued",
+  "status.run.running": "Running",
+  "status.run.succeeded": "Succeeded",
+  "status.run.failed": "Failed",
+  "status.run.cancelled": "Cancelled",
+
+  "status.trigger.generated": "Generated",
+  "status.trigger.regenerated": "Regenerated",
+  "status.trigger.edited": "Edited",
+  "status.trigger.approved": "Approved",
+
+  "status.style.minimal": "Minimal",
+  "status.style.balanced": "Balanced",
+  "status.style.detailed": "Detailed",
+
+  "status.guidance.low": "Light guidance",
+  "status.guidance.medium": "Some guidance",
+  "status.guidance.high": "Detailed guidance",
+
+  "status.session.short": "Short sessions",
+  "status.session.medium": "Medium sessions",
+  "status.session.long": "Long sessions",
+
+  "status.mode.auto": "Automatic",
+  "status.mode.fast": "Fast",
+  "status.mode.balanced": "Balanced",
+  "status.mode.deep": "Deep",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -286,8 +378,10 @@ export const fa: Catalogue = {
   "plan.overview": "نمای کلی",
   "plan.duration": "مدت",
   "plan.totalHours": "ساعت کل",
-  "plan.taskCount": "{count} وظیفه",
-  "plan.milestoneCount": "{count} نقطه عطف",
+  "plan.taskCount.one": "{count} وظیفه",
+  "plan.taskCount.other": "{count} وظیفه",
+  "plan.milestoneCount.one": "{count} نقطه عطف",
+  "plan.milestoneCount.other": "{count} نقطه عطف",
   "plan.estimate": "برآورد",
   "plan.rationale": "دلیل این برنامه",
   "plan.changedSections": "چه چیزی تغییر کرد",
@@ -343,6 +437,89 @@ export const fa: Catalogue = {
   "status.graded": "نمره‌داده",
   "status.completed": "تکمیل‌شده",
   "status.cancelled": "لغو شده",
+
+  "status.task.pending": "شروع نشده",
+  "status.task.in_progress": "در حال انجام",
+  "status.task.blocked": "مسدود",
+  "status.task.completed": "تکمیل‌شده",
+  "status.task.skipped": "رد شده",
+
+  "status.plan.draft": "پیش‌نویس",
+  "status.plan.generating": "در حال ساخت",
+  "status.plan.ready_for_review": "آماده بازبینی",
+  "status.plan.approved": "تأییدشده",
+  "status.plan.in_progress": "در حال انجام",
+  "status.plan.completed": "تکمیل‌شده",
+  "status.plan.archived": "بایگانی",
+  "status.plan.stale": "منقضی",
+
+  "status.effort.very_low": "بسیار سبک",
+  "status.effort.low": "سبک",
+  "status.effort.medium": "متوسط",
+  "status.effort.high": "سنگین",
+  "status.effort.very_high": "بسیار سنگین",
+  "status.effort.unknown": "برآورد نشده",
+
+  "status.complexity.low": "کم",
+  "status.complexity.medium": "متوسط",
+  "status.complexity.high": "زیاد",
+  "status.complexity.very_high": "بسیار زیاد",
+
+  "status.priority.low": "اولویت کم",
+  "status.priority.medium": "اولویت متوسط",
+  "status.priority.high": "اولویت زیاد",
+  "status.priority.critical": "بحرانی",
+
+  "status.tier.efficient": "مدل استاندارد",
+  "status.tier.advanced": "مدل پیشرفته",
+
+  "status.type.read": "خواندن",
+  "status.type.research": "پژوهش",
+  "status.type.understand": "فهمیدن",
+  "status.type.analyze": "تحلیل",
+  "status.type.solve": "حل",
+  "status.type.prove": "اثبات",
+  "status.type.write": "نوشتن",
+  "status.type.implement": "پیاده‌سازی",
+  "status.type.experiment": "آزمایش",
+  "status.type.collect_data": "گردآوری داده",
+  "status.type.analyze_data": "تحلیل داده",
+  "status.type.design": "طراحی",
+  "status.type.review": "بازبینی",
+  "status.type.revise": "اصلاح",
+  "status.type.practice": "تمرین",
+  "status.type.present": "ارائه",
+  "status.type.verify": "راستی‌آزمایی",
+  "status.type.submit": "ارسال",
+  "status.type.other": "سایر",
+
+  "status.run.queued": "در صف",
+  "status.run.running": "در حال اجرا",
+  "status.run.succeeded": "موفق",
+  "status.run.failed": "ناموفق",
+  "status.run.cancelled": "لغوشده",
+
+  "status.trigger.generated": "ساخته‌شده",
+  "status.trigger.regenerated": "بازسازی‌شده",
+  "status.trigger.edited": "ویرایش‌شده",
+  "status.trigger.approved": "تأییدشده",
+
+  "status.style.minimal": "حداقلی",
+  "status.style.balanced": "متوازن",
+  "status.style.detailed": "تفصیلی",
+
+  "status.guidance.low": "راهنمایی سبک",
+  "status.guidance.medium": "راهنمایی متوسط",
+  "status.guidance.high": "راهنمایی کامل",
+
+  "status.session.short": "جلسه‌های کوتاه",
+  "status.session.medium": "جلسه‌های متوسط",
+  "status.session.long": "جلسه‌های بلند",
+
+  "status.mode.auto": "خودکار",
+  "status.mode.fast": "سریع",
+  "status.mode.balanced": "متوازن",
+  "status.mode.deep": "عمیق",
 };
 
 export const catalogues: Record<Locale, Catalogue> = { en, fa };

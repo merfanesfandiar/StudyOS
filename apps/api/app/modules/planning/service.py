@@ -1306,6 +1306,11 @@ def build_plan_response(
         ),
         progress_percentage=_progress(len(graph.tasks), completed),
         validation_warnings=list(warnings),
+        # Exposed as data rather than left inside `validation_warnings` prose, so
+        # a client can state the fallback in its own words and be translated,
+        # instead of pattern-matching an English sentence the server may reword.
+        used_fallback=bool(payload.get("used_fallback", False)),
+        rejection_reasons=list(payload.get("rejection_reasons", []))[:5],
     )
 
 

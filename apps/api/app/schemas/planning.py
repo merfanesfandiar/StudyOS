@@ -501,6 +501,12 @@ class WorkPlanResponse(APIModel):
     schedule_risk: ScheduleRiskResponse | None = None
     progress_percentage: int = 0
     validation_warnings: list[str] = Field(default_factory=list)
+    #: True when the deterministic planning engine produced this version because
+    #: the model was unreachable or its proposal did not validate.
+    used_fallback: bool = False
+    #: Why the model's proposal was rejected, when it was. One string per failed
+    #: check, so a client can say *why* without parsing prose.
+    rejection_reasons: list[str] = Field(default_factory=list)
 
 
 class PlanSummaryResponse(BaseModel):

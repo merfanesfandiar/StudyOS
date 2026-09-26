@@ -36,28 +36,37 @@ class _UnreachableProvider(LLMProvider):
 
 
 @contextmanager
-def generation_unavailable() -> Iterator[None]:
-    """Make generation fail: no reachable model, and no floor to fall back to.
+def unreachable_provider(*, fallback_enabled: bool) -> Iterator[None]:
+    """Make every model call fail, with the deterministic floor set explicitly.
 
-    Both halves are needed. An unreachable provider with the deterministic floor
-    enabled still succeeds -- that is the floor doing its job -- so exercising
-    the failure path has to switch the floor off too. Patched at the router's
-    provider factory rather than by stubbing the orchestrator, so the real error
-    path runs through the real HTTP handler.
+    `fallback_enabled` is the interesting half. An unreachable provider with the
+    floor on still yields a plan -- that is the floor doing its job -- and with
+    the floor off it yields a 503. Both are real behaviours worth testing, and
+    conflating them hides the one the product cares most about: a plan that came
+    from somewhere other than the model has to say so.
 
-    A context manager rather than a fixture because these tests need one
-    *successful* generation first, to prove the failed attempt is recorded
-    alongside a real one rather than instead of it.
+    Patched at the router's provider factory rather than by stubbing the
+    orchestrator, so the real path runs through the real HTTP handler. A context
+    manager rather than a fixture because these tests need a *successful*
+    generation first, to prove a failure is recorded alongside a success rather
+    than instead of it.
     """
     original_provider = planning_router._provider
     original_fallback = planning_router.settings.planning_fallback_enabled
     planning_router._provider = lambda model=None: _UnreachableProvider()  # type: ignore[assignment]
-    planning_router.settings.planning_fallback_enabled = False
+    planning_router.settings.planning_fallback_enabled = fallback_enabled
     try:
         yield
     finally:
         planning_router._provider = original_provider  # type: ignore[assignment]
         planning_router.settings.planning_fallback_enabled = original_fallback
+
+
+@contextmanager
+def generation_unavailable() -> Iterator[None]:
+    """No reachable model and no floor: generation must fail."""
+    with unreachable_provider(fallback_enabled=False):
+        yield
 
 
 DESCRIPTION = (
@@ -762,3 +771,37 @@ async def test_model_selection_requires_an_analysis(client: AsyncClient) -> None
     response = await client.get(f"/api/v1/assignments/{row['id']}/plans/model-selection")
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "PLAN_NEEDS_ANALYSIS"
+
+
+async def test_fallback_is_reported_as_data_not_prose(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A client can state the fallback in its own words.
+
+    `used_fallback` and `rejection_reasons` are first-class fields, so an
+    interface can say "the model did not answer, here is why" in whatever
+    language it renders in. Relying on a client to pattern-match an English
+    sentence out of `validation_warnings` would make the notice vanish the moment
+    the server rewords that sentence.
+    """
+    # The same unreachable provider, but with the deterministic floor available.
+    # This is the case that matters: a plan is produced, and it has to say it
+    # came from the engine rather than from the model.
+    with unreachable_provider(fallback_enabled=True):
+        plan = await _plan(client, assignment["id"])
+
+    assert plan["used_fallback"] is True
+    assert plan["rejection_reasons"], "a fallback with no stated reason is not a stated fallback"
+
+    # The prose warning is still there for a human reading raw JSON, and the two
+    # must agree rather than drift.
+    assert any("not the model" in warning for warning in plan["validation_warnings"])
+
+
+async def test_a_model_produced_plan_does_not_claim_a_fallback(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """The default mock provider answers, so nothing is reported as a fallback."""
+    plan = await _plan(client, assignment["id"])
+    assert plan["used_fallback"] is False
+    assert plan["rejection_reasons"] == []
