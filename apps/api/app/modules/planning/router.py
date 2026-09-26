@@ -48,10 +48,12 @@ from app.modules.planning.planner import PlanningPreferences
 from app.schemas.analysis import PlanningContractResponse
 from app.schemas.common import Page, PageParams, PageResponse
 from app.schemas.planning import (
+    ModelSelectionResponse,
     PlanApproveRequest,
     PlanGenerateRequest,
     PlanningPreferencesRequest,
     PlanningPreferencesResponse,
+    PlanningRunResponse,
     PlanRegenerateRequest,
     PlanSummaryResponse,
     PlanUpdateRequest,
@@ -227,7 +229,23 @@ async def _generate(
             "PLAN_GENERATION_PROVIDER_ERROR",
             extra={"assignment_id": str(assignment.id), "code": exc.code},
         )
-        await db.rollback()
+        # The orchestrator has already rolled the attempt's own work back to its
+        # savepoint and closed the run as FAILED, so what is left pending is
+        # exactly the record of the attempt: the request audit row and the failed
+        # run. Committing those is the point -- rolling the whole transaction
+        # back here would erase the only trace of a request that was made, and a
+        # clean-looking history for a generation that failed is a lie.
+        await record_audit(
+            db,
+            user_id=user.id,
+            workspace_id=assignment.workspace_id,
+            assignment_id=assignment.id,
+            event_type=AuditEventType.PLAN_GENERATION_FAILED,
+            entity_type="Assignment",
+            entity_id=assignment.id,
+            metadata={"code": exc.code, "trigger": trigger.value},
+        )
+        await db.commit()
         raise AppError(
             503,
             "PLANNER_UNAVAILABLE",
@@ -575,6 +593,68 @@ async def set_preferences(
     )
     await db.commit()
     return stored
+
+
+@router.get(
+    "/{assignment_id}/plans/runs",
+    response_model=PageResponse[PlanningRunResponse],
+    summary="Generation attempts for this assignment",
+    description=(
+        "Every attempt at generating a plan, newest first, including the ones that produced\n"
+        "nothing. A failed attempt is listed with its error code, because a generation that\n"
+        "silently did nothing is indistinguishable from a request that never arrived.\n\n"
+        "This is telemetry, not reasoning: it records what was asked, what answered, and what\n"
+        "it cost. It never exposes the model's chain of thought."
+    ),
+)
+async def list_planning_runs(
+    assignment_id: UUID,
+    params: Annotated[PageParams, Query()],
+    user: CurrentUser,
+    db: Db,
+) -> PageResponse[PlanningRunResponse]:
+    await load_owned_assignment(assignment_id, user.id, db)
+    return await service.list_runs(
+        assignment_id, db, page=params.page, page_size=params.page_size
+    )
+
+
+@router.get(
+    "/{assignment_id}/plans/model-selection",
+    response_model=ModelSelectionResponse,
+    summary="Explain which model would be used, and why",
+    description=(
+        "The router's decision for this assignment, computed without generating anything.\n\n"
+        "Lets the interface show which model a plan would use *before* the student commits to\n"
+        "paying for it. `overridden` is true when a FAST preference was raised for\n"
+        "correctness, with the reason spelled out, so a student who asked for the cheap model\n"
+        "is told when they did not get it."
+    ),
+)
+async def get_model_selection(
+    assignment_id: UUID,
+    user: CurrentUser,
+    db: Db,
+) -> ModelSelectionResponse:
+    assignment = await load_owned_assignment(assignment_id, user.id, db)
+    contract, _ = await _contract_for(assignment, db, user_id=user.id)
+    preferences = await service.load_preferences(assignment.workspace_id, db)
+    # The same two calls the generate path makes, so the answer here is the
+    # answer generation will give. A separate scoring path would drift.
+    score = score_complexity(contract)
+    # Preferences store the mode as a string column; the router wants the enum.
+    selection = _router().select(score, AIMode(preferences.ai_mode))
+    return ModelSelectionResponse(
+        model_tier=selection.tier,
+        model=selection.model,
+        reason=selection.reason,
+        confidence=selection.confidence,
+        complexity=selection.complexity,
+        complexity_factors=selection.complexity_factors,
+        ai_mode=selection.ai_mode,
+        overridden=selection.overridden,
+        override_reason=selection.override_reason,
+    )
 
 
 @router.get(

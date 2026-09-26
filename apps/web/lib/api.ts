@@ -34,6 +34,21 @@ import type {
   VersionDetail,
   VersionSummary,
 } from "./types";
+import type {
+  ModelSelection,
+  PlanGenerateInput,
+  PlanRegenerateInput,
+  PlanSummary,
+  PlanSummaryPage,
+  PlanTask,
+  PlanUpdateInput,
+  PlanningPreferences,
+  PlanningPreferencesInput,
+  PlanningRun,
+  TaskCreateInput,
+  TaskUpdateInput,
+  WorkPlan,
+} from "./planning-types";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1").replace(
   /\/$/,
@@ -310,4 +325,76 @@ export const api = {
       `/assignments/${id}/analysis/${analysisId}/questions/${questionId}/dismiss`,
       { method: "POST", ...json({ reason: reason ?? null }) },
     ),
+
+  // -- Phase 4: academic planning ------------------------------------------
+  //
+  // Generation returns 201 and the full plan; the reads never trigger
+  // generation, so a list view can be rendered with no provider available.
+
+  /** Ask for a plan. Idempotent unless `force`, so a double-click is safe. */
+  generatePlan: (assignmentId: string, input: PlanGenerateInput = {}) =>
+    request<WorkPlan>(`/assignments/${assignmentId}/plans`, { method: "POST", ...json(input) }),
+  /** Regenerates as a new version. `scope: "MILESTONES"` calls no model. */
+  regeneratePlan: (assignmentId: string, input: PlanRegenerateInput = {}) =>
+    request<WorkPlan>(`/assignments/${assignmentId}/plans/regenerate`, {
+      method: "POST",
+      ...json(input),
+    }),
+  /** The newest version, or null when the assignment was never planned. */
+  plan: (assignmentId: string) => request<WorkPlan | null>(`/assignments/${assignmentId}/plans`),
+  /** Counts and progress for the newest version. No tasks. */
+  planSummary: (assignmentId: string) =>
+    request<PlanSummary>(`/assignments/${assignmentId}/plans/summary`),
+  planVersions: (assignmentId: string, page = 1, pageSize = 20) =>
+    request<PlanSummaryPage>(
+      `/assignments/${assignmentId}/plans/versions${queryString({ page, page_size: pageSize })}`,
+    ),
+  planVersion: (assignmentId: string, planId: string) =>
+    request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}`),
+  /** A human decision. Refused for a stale plan or one with graph problems. */
+  approvePlan: (assignmentId: string, planId: string) =>
+    request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}/approve`, { method: "POST" }),
+  /** Plan-level fields only. Refused once approved: regenerate instead. */
+  updatePlan: (assignmentId: string, planId: string, input: PlanUpdateInput) =>
+    request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}`, {
+      method: "PATCH",
+      ...json(input),
+    }),
+
+  /** Marked user-authored, so a later regeneration preserves it. */
+  addPlanTask: (assignmentId: string, planId: string, input: TaskCreateInput) =>
+    request<PlanTask>(`/assignments/${assignmentId}/plans/${planId}/tasks`, {
+      method: "POST",
+      ...json(input),
+    }),
+  updatePlanTask: (assignmentId: string, planId: string, taskKey: string, input: TaskUpdateInput) =>
+    request<PlanTask>(`/assignments/${assignmentId}/plans/${planId}/tasks/${taskKey}`, {
+      method: "PATCH",
+      ...json(input),
+    }),
+  deletePlanTask: (assignmentId: string, planId: string, taskKey: string) =>
+    request<void>(`/assignments/${assignmentId}/plans/${planId}/tasks/${taskKey}`, {
+      method: "DELETE",
+    }),
+  /** `taskKeys` must be the complete order; a partial list is rejected. */
+  reorderPlanTasks: (assignmentId: string, planId: string, taskKeys: string[]) =>
+    request<PlanTask[]>(`/assignments/${assignmentId}/plans/${planId}/tasks/reorder`, {
+      method: "POST",
+      ...json({ task_keys: taskKeys }),
+    }),
+
+  planPreferences: (assignmentId: string) =>
+    request<PlanningPreferences>(`/assignments/${assignmentId}/plans/preferences`),
+  savePlanPreferences: (assignmentId: string, input: PlanningPreferencesInput) =>
+    request<PlanningPreferences>(`/assignments/${assignmentId}/plans/preferences`, {
+      method: "PATCH",
+      ...json(input),
+    }),
+  planningRuns: (assignmentId: string, page = 1, pageSize = 10) =>
+    request<PageResponse<PlanningRun>>(
+      `/assignments/${assignmentId}/plans/runs${queryString({ page, page_size: pageSize })}`,
+    ),
+  /** The router's decision, explained. Powers the "which model" panel. */
+  planModelSelection: (assignmentId: string) =>
+    request<ModelSelection>(`/assignments/${assignmentId}/plans/model-selection`),
 };

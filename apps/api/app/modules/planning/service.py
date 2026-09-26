@@ -70,12 +70,14 @@ from app.modules.planning.planner import (
     build_planning_preferences,
 )
 from app.schemas.analysis import PlanningContractResponse
+from app.schemas.common import Page, PageResponse
 from app.schemas.planning import (
     MilestoneResponse,
     PlannedTask,
     PlannerOutput,
     PlanningPreferencesRequest,
     PlanningPreferencesResponse,
+    PlanningRunResponse,
     PlanRiskResponse,
     PlanSummaryResponse,
     ScheduleRiskResponse,
@@ -318,6 +320,72 @@ async def finish_run(
     if fell_back_from_tier is not None:
         run.fell_back_from_tier = fell_back_from_tier.value
     await db.flush()
+
+
+async def list_runs(
+    assignment_id: UUID, db: AsyncSession, *, page: int, page_size: int
+) -> PageResponse[PlanningRunResponse]:
+    """Generation attempts for an assignment, newest first.
+
+    The page is a list of *attempts*, not of plans, so a failed generation
+    appears in the history. That is the point: an attempt that produced nothing
+    is the one record explaining why nothing appeared.
+    """
+    base = select(PlanningRun).where(PlanningRun.assignment_id == assignment_id)
+    total = await db.scalar(
+        select(func.count())
+        .select_from(PlanningRun)
+        .where(PlanningRun.assignment_id == assignment_id)
+    )
+    rows = (
+        await db.scalars(
+            base.order_by(PlanningRun.started_at.desc().nullslast(), PlanningRun.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    count = int(total or 0)
+    return PageResponse[PlanningRunResponse](
+        items=[PlanningRunResponse.model_validate(_run_to_dict(run)) for run in rows],
+        page=Page(
+            page=page,
+            page_size=page_size,
+            total=count,
+            pages=max(1, -(-count // page_size)),
+        ),
+    )
+
+
+def _run_to_dict(run: PlanningRun) -> dict[str, Any]:
+    """Flatten a run for response validation.
+
+    ``model_tier``, ``status`` and ``complexity`` are enums stored as strings, so
+    they are wrapped back into enums here rather than letting pydantic coerce a
+    bare string and hope the spelling matches.
+    """
+    return {
+        "id": run.id,
+        "assignment_id": run.assignment_id,
+        "plan_id": run.plan_id,
+        "status": PlanningRunStatus(run.status),
+        "provider": run.provider,
+        "model": run.model,
+        "model_tier": ModelTier(run.model_tier),
+        "routing_reason": run.routing_reason,
+        "routing_confidence": float(run.routing_confidence or 0),
+        "complexity": ComplexityLevel(run.complexity),
+        "fell_back_from_tier": (
+            ModelTier(run.fell_back_from_tier) if run.fell_back_from_tier else None
+        ),
+        "prompt_version": run.prompt_version,
+        "duration_ms": run.duration_ms,
+        "token_usage": run.token_usage,
+        "estimated_cost": float(run.estimated_cost) if run.estimated_cost is not None else None,
+        "error_code": run.error_code,
+        "error_message": run.error_message,
+        "started_at": run.started_at,
+        "completed_at": run.completed_at,
+    }
 
 
 async def find_idempotent_plan(

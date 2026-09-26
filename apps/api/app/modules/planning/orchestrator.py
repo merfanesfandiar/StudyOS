@@ -162,6 +162,19 @@ async def generate_plan(
         prompt_version=prompt_version,
     )
 
+    # From here on the attempt is *doing* something, and the work it does can
+    # fail partway: a rejected proposal, a model that never answers, a plan that
+    # cannot be persisted. That work goes in a savepoint so the enclosing
+    # transaction can be abandoned without losing the run row.
+    #
+    # This is the whole reason the run is started before the savepoint rather
+    # than alongside it. The router rolls the transaction back when generation
+    # raises, and a rollback that also erased the run would leave no record of
+    # the attempt at all -- which is precisely the failure the run exists to
+    # explain. A run that vanishes on failure is worse than no run, because the
+    # history looks clean.
+    attempt = await db.begin_nested()
+
     started = time.monotonic()
     proposed: PlannerOutput | None = None
     validated: ValidatedGraph
@@ -194,6 +207,7 @@ async def generate_plan(
         if not fallback_enabled:
             # The run is finished, not still in progress. Leaving it RUNNING
             # would make a dead attempt indistinguishable from a live one.
+            await attempt.rollback()
             await _fail_run(
                 db,
                 run,
@@ -207,6 +221,7 @@ async def generate_plan(
         rejections = [f"the model call failed: {exc.code or exc.__class__.__name__}"]
     except PlanGraphError as exc:
         if not fallback_enabled:
+            await attempt.rollback()
             await _fail_run(
                 db,
                 run,
@@ -253,6 +268,12 @@ async def generate_plan(
     if used_fallback:
         detail = "; ".join(rejections[:3]) if rejections else "no usable model response"
         warnings.append(f"this plan was produced by the planning engine, not the model ({detail})")
+
+    # The plan exists, so the attempt's work is good. Releasing the savepoint
+    # merges it into the enclosing transaction; the caller's commit is still the
+    # thing that makes it durable, and a failure there rolls up to the last real
+    # boundary rather than leaving a half-open savepoint behind.
+    await attempt.commit()
 
     await finish_run(
         db,

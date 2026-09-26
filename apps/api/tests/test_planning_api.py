@@ -11,13 +11,54 @@ would otherwise hide.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
+from app.ai.errors import LLMUnavailableError
+from app.ai.provider import LLMProvider, LLMRequest, LLMResponse
+from app.modules.planning import router as planning_router
 from httpx import AsyncClient
 
 from tests.conftest import register_user
+
+
+class _UnreachableProvider(LLMProvider):
+    """Stands in for a provider that is simply not there."""
+
+    name = "unreachable"
+    model = "unreachable-model-v1"
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        raise LLMUnavailableError("no route to host")
+
+
+@contextmanager
+def generation_unavailable() -> Iterator[None]:
+    """Make generation fail: no reachable model, and no floor to fall back to.
+
+    Both halves are needed. An unreachable provider with the deterministic floor
+    enabled still succeeds -- that is the floor doing its job -- so exercising
+    the failure path has to switch the floor off too. Patched at the router's
+    provider factory rather than by stubbing the orchestrator, so the real error
+    path runs through the real HTTP handler.
+
+    A context manager rather than a fixture because these tests need one
+    *successful* generation first, to prove the failed attempt is recorded
+    alongside a real one rather than instead of it.
+    """
+    original_provider = planning_router._provider
+    original_fallback = planning_router.settings.planning_fallback_enabled
+    planning_router._provider = lambda model=None: _UnreachableProvider()  # type: ignore[assignment]
+    planning_router.settings.planning_fallback_enabled = False
+    try:
+        yield
+    finally:
+        planning_router._provider = original_provider  # type: ignore[assignment]
+        planning_router.settings.planning_fallback_enabled = original_fallback
+
 
 DESCRIPTION = (
     "Write a 2000-word research report on a topic of your choice, with at least eight "
@@ -624,3 +665,100 @@ async def test_milestone_scope_drops_a_milestone_whose_tasks_are_gone(
         assert set(milestone["task_keys"]) <= remaining
     covered = {key for m in body["milestones"] for key in m["task_keys"]}
     assert covered == remaining
+
+
+# ---------------------------------------------------------------------------
+# Telemetry
+# ---------------------------------------------------------------------------
+
+
+async def test_generation_attempts_are_listed_newest_first(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """Attempts are a history of tries, not just of successes.
+
+    A second generation with `force` adds a second attempt. The list has to show
+    both, newest first, or "why did this take two tries" has no answer.
+    """
+    await _plan(client, assignment["id"])
+    await _plan(client, assignment["id"], force=True)
+
+    response = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/runs")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["page"]["total"] == 2
+    assert body["page"]["page"] == 1
+    assert len(body["items"]) == 2
+    started = [item["started_at"] for item in body["items"]]
+    assert started == sorted(started, reverse=True), "runs are not newest first"
+
+    first = body["items"][0]
+    assert first["status"] == "SUCCEEDED"
+    assert first["plan_id"] is not None
+    assert first["model_tier"] in {"EFFICIENT", "ADVANCED"}
+    assert first["routing_reason"], "a run with no stated reason cannot be audited"
+    assert first["completed_at"] is not None
+
+
+async def test_a_failed_attempt_is_recorded_with_its_error(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A generation that produced nothing must still leave a trace.
+
+    The run is the only record of a failed attempt, so a silent failure is
+    indistinguishable from a request that never arrived. This asserts the error
+    code and message survive to the client, and that the run is closed rather
+    than left RUNNING.
+    """
+    # One real plan first, so the assertion below proves the failure was recorded
+    # *alongside* a success rather than in a history that only ever holds failures.
+    await _plan(client, assignment["id"])
+
+    with generation_unavailable():
+        failed = await client.post(
+            f"/api/v1/assignments/{assignment['id']}/plans", json={"force": True}
+        )
+    assert failed.status_code == 503, failed.text
+    assert failed.json()["error"]["code"] == "PLANNER_UNAVAILABLE"
+
+    body = (await client.get(f"/api/v1/assignments/{assignment['id']}/plans/runs")).json()
+    assert body["page"]["total"] == 2, "the failed attempt was not recorded"
+
+    latest = body["items"][0]
+    assert latest["status"] == "FAILED"
+    assert latest["plan_id"] is None, "a failed run must not be linked to a plan"
+    assert latest["completed_at"] is not None, "a failed run must be closed, not left RUNNING"
+    assert latest["error_code"]
+    assert latest["error_message"]
+
+
+async def test_model_selection_explains_the_choice_without_generating(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """The routing decision is readable before committing to a paid call."""
+    response = await client.get(f"/api/v1/assignments/{assignment['id']}/plans/model-selection")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["model_tier"] in {"EFFICIENT", "ADVANCED"}
+    assert body["model"], "the panel needs a model name to show"
+    assert body["reason"], "a decision with no stated reason is not explainable"
+    assert body["complexity"] in {"LOW", "MEDIUM", "HIGH", "VERY_HIGH"}
+    assert isinstance(body["complexity_factors"], list)
+    assert 0.0 <= body["confidence"] <= 1.0
+    assert isinstance(body["overridden"], bool)
+
+    # Reading the decision must not have created a plan or a run.
+    assert (await client.get(f"/api/v1/assignments/{assignment['id']}/plans")).json() is None
+    assert (await client.get(f"/api/v1/assignments/{assignment['id']}/plans/runs")).json()["page"][
+        "total"
+    ] == 0
+
+
+async def test_model_selection_requires_an_analysis(client: AsyncClient) -> None:
+    """No analysis means nothing to score, and a 409 rather than a guess."""
+    row = await _prepare(client, "noselection@example.com")
+    response = await client.get(f"/api/v1/assignments/{row['id']}/plans/model-selection")
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "PLAN_NEEDS_ANALYSIS"
