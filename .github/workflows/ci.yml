@@ -183,3 +183,60 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down -v
+
+  image:
+    name: Container image
+    # The web image is the one artefact nothing else in CI exercises: the other
+    # jobs run `npm run build` and Playwright starts Next itself, so the image
+    # could be broken and CI would stay green. It earns its place by checking the
+    # part that is easy to get wrong.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the web image
+        env:
+          NEXT_PUBLIC_API_URL: http://127.0.0.1:8000/api/v1
+        run: docker compose build web
+
+      - name: The image serves its own stylesheet
+        # `output: "standalone"` means the hashed assets are not in the server
+        # bundle; the Dockerfile copies `.next/static` next to `server.js`, and if
+        # that copy is dropped the container still starts, still returns 200 for
+        # the HTML, and renders every page unstyled. Nothing else in CI would
+        # notice. This is the check that does.
+        run: |
+          set -euo pipefail
+          # --no-deps: `web` declares `depends_on: api: service_healthy`, and
+          # standing that up would pull in the database and the API image too.
+          # The login page is static and renders without either, which is the
+          # point -- this job is about the image's own assets, not the stack.
+          docker compose up -d --no-deps web
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3000/login > /tmp/login.html; then
+              break
+            fi
+            sleep 2
+          done
+          css=$(grep -oE '/_next/static/[^"]+\.css' /tmp/login.html | head -1)
+          if [ -z "$css" ]; then
+            echo "No stylesheet referenced by the served HTML"
+            docker compose logs web
+            exit 1
+          fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:3000$css")
+          echo "$css -> $code"
+          if [ "$code" != "200" ]; then
+            echo "The container served the page without its CSS. The standalone"
+            echo "asset copy in infrastructure/docker/web.Dockerfile has regressed."
+            docker compose logs web
+            exit 1
+          fi
+
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs web
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
