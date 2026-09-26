@@ -26,9 +26,7 @@ from app.models.identifiers import requirement_code
 SEQUENCE_ATTEMPTS = 5
 
 
-async def load_requirements(
-    assignment_id: UUID, db: AsyncSession
-) -> list[AssignmentRequirement]:
+async def load_requirements(assignment_id: UUID, db: AsyncSession) -> list[AssignmentRequirement]:
     result = await db.execute(
         select(AssignmentRequirement)
         .where(AssignmentRequirement.assignment_id == assignment_id)
@@ -62,12 +60,15 @@ async def next_sequence(assignment: Assignment, db: AsyncSession) -> int:
     deleting REQ-004 does not hand REQ-004 to the next requirement. The
     ``UPDATE ... RETURNING`` is the real guard against two concurrent inserts.
     """
-    return await db.scalar(
-        update(Assignment)
-        .where(Assignment.id == assignment.id)
-        .values(requirement_sequence=Assignment.requirement_sequence + 1)
-        .returning(Assignment.requirement_sequence)
-    ) or 0
+    return (
+        await db.scalar(
+            update(Assignment)
+            .where(Assignment.id == assignment.id)
+            .values(requirement_sequence=Assignment.requirement_sequence + 1)
+            .returning(Assignment.requirement_sequence)
+        )
+        or 0
+    )
 
 
 async def add_requirement(
@@ -180,9 +181,7 @@ async def add_dependency(
 ) -> RequirementDependency:
     """Link a requirement to a prerequisite, rejecting anything that cycles."""
     if depends_on_id == requirement.id:
-        raise AppError(
-            422, "SELF_DEPENDENCY", "A requirement cannot depend on itself."
-        )
+        raise AppError(422, "SELF_DEPENDENCY", "A requirement cannot depend on itself.")
     depends_on = await db.scalar(
         select(AssignmentRequirement).where(
             AssignmentRequirement.id == depends_on_id,

@@ -67,9 +67,7 @@ async def list_versions(
     return tuple(result.scalars().all()), total or 0
 
 
-async def get_version(
-    assignment_id: UUID, version: int, db: AsyncSession
-) -> AssignmentVersion:
+async def get_version(assignment_id: UUID, version: int, db: AsyncSession) -> AssignmentVersion:
     entry = await db.scalar(
         select(AssignmentVersion).where(
             AssignmentVersion.assignment_id == assignment_id,

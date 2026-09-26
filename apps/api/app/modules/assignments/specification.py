@@ -251,9 +251,7 @@ def build_dependency_graph(requirements: Sequence[AssignmentRequirement]) -> Dep
     return DependencyGraph(
         nodes=nodes,
         edges=edges,
-        execution_order=[
-            codes[node] for node in execution_order(graph, rank) if node in codes
-        ],
+        execution_order=[codes[node] for node in execution_order(graph, rank) if node in codes],
         has_cycles=False,
     )
 

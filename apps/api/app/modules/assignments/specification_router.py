@@ -102,9 +102,7 @@ async def validate_specification(
         "Same deterministic report as POST /validate, kept for clients that poll readiness."
     ),
 )
-async def readiness_report(
-    assignment_id: UUID, user: CurrentUser, db: Db
-) -> ValidationResponse:
+async def readiness_report(assignment_id: UUID, user: CurrentUser, db: Db) -> ValidationResponse:
     return await validate_specification(assignment_id, user, db)
 
 
@@ -187,9 +185,7 @@ async def activity_feed(
     filters = [AuditLog.assignment_id == assignment.id]
     if params.event_type:
         filters.append(AuditLog.event_type == params.event_type)
-    total: int = (
-        await db.scalar(select(func.count(AuditLog.id)).where(*filters)) or 0
-    )
+    total: int = await db.scalar(select(func.count(AuditLog.id)).where(*filters)) or 0
     result = await db.execute(
         select(AuditLog)
         .where(*filters)

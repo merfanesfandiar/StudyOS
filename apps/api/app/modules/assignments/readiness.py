@@ -82,9 +82,7 @@ def evaluate_completeness(
             "title",
             "Basic information",
             CompletenessCheckStatus.PASS if title.strip() else CompletenessCheckStatus.FAIL,
-            "Assignment title is present."
-            if title.strip()
-            else "Assignment title is missing.",
+            "Assignment title is present." if title.strip() else "Assignment title is missing.",
             10,
             True,
         )
@@ -212,11 +210,7 @@ def evaluate_completeness(
         _check(
             "constraints",
             "Constraints",
-            (
-                CompletenessCheckStatus.PASS
-                if constraint_count
-                else CompletenessCheckStatus.WARNING
-            ),
+            (CompletenessCheckStatus.PASS if constraint_count else CompletenessCheckStatus.WARNING),
             (
                 f"{constraint_count} constraint(s) recorded."
                 if constraint_count
@@ -234,11 +228,7 @@ def evaluate_completeness(
         _check(
             "deliverables",
             "Deliverables",
-            (
-                CompletenessCheckStatus.PASS
-                if deliverables
-                else CompletenessCheckStatus.WARNING
-            ),
+            (CompletenessCheckStatus.PASS if deliverables else CompletenessCheckStatus.WARNING),
             (
                 f"{len(deliverables)} deliverable(s) expected."
                 if deliverables
@@ -298,9 +288,7 @@ def build_report(checks: Sequence[CompletenessCheck]) -> ReadinessReport:
     score = max(0, min(100, score))
 
     failing = [check.field for check in checks if check.status is CompletenessCheckStatus.FAIL]
-    warnings = [
-        check.field for check in checks if check.status is CompletenessCheckStatus.WARNING
-    ]
+    warnings = [check.field for check in checks if check.status is CompletenessCheckStatus.WARNING]
     blocking_failure = any(
         check.blocking for check in checks if check.status is CompletenessCheckStatus.FAIL
     )
@@ -349,7 +337,6 @@ def requirement_progress(requirements: Sequence[AssignmentRequirement]) -> tuple
     completed = sum(
         1
         for requirement in requirements
-        if requirement.status
-        in {RequirementStatus.COMPLETED, RequirementStatus.VERIFIED}
+        if requirement.status in {RequirementStatus.COMPLETED, RequirementStatus.VERIFIED}
     )
     return completed, total

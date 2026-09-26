@@ -56,6 +56,7 @@ router = APIRouter(prefix="/api/v1/assignments", tags=["Specification"])
 Db = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
 
+
 async def _load_child[Child: (AssignmentConstraint, EvaluationCriterion, Deliverable)](
     assignment: Assignment,
     child_id: UUID,

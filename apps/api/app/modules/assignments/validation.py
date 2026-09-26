@@ -108,7 +108,6 @@ def ensure_no_duplicate_titles(
         raise AppError(
             409,
             code or f"DUPLICATE_{entity.upper()}_TITLE",
-            f"A {entity.lower()} with that title already exists: "
-            + ", ".join(sorted(duplicates)),
+            f"A {entity.lower()} with that title already exists: " + ", ".join(sorted(duplicates)),
             {"entity": entity, "duplicates": sorted(duplicates)},
         )

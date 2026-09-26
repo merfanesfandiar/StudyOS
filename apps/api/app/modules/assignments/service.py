@@ -66,9 +66,7 @@ SPECIFICATION_LOADERS = (
 )
 
 
-async def load_owned_assignment(
-    assignment_id: UUID, user_id: UUID, db: AsyncSession
-) -> Assignment:
+async def load_owned_assignment(assignment_id: UUID, user_id: UUID, db: AsyncSession) -> Assignment:
     """Load an assignment only if the user is a member of its workspace.
 
     Returns 404 rather than 403 so ids of other users' assignments cannot be
@@ -237,9 +235,7 @@ async def list_assignments(
         _apply_filters(base, params, workspace_id)
         .options(
             selectinload(Assignment.course),
-            selectinload(Assignment.requirements).selectinload(
-                AssignmentRequirement.dependencies
-            ),
+            selectinload(Assignment.requirements).selectinload(AssignmentRequirement.dependencies),
             selectinload(Assignment.criteria),
         )
         .order_by(ordering, Assignment.id)
@@ -322,9 +318,7 @@ async def record_specification_change(
     return report
 
 
-def target_status_for_report(
-    assignment: Assignment, report: ReadinessReport
-) -> AssignmentStatus:
+def target_status_for_report(assignment: Assignment, report: ReadinessReport) -> AssignmentStatus:
     return readiness_state(report, AssignmentStatus(assignment.status))
 
 

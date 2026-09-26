@@ -77,9 +77,7 @@ async def dashboard(
             Notification.user_id == user.id, Notification.read_at.is_(None)
         )
     )
-    completion_percentage = (
-        round((completed / assignments_count) * 100) if assignments_count else 0
-    )
+    completion_percentage = round((completed / assignments_count) * 100) if assignments_count else 0
     average_readiness_score = (
         round(sum(item.readiness_score for item in items) / len(items)) if items else 0
     )
