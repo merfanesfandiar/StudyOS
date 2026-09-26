@@ -39,7 +39,7 @@ export function ConstraintsSection({
       await action();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "That change could not be saved.");
+      setError(caught instanceof ApiError ? caught.message : t("content.saveFailed"));
     } finally {
       setPending(null);
     }
@@ -48,7 +48,7 @@ export function ConstraintsSection({
   return (
     <section className="card p-6" data-testid="constraints-section" id="constraints">
       <div>
-        <h2 className="section-title">Constraints</h2>
+        <h2 className="section-title">{t("constraints.title")}</h2>
         <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
           Rules the solution has to respect. Advisory: they lower the score, never block.
         </p>
@@ -122,11 +122,11 @@ export function ConstraintsSection({
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field">
-            <span>Title</span>
+            <span>{t("requirements.fieldTitle")}</span>
             <input maxLength={240} name="title" required type="text" />
           </label>
           <label className="field">
-            <span>Type</span>
+            <span>{t("requirements.fieldType")}</span>
             <select defaultValue="OTHER" name="type">
               {CONSTRAINT_TYPE_OPTIONS.map((value) => (
                 <option key={value} value={value}>
@@ -137,16 +137,16 @@ export function ConstraintsSection({
           </label>
         </div>
         <label className="field">
-          <span>Description</span>
+          <span>{t("requirements.fieldDescription")}</span>
           <textarea maxLength={5000} name="description" required />
         </label>
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field">
-            <span>Value (optional)</span>
+            <span>{t("constraints.valueOptional")}</span>
             <input maxLength={500} name="value" type="text" />
           </label>
           <label className="field">
-            <span>Severity</span>
+            <span>{t("constraints.fieldSeverity")}</span>
             <select defaultValue="WARNING" name="severity">
               {CONSTRAINT_SEVERITY_OPTIONS.map((value) => (
                 <option key={value} value={value}>
@@ -156,7 +156,7 @@ export function ConstraintsSection({
             </select>
           </label>
         </div>
-        <SubmitButton pending={pending === "add-constraint"} pendingLabel="Adding…">
+        <SubmitButton pending={pending === "add-constraint"} pendingLabel={t("action.adding")}>
           Add constraint
         </SubmitButton>
       </form>
@@ -173,6 +173,7 @@ export function CriteriaSection({
 }) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const { t } = usePreferences();
   const { evaluation_criteria: criteria, assignment, criteria_total: total } = specification;
   const balanced = criteria.reduce((sum, item) => sum + Number(item.weight), 0) === 100;
 
@@ -193,7 +194,7 @@ export function CriteriaSection({
     <section className="card p-6" data-testid="criteria-section" id="criteria">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="section-title">Evaluation criteria</h2>
+          <h2 className="section-title">{t("criteria.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             Weights must total exactly 100% before this specification is complete.
           </p>
@@ -269,16 +270,16 @@ export function CriteriaSection({
       >
         <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_8rem]">
           <label className="field">
-            <span>Criterion title</span>
+            <span>{t("criteria.fieldTitle")}</span>
             <input maxLength={240} name="title" required type="text" />
           </label>
           <label className="field">
-            <span>Weight %</span>
+            <span>{t("criteria.fieldWeight")}</span>
             <input max={100} min={0} name="weight" required step="0.01" type="number" />
           </label>
         </div>
         <label className="field">
-          <span>Description</span>
+          <span>{t("requirements.fieldDescription")}</span>
           <textarea maxLength={5000} name="description" />
         </label>
         <SubmitButton pending={pending === "add-criterion"} pendingLabel="Adding…">

@@ -34,7 +34,7 @@ export function DeliverablesSection({
       await action();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "That change could not be saved.");
+      setError(caught instanceof ApiError ? caught.message : t("content.saveFailed"));
     } finally {
       setPending(null);
     }
@@ -43,7 +43,7 @@ export function DeliverablesSection({
   return (
     <section className="card p-6" data-testid="deliverables-section" id="deliverables">
       <div>
-        <h2 className="section-title">Deliverables</h2>
+        <h2 className="section-title">{t("deliverables.title")}</h2>
         <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">What has to be handed in, and its state.</p>
       </div>
 
@@ -67,7 +67,7 @@ export function DeliverablesSection({
                     {deliverableTypeLabel(t, deliverable.type)}
                   </span>
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
-                    {deliverable.is_required ? "Required" : "Optional"}
+                    {deliverable.is_required ? t("action.required") : t("action.optional")}
                   </span>
                 </div>
               </div>
@@ -135,11 +135,11 @@ export function DeliverablesSection({
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field">
-            <span>Title</span>
+            <span>{t("requirements.fieldTitle")}</span>
             <input maxLength={240} name="title" required type="text" />
           </label>
           <label className="field">
-            <span>Type</span>
+            <span>{t("requirements.fieldType")}</span>
             <select defaultValue="SOURCE_CODE" name="type">
               {DELIVERABLE_TYPE_OPTIONS.map((value) => (
                 <option key={value} value={value}>
@@ -150,10 +150,10 @@ export function DeliverablesSection({
           </label>
         </div>
         <label className="field">
-          <span>Description</span>
+          <span>{t("requirements.fieldDescription")}</span>
           <textarea maxLength={5000} name="description" />
         </label>
-        <SubmitButton pending={pending === "add-deliverable"} pendingLabel="Adding…">
+        <SubmitButton pending={pending === "add-deliverable"} pendingLabel={t("action.adding")}>
           Add deliverable
         </SubmitButton>
       </form>
@@ -203,7 +203,7 @@ export function TaxonomySection({
 
       <div className="mt-5 grid gap-6 sm:grid-cols-2">
         <div>
-          <h3 className="text-sm font-semibold text-[var(--color-ink)]">Technologies</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-ink)]">{t("taxonomy.technologies")}</h3>
           <ul className="mt-3 space-y-2">
             {technologies.map((technology) => (
               <li
@@ -256,16 +256,16 @@ export function TaxonomySection({
             }}
           >
             <label className="field">
-              <span>Name</span>
+              <span>{t("taxonomy.name")}</span>
               <input maxLength={120} name="name" required type="text" />
             </label>
             <div className="grid grid-cols-2 gap-2">
               <label className="field">
-                <span>Version</span>
+                <span>{t("taxonomy.version")}</span>
                 <input maxLength={60} name="version" type="text" />
               </label>
               <label className="field">
-                <span>Category</span>
+                <span>{t("taxonomy.category")}</span>
                 <select defaultValue="LANGUAGE" name="category">
                   {TECHNOLOGY_CATEGORY_OPTIONS.map((value) => (
                     <option key={value} value={value}>
@@ -286,7 +286,7 @@ export function TaxonomySection({
         </div>
 
         <div>
-          <h3 className="text-sm font-semibold text-[var(--color-ink)]">Tags</h3>
+          <h3 className="text-sm font-semibold text-[var(--color-ink)]">{t("taxonomy.tags")}</h3>
           <ul className="mt-3 flex flex-wrap gap-2">
             {tags.map((tag) => (
               <li
@@ -325,7 +325,7 @@ export function TaxonomySection({
             }}
           >
             <label className="field">
-              <span>Tag</span>
+              <span>{t("taxonomy.tag")}</span>
               <input maxLength={60} name="name" required type="text" />
             </label>
             <SubmitButton className="btn-secondary" pending={pending === "add-tag"} pendingLabel="Adding…">
