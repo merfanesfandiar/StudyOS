@@ -60,21 +60,24 @@ const CHECK_STYLES: Record<CheckStatus, string> = {
 };
 
 export function CheckDot({ status }: { status: CheckStatus }) {
+  const { t } = usePreferences();
+  const label = t(CHECK_LABELS[status]);
   return (
     <span
-      aria-label={CHECK_LABELS[status]}
+      aria-label={label}
       className={`inline-flex size-2.5 shrink-0 rounded-full ${CHECK_STYLES[status]}`}
-      title={CHECK_LABELS[status]}
+      title={label}
     />
   );
 }
 
 export function ReadinessMeter({ score, bar = 90 }: { score: number; bar?: number }) {
+  const { t } = usePreferences();
   const tone =
     score >= bar ? "bg-[var(--color-positive)]" : score >= bar / 2 ? "bg-[var(--color-caution)]" : "bg-[var(--color-critical)]";
   return (
     <div
-      aria-label={`Readiness ${score} percent`}
+      aria-label={t("ui.readinessPercent", { score })}
       aria-valuemax={100}
       aria-valuemin={0}
       aria-valuenow={score}

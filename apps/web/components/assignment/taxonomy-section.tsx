@@ -9,7 +9,6 @@ import {
   TECHNOLOGY_CATEGORY_OPTIONS,
   deliverableStatusLabel,
   deliverableTypeLabel,
-  humanize,
   technologyCategoryLabel,
 } from "@/lib/format";
 import type { AssignmentSpecification, Deliverable, Technology } from "@/lib/types";
@@ -45,7 +44,7 @@ export function DeliverablesSection({
     <section className="card p-6" data-testid="deliverables-section" id="deliverables">
       <div>
         <h2 className="section-title">{t("deliverables.title")}</h2>
-        <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">What has to be handed in, and its state.</p>
+        <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">{t("taxonomy.deliverablesSubtitle")}</p>
       </div>
 
       {error ? (
@@ -74,7 +73,7 @@ export function DeliverablesSection({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <label className="sr-only" htmlFor={`deliverable-${deliverable.id}`}>
-                  Status for {deliverable.title}
+                  {t("taxonomy.statusFor", { title: deliverable.title })}
                 </label>
                 <select
                   className="rounded-lg border border-[var(--color-line-strong)] px-2 py-1 text-sm"
@@ -95,7 +94,7 @@ export function DeliverablesSection({
                   ))}
                 </select>
                 <button
-                  aria-label={`Delete ${deliverable.title}`}
+                  aria-label={t("taxonomy.deleteDeliverable", { item: deliverable.title })}
                   className="text-sm font-semibold text-[var(--color-critical)]"
                   disabled={pending === `deliverable-${deliverable.id}`}
                   onClick={() =>
@@ -105,7 +104,7 @@ export function DeliverablesSection({
                   }
                   type="button"
                 >
-                  Delete
+                  {t("action.delete")}
                 </button>
               </div>
             </div>
@@ -155,7 +154,7 @@ export function DeliverablesSection({
           <textarea maxLength={5000} name="description" />
         </label>
         <SubmitButton pending={pending === "add-deliverable"} pendingLabel={t("action.adding")}>
-          Add deliverable
+          {t("taxonomy.addDeliverable")}
         </SubmitButton>
       </form>
     </section>
@@ -190,9 +189,9 @@ export function TaxonomySection({
   return (
     <section className="card p-6" data-testid="taxonomy-section" id="stack">
       <div>
-        <h2 className="section-title">Tools and tags</h2>
+        <h2 className="section-title">{t("taxonomy.toolsTitle")}</h2>
         <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-          Technologies and tags are shared across the workspace, so they are entered once.
+          {t("taxonomy.toolsSubtitle")}
         </p>
       </div>
 
@@ -221,7 +220,7 @@ export function TaxonomySection({
                   </span>
                 </span>
                 <button
-                  aria-label={`Remove ${technology.name}`}
+                  aria-label={t("taxonomy.removeTechnology", { item: technology.name })}
                   className="shrink-0 text-sm font-semibold text-[var(--color-critical)]"
                   onClick={() =>
                     void run(`technology-${technology.id}`, () =>
@@ -230,7 +229,7 @@ export function TaxonomySection({
                   }
                   type="button"
                 >
-                  Remove
+                  {t("action.remove")}
                 </button>
               </li>
             ))}
@@ -281,7 +280,7 @@ export function TaxonomySection({
               pending={pending === "add-technology"}
               pendingLabel="Adding…"
             >
-              Add technology
+              {t("taxonomy.addTechnology")}
             </SubmitButton>
           </form>
         </div>
@@ -296,7 +295,7 @@ export function TaxonomySection({
               >
                 {tag.name}
                 <button
-                  aria-label={`Remove ${tag.name}`}
+                  aria-label={t("taxonomy.removeTag", { item: tag.name })}
                   className="font-bold text-[var(--color-accent)]"
                   onClick={() =>
                     void run(`tag-${tag.id}`, () => api.deleteTag(assignment.id, tag.id))
@@ -330,12 +329,12 @@ export function TaxonomySection({
               <input maxLength={60} name="name" required type="text" />
             </label>
             <SubmitButton className="btn-secondary" pending={pending === "add-tag"} pendingLabel="Adding…">
-              Add tag
+              {t("taxonomy.addTag")}
             </SubmitButton>
           </form>
         </div>
       </div>
-      <p className="sr-only">{humanize("workspace catalogue")}</p>
+      <p className="sr-only">{t("taxonomy.workspaceCatalogue")}</p>
     </section>
   );
 }

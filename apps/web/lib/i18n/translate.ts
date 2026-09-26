@@ -24,6 +24,19 @@ function interpolate(template: string, vars?: TranslateVars): string {
  */
 export type Translate = (key: MessageKey, vars?: TranslateVars) => string;
 
+/**
+ * Whether a key exists in the catalogue.
+ *
+ * For strings that arrive from the server rather than from the code: a readiness
+ * field, an audit event type. Those come from a vocabulary the frontend does not
+ * control, so a lookup has to be able to say "no" and fall back rather than
+ * render a key. `Object.hasOwn` against the English catalogue is the honest test
+ * -- `in` would also accept inherited properties and answer yes to nonsense.
+ */
+export function hasMessage(key: string): key is MessageKey {
+  return Object.hasOwn(catalogues[DEFAULT_LOCALE], key);
+}
+
 export function translate(
   locale: Locale,
   key: MessageKey,

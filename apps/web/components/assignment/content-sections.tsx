@@ -51,7 +51,7 @@ export function ConstraintsSection({
       <div>
         <h2 className="section-title">{t("constraints.title")}</h2>
         <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-          Rules the solution has to respect. Advisory: they lower the score, never block.
+          {t("constraints.subtitle")}
         </p>
       </div>
 
@@ -81,7 +81,7 @@ export function ConstraintsSection({
                 </div>
               </div>
               <button
-                aria-label={`Delete ${constraint.title}`}
+                aria-label={t("constraints.deleteItem", { item: constraint.title })}
                 className="shrink-0 text-sm font-semibold text-[var(--color-critical)]"
                 disabled={pending === `constraint-${constraint.id}`}
                 onClick={() =>
@@ -91,7 +91,7 @@ export function ConstraintsSection({
                 }
                 type="button"
               >
-                Delete
+                {t("action.delete")}
               </button>
             </div>
           </article>
@@ -158,7 +158,7 @@ export function ConstraintsSection({
           </label>
         </div>
         <SubmitButton pending={pending === "add-constraint"} pendingLabel={t("action.adding")}>
-          Add constraint
+          {t("constraints.add")}
         </SubmitButton>
       </form>
     </section>
@@ -197,7 +197,7 @@ export function CriteriaSection({
         <div>
           <h2 className="section-title">{t("criteria.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-            Weights must total exactly 100% before this specification is complete.
+            {t("criteria.weightHint")}
           </p>
         </div>
         <span
@@ -230,7 +230,7 @@ export function CriteriaSection({
                   {formatWeight(criterion.weight)}
                 </span>
                 <button
-                  aria-label={`Delete ${criterion.title}`}
+                  aria-label={t("criteria.deleteItem", { item: criterion.title })}
                   className="text-sm font-semibold text-[var(--color-critical)]"
                   disabled={pending === `criterion-${criterion.id}`}
                   onClick={() =>
@@ -240,7 +240,7 @@ export function CriteriaSection({
                   }
                   type="button"
                 >
-                  Delete
+                  {t("action.delete")}
                 </button>
               </div>
             </div>
@@ -284,7 +284,7 @@ export function CriteriaSection({
           <textarea maxLength={5000} name="description" />
         </label>
         <SubmitButton pending={pending === "add-criterion"} pendingLabel="Adding…">
-          Add criterion
+          {t("criteria.add")}
         </SubmitButton>
       </form>
     </section>

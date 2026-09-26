@@ -10,11 +10,16 @@ import {
   academicDomainLabel,
   assignmentTypeLabel,
   confidenceLabel,
+  constraintSeverityLabel,
+  constraintTypeLabel,
   findingSeverityLabel,
   isExplicit,
   questionPriorityLabel,
+  questionStatusLabel,
   requirementCategoryLabel,
   scopeLevelLabel,
+  evidenceSourceLabel,
+  priorityLabel,
   sourceKindLabel,
   sourceKindShort,
 } from "@/lib/format";
@@ -30,24 +35,26 @@ import type {
 
 /** Everything the AI asserts is tagged, so explicit facts are never confused with guesses. */
 function OriginTag({ source }: { source: Evidence["source_type"] | string }) {
+  const { t } = usePreferences();
   return (
     <span
       data-testid="origin-tag"
       className="ms-1 rounded bg-[var(--color-surface-sunken)] px-1.5 py-0.5 text-xs font-medium text-[var(--color-ink-muted)]"
     >
-      {sourceKindShort(source as never)}
+      {sourceKindShort(t, source as never)}
     </span>
   );
 }
 
 function ConfidenceTag({ confidence }: { confidence: number }) {
+  const { t } = usePreferences();
   return (
     <span
       data-testid="confidence"
       className="ms-1.5 text-xs text-[var(--color-ink-subtle)]"
       title={`Confidence ${confidence.toFixed(2)}`}
     >
-      {confidenceLabel(confidence)}
+      {confidenceLabel(t, confidence)}
     </span>
   );
 }
@@ -67,14 +74,19 @@ function Bullet({ children }: { children: React.ReactNode }) {
 
 /** One evidence entry, collapsed by default so provenance stays optional. */
 function EvidenceList({ evidence }: { evidence: Evidence[] }) {
+  const { t } = usePreferences();
   if (evidence.length === 0) {
-    return <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">No supporting evidence recorded.</p>;
+    return (
+      <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">
+        {t("analysis.noEvidence")}
+      </p>
+    );
   }
   return (
     <ul className="mt-1 space-y-1">
       {evidence.map((item, index) => (
         <li key={index} className="text-xs text-[var(--color-ink-subtle)]">
-          <span className="font-medium">{sourceKindLabel(item.source_type as never)}</span>
+          <span className="font-medium">{evidenceSourceLabel(t, item.source_type)}</span>
           {item.location ? ` · ${item.location}` : ""}
           {item.supports ? ` · ${item.supports}` : ""}
         </li>
@@ -144,17 +156,22 @@ function QuestionRow({
         {question.code}. {question.question}
       </p>
       <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">
-        {questionPriorityLabel(question.priority)} priority
+        {/* Order differs: the Persian label takes its argument after the word. */}
+        {t("analysis.priorityLabel", { label: questionPriorityLabel(t, question.priority) })}
         {question.related_requirements.length > 0
-          ? ` · affects ${question.related_requirements.join(", ")}`
+          ? t("analysis.affects", { items: question.related_requirements.join("، ") })
           : ""}
-        {settled ? ` · ${question.status.replace(/_/g, " ").toLowerCase()}` : ""}
+        {settled ? ` · ${questionStatusLabel(t, question.status)}` : ""}
       </p>
       {question.rationale ? (
-        <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">Why this matters: {question.rationale}</p>
+        <p className="mt-1 text-xs text-[var(--color-ink-subtle)]">
+          {t("analysis.whyItMatters", { reason: question.rationale })}
+        </p>
       ) : null}
       {question.answer ? (
-        <p className="mt-2 text-xs text-[var(--color-positive)]">Your answer: {question.answer}</p>
+        <p className="mt-2 text-xs text-[var(--color-positive)]">
+          {t("analysis.yourAnswer", { answer: question.answer })}
+        </p>
       ) : null}
       {!settled ? (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -163,7 +180,7 @@ function QuestionRow({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             placeholder={t("analysis.yourAnswer")}
-            aria-label={`Answer to ${question.code}`}
+            aria-label={t("analysis.answerTo", { code: question.code })}
             className="flex-1 rounded border border-[var(--color-line-strong)] px-2 py-1 text-sm"
           />
           <button
@@ -228,7 +245,7 @@ function ClassificationEditor({
   return (
     <div data-testid="classification-editor" className="mt-3 space-y-3 rounded border border-[var(--color-line)] p-3">
       <div>
-        <p className="text-xs font-medium text-[var(--color-ink-muted)]">Assignment type</p>
+        <p className="text-xs font-medium text-[var(--color-ink-muted)]">{t("analysis.assignmentTypeLabel")}</p>
         <div className="mt-1 flex flex-wrap gap-2">
           {ASSIGNMENT_TYPE_OPTIONS.map((type) => (
             <label key={type} className="flex items-center gap-1 text-xs text-[var(--color-ink-muted)]">
@@ -238,13 +255,13 @@ function ClassificationEditor({
                 disabled={busy}
                 onChange={() => toggle(types, type, setTypes)}
               />
-              {assignmentTypeLabel(type)}
+              {assignmentTypeLabel(t, type)}
             </label>
           ))}
         </div>
       </div>
       <div>
-        <p className="text-xs font-medium text-[var(--color-ink-muted)]">Academic domain</p>
+        <p className="text-xs font-medium text-[var(--color-ink-muted)]">{t("analysis.academicDomainLabel")}</p>
         <div className="mt-1 flex flex-wrap gap-2">
           {ACADEMIC_DOMAIN_OPTIONS.map((domain) => (
             <label key={domain} className="flex items-center gap-1 text-xs text-[var(--color-ink-muted)]">
@@ -254,7 +271,7 @@ function ClassificationEditor({
                 disabled={busy}
                 onChange={() => toggle(domains, domain, setDomains)}
               />
-              {academicDomainLabel(domain)}
+              {academicDomainLabel(t, domain)}
             </label>
           ))}
         </div>
@@ -344,8 +361,7 @@ function ReviewBar({
   return (
     <div data-testid="review-bar" className="rounded border border-[var(--color-line)] bg-[var(--color-canvas)] p-3">
       <p className="text-sm text-[var(--color-ink-muted)]">
-        Review this before you plan anything. Accepting records that it matches your brief;
-        rejecting keeps the analysis but marks it as not usable.
+        {t("analysis.reviewBeforePlanning")}
       </p>
       <input
         type="text"
@@ -390,11 +406,9 @@ function NotAnalyzed({
   const { t } = usePreferences();
   return (
     <section className="card p-6" id="analysis">
-      <h2 className="section-title">Analysis</h2>
+      <h2 className="section-title">{t("analysis.title")}</h2>
       <p className="mt-2 text-sm text-[var(--color-ink-muted)]">
-        Analysis reads your assignment specification, works out what is required and why, and
-        shows you what is explicit, inferred, or still missing. It never changes your
-        specification.
+        {t("analysis.notAnalyzedBlurb")}
       </p>
       <button
         type="button"
@@ -449,16 +463,17 @@ export function AnalysisPanel({
   const findings = [
     ...analysis.ambiguities.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: item.suggested_clarification })),
     ...analysis.contradictions.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: item.clarification_needed ? t("analysis.needsClarification") : null })),
-    ...analysis.missing_information.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: `Area: ${item.area}` })),
+    ...analysis.missing_information.map((item) => ({ key: item.key, description: item.description, severity: item.severity, evidence: item.evidence, hint: t("analysis.area", { areas: item.area }) })),
   ];
 
   return (
     <section className="card p-6" id="analysis">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="section-title">Analysis</h2>
+        <h2 className="section-title">{t("analysis.title")}</h2>
         <p className="text-xs text-[var(--color-ink-subtle)]">
-          {confidenceLabel(analysis.confidence)} confidence · v{analysis.analysis_version}
-          {analysis.edited ? " · corrected" : ""}
+          {t("analysis.confidence", { level: confidenceLabel(t, analysis.confidence) })}
+          {" · "}v{analysis.analysis_version}
+          {analysis.edited ? t("analysis.corrected") : null}
         </p>
       </div>
 
@@ -488,14 +503,14 @@ export function AnalysisPanel({
       {/* Classification */}
       <div className="mt-4 grid gap-4 md:grid-cols-2">
         <div>
-          <p className="text-sm font-medium text-[var(--color-ink-muted)]">Assignment type</p>
+          <p className="text-sm font-medium text-[var(--color-ink-muted)]">{t("analysis.assignmentTypeLabel")}</p>
           <ul data-testid="classification-types" className="mt-1 space-y-1">
             {analysis.assignment_types.length === 0 ? (
               <li className="text-sm text-[var(--color-ink-subtle)]">Uncertain</li>
             ) : (
               analysis.assignment_types.map((item) => (
                 <li key={item.type} className="text-sm text-[var(--color-ink-muted)]">
-                  {assignmentTypeLabel(item.type)}
+                  {assignmentTypeLabel(t, item.type)}
                   <ConfidenceTag confidence={item.confidence} />
                   {item.source === "USER" ? <OriginTag source="USER_NOTE" /> : null}
                   {item.rationale ? (
@@ -507,14 +522,14 @@ export function AnalysisPanel({
           </ul>
         </div>
         <div>
-          <p className="text-sm font-medium text-[var(--color-ink-muted)]">Academic domain</p>
+          <p className="text-sm font-medium text-[var(--color-ink-muted)]">{t("analysis.academicDomainLabel")}</p>
           <ul data-testid="classification-domains" className="mt-1 space-y-1">
             {analysis.academic_domains.length === 0 ? (
               <li className="text-sm text-[var(--color-ink-subtle)]">Uncertain</li>
             ) : (
               analysis.academic_domains.map((item) => (
                 <li key={item.domain} className="text-sm text-[var(--color-ink-muted)]">
-                  {academicDomainLabel(item.domain)}
+                  {academicDomainLabel(t, item.domain)}
                   <ConfidenceTag confidence={item.confidence} />
                   {item.rationale ? (
                     <span className="block text-xs text-[var(--color-ink-subtle)]">{item.rationale}</span>
@@ -563,9 +578,9 @@ export function AnalysisPanel({
                   <p className="mt-0.5 text-sm text-[var(--color-ink-muted)]">{requirement.description}</p>
                 ) : null}
                 <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
-                  {requirementCategoryLabel(requirement.category)} ·{" "}
-                  {requirement.priority.toLowerCase()} priority ·{" "}
-                  {requirement.required ? "required" : "optional"}
+                  {requirementCategoryLabel(t, requirement.category)} ·{" "}
+                  {t("analysis.priorityLabel", { label: priorityLabel(t, requirement.priority) })} ·{" "}
+                  {requirement.required ? t("analysis.required") : t("analysis.optional")}
                   {!isExplicit(requirement.source) ? <OriginTag source={requirement.source} /> : null}
                   <ConfidenceTag confidence={requirement.confidence} />
                 </p>
@@ -584,7 +599,8 @@ export function AnalysisPanel({
                 {constraint.title}
                 {constraint.value ? `: ${constraint.value}` : ""}
                 <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">
-                  ({constraint.severity.toLowerCase()} {constraint.type.toLowerCase().replace(/_/g, " ")})
+                  ({constraintSeverityLabel(t, constraint.severity)}{" "}
+                  {constraintTypeLabel(t, constraint.type)})
                 </span>
               </Bullet>
             ))}
@@ -604,7 +620,7 @@ export function AnalysisPanel({
                 <p className="font-medium">
                   {finding.description}
                   <span className="ms-2 text-xs font-normal">
-                    {findingSeverityLabel(finding.severity)}
+                    {findingSeverityLabel(t, finding.severity)}
                   </span>
                 </p>
                 {finding.hint ? (
@@ -624,7 +640,7 @@ export function AnalysisPanel({
               <Bullet key={risk.key}>
                 {risk.description}
                 <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">
-                  {findingSeverityLabel(risk.severity)} · {risk.affected_area}
+                  {findingSeverityLabel(t, risk.severity)} · {risk.affected_area}
                 </span>
                 {risk.mitigation_hint ? (
                   <span className="block text-xs text-[var(--color-ink-subtle)]">{risk.mitigation_hint}</span>
@@ -697,15 +713,15 @@ export function AnalysisPanel({
                     : deliverable.required
                       ? t("action.required")
                       : t("action.optional")}
-                  {" · "}source: {sourceKindLabel(deliverable.uncertainty)}
+                  {t("analysis.sourceLabel", { source: sourceKindLabel(t, deliverable.uncertainty) })}
                   {deliverable.expected_content.length > 0
-                    ? ` · expects: ${deliverable.expected_content.join(", ")}`
+                    ? ` · ${t("analysis.expectsLabel", { items: deliverable.expected_content.join("، ") })}`
                     : ""}
                   <ConfidenceTag confidence={deliverable.confidence} />
                 </p>
                 {deliverable.verification_needs.length > 0 ? (
                   <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
-                    To verify: {deliverable.verification_needs.join(", ")}
+                    {t("analysis.toVerify", { items: deliverable.verification_needs.join("، ") })}
                   </p>
                 ) : null}
               </li>
@@ -720,8 +736,7 @@ export function AnalysisPanel({
             <p className="text-sm text-[var(--color-ink-muted)]">A rubric was provided in your brief.</p>
           ) : (
             <p className="text-sm text-[var(--color-ink-muted)]">
-              No rubric was provided, so these expectations are inferred and you should confirm
-              them with your instructor.
+              {t("analysis.rubricInferred")}
             </p>
           )}
           {analysis.evaluation.criteria.length > 0 ? (
@@ -752,7 +767,7 @@ export function AnalysisPanel({
           ) : null}
           {analysis.evaluation.missing_rubric_information.length > 0 ? (
             <p className="mt-2 text-xs text-[var(--color-caution)]">
-              Still unknown: {analysis.evaluation.missing_rubric_information.join(", ")}
+              {t("analysis.stillUnknown", { items: analysis.evaluation.missing_rubric_information.join("، ") })}
             </p>
           ) : null}
         </Section>
@@ -761,23 +776,23 @@ export function AnalysisPanel({
       {analysis.scope.overall !== "UNKNOWN" ? (
         <Section title={t("analysis.scope")}>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm sm:grid-cols-3">
-            <dt className="text-[var(--color-ink-muted)]">Breadth</dt>
-            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.breadth.level)}</dd>
-            <dt className="text-[var(--color-ink-muted)]">Depth</dt>
-            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.depth.level)}</dd>
-            <dt className="text-[var(--color-ink-muted)]">Research</dt>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.breadth")}</dt>
+            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(t, analysis.scope.breadth.level)}</dd>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.depth")}</dt>
+            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(t, analysis.scope.depth.level)}</dd>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.research")}</dt>
             <dd className="text-[var(--color-ink)]">
-              {scopeLevelLabel(analysis.scope.research_intensity.level)}
+              {scopeLevelLabel(t, analysis.scope.research_intensity.level)}
             </dd>
-            <dt className="text-[var(--color-ink-muted)]">Writing</dt>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.writing")}</dt>
             <dd className="text-[var(--color-ink)]">
-              {scopeLevelLabel(analysis.scope.writing_intensity.level)}
+              {scopeLevelLabel(t, analysis.scope.writing_intensity.level)}
             </dd>
-            <dt className="text-[var(--color-ink-muted)]">Overall</dt>
-            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(analysis.scope.overall)}</dd>
-            <dt className="text-[var(--color-ink-muted)]">Requirements</dt>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.overall")}</dt>
+            <dd className="text-[var(--color-ink)]">{scopeLevelLabel(t, analysis.scope.overall)}</dd>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.requirements")}</dt>
             <dd className="text-[var(--color-ink)]">{analysis.scope.requirement_count}</dd>
-            <dt className="text-[var(--color-ink-muted)]">Deliverables</dt>
+            <dt className="text-[var(--color-ink-muted)]">{t("analysis.scope.deliverables")}</dt>
             <dd className="text-[var(--color-ink)]">{analysis.scope.deliverable_count}</dd>
           </dl>
         </Section>
@@ -790,7 +805,7 @@ export function AnalysisPanel({
               <Bullet key={area.key}>
                 {area.title}
                 <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">
-                  {requirementCategoryLabel(area.category)} · {sourceKindLabel(area.origin)}
+                  {requirementCategoryLabel(t, area.category)} · {sourceKindLabel(t, area.origin)}
                 </span>
                 {area.description ? (
                   <span className="block text-xs text-[var(--color-ink-subtle)]">{area.description}</span>
@@ -806,7 +821,7 @@ export function AnalysisPanel({
           <ul className="space-y-1">
             {analysis.dependencies.map((dependency, index) => (
               <Bullet key={index}>
-                {dependency.predecessor} must come before {dependency.successor}
+                {t("analysis.mustPrecede", { before: dependency.predecessor, after: dependency.successor })}
                 <span className="ms-1 text-xs text-[var(--color-ink-subtle)]">({dependency.kind})</span>
               </Bullet>
             ))}

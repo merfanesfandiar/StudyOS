@@ -14,7 +14,7 @@ reachable in both languages, including the error paths, which is where the
 work turned out to be.
 
 Every gate passes against the numbers recorded below: 265 API tests, 119 web
-unit tests, 14 real-browser tests, ruff, mypy across 108 files, tsc, eslint, and
+unit tests, 16 real-browser tests, ruff, mypy across 108 files, tsc, eslint, and
 a clean production build. Six end-to-end tests skip themselves when the API is
 not running, and the four checks that genuinely cannot run here are named
 rather than left implied — *What was not verified* is the most important section
@@ -70,7 +70,7 @@ Durability decisions that shaped the code:
 
 ### Localization
 
-- English and Persian across a typed catalogue of 622 keys. `fa` is declared as
+- English and Persian across a typed catalogue of 815 keys. `fa` is declared as
   `Record<MessageKey, string>` against a `MessageKey` union derived from `en`,
   so a missing or misspelled Persian key is a type error rather than a blank
   label in production. This is enforced, not convention.
@@ -102,7 +102,7 @@ Durability decisions that shaped the code:
 
 ### Web
 
-- `apps/web/lib/i18n/messages.ts` — the 622-key catalogue.
+- `apps/web/lib/i18n/messages.ts` — the 815-key catalogue.
 - `apps/web/lib/error-message.ts` — the single resolver every error path uses.
 - `apps/web/lib/format.ts` — translator-aware status and enum labels.
 - `apps/web/lib/use-plan.ts`, `use-analysis.ts`, `use-specification.ts` — hooks
@@ -183,14 +183,44 @@ prose in JSX rather than by any test.
 | Web lint | `eslint .` | clean |
 | Web unit | `vitest run` | 119 passed, 8 files |
 | Web build | `npm run build` | compiled successfully |
-| Browser | `playwright test` | 14 passed, 6 skipped (API absent) |
+| Browser | `playwright test` | 16 passed, 6 skipped (API absent) |
 | Local production parity | `npm run start` | HTML and `/_next/static` assets both 200 |
 
-The 14 browser tests are 9 theme-and-RTL checks (`theme-and-locale.spec.ts`)
-and 5 authenticated-page translation scans (`persian-pages.spec.ts`). The
+The 16 browser tests are 9 theme-and-RTL checks (`theme-and-locale.spec.ts`)
+and 7 authenticated-page translation scans (`persian-pages.spec.ts`). The
 translation scan intercepts API traffic, renders each page in Persian, and fails
-on untranslated Latin prose with an allowlist for product names and units. It
-found the network-error defect above.
+on untranslated Latin text with an allowlist for product names and units. It
+found the network-error defect above, and then a second class of defect that unit
+tests structurally cannot see.
+
+The detail route turned out to be where the remaining translation work was, so
+`/assignments/[id]` is now scanned in both of its states — never analyzed and
+analyzed — against a populated fixture rather than an empty one. An empty
+specification renders almost no text and would have passed a page that was
+mostly untranslated. Across both states the scan surfaced 50-odd untranslated
+strings, and every one of them was a real defect rather than a false positive:
+
+- Enum values assembled at render time (`constraint.severity` and
+  `constraint.type` concatenated into `(info technology)`), which no catalogue
+  key can catch because the phrase never exists in the source.
+- A two-word threshold on the Latin-prose rule let single English words through:
+  an untranslated `Analysis` heading, a `confidence` suffix, a `corrected`
+  marker, the `Breadth`/`Depth`/`Research`/`Writing`/`Overall` scope labels, and
+  every visible `Delete`/`Remove`/`Cancel` button. One word is usually a product
+  name, so the threshold was kept, and a second rule was added beside it: a Latin
+  word that the English catalogue uses and the Persian catalogue does not is by
+  construction copy that was left behind. That set is derived from the
+  catalogues rather than listed, so it stays correct as keys are added.
+- Accessible names built by template from English, on `Delete` and `Remove`
+  buttons, a `CheckDot`, and the readiness progress bar. These are invisible to
+  a body-text scan and unreachable by clicking in a screenshot, but they are what
+  a screen reader announces.
+- `Evidence.source_type` was being rendered through `SourceKind` labels, two
+  different vocabularies that happened to share a lookup. A requirement citing
+  the assignment title was therefore labelled untrustworthy. The two are now
+  separate catalogues.
+
+The scan that found all of this is the deliverable; the fixes are the easy half.
 
 ---
 
@@ -211,11 +241,6 @@ where this project is currently least certain.
   through the deterministic mock provider and the golden evaluation. Real
   provider latency, rate limits, and output drift are unmeasured, and the
   `LLMError → 503` path has been tested against a simulated failure only.
-- **The Persian page scan does not cover `/assignments/[id]`.** The five scanned
-  routes are `/dashboard`, `/courses`, `/assignments`, `/settings`, and
-  `/assignments/new`. The detail route is the most string-dense surface in the
-  app and is covered by unit tests and review, not by an automated scan. This is
-  the largest remaining i18n risk.
 - **Phase 3's `coverage_of` can over-report.** The union-based check can mark a
   requirement covered by a criterion that satisfies it only partially. Carried
   forward unresolved; it is a correctness question about the traceability view,
@@ -225,8 +250,9 @@ where this project is currently least certain.
 
 ## Known limitations and next steps
 
-1. Add an API-mocked `persian-pages` case for `/assignments/[id]`, which closes
-   the largest i18n coverage gap and does not require a database.
+1. Extend the Persian scan to the planning panel at `/plans/runs/[run_id]`, which
+   is the one remaining string-dense surface and is still covered by unit tests
+   and review only.
 2. Fix `coverage_of` to require a non-empty intersection for the covering
    criteria, or relabel the view as indicative.
 3. Restore `alembic/script.py.mako`, which is absent. It does not block

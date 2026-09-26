@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/error-message";
-import { humanize } from "@/lib/format";
+import { labelFor } from "@/lib/format";
 import type { ActivityEvent, VersionSummary } from "@/lib/types";
 import { usePreferences } from "@/components/preferences-provider";
 import { Alert } from "@/components/ui";
@@ -133,7 +133,7 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
           {events.map((event) => (
             <li className="rounded-xl border border-[var(--color-line)] p-3" key={event.id}>
               <p className="text-sm text-[var(--color-ink)]">
-                {event.change_summary ?? humanize(event.event_type)}
+                {event.change_summary ?? labelFor(t, "activity", event.event_type.toLowerCase())}
               </p>
               <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">{formatDate(event.created_at)}</p>
             </li>

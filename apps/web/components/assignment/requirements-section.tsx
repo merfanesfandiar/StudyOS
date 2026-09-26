@@ -56,17 +56,17 @@ export function RequirementsSection({
         <div>
           <h2 className="section-title">{t("requirements.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-            Numbered once and never reused, so references stay valid after a deletion.
+            {t("requirements.subtitle")}
           </p>
         </div>
         <span className="rounded-full bg-[var(--color-surface-sunken)] px-2.5 py-1 text-xs font-bold text-[var(--color-ink-muted)]">
-          {completed}/{requirements.length} done
+          {t("requirements.done", { done: `${completed}/${requirements.length}` })}
         </span>
       </div>
 
       {graph?.execution_order.length ? (
         <p className="mt-3 rounded-lg bg-[var(--color-canvas)] px-3 py-2 text-xs text-[var(--color-ink-muted)]">
-          A safe order to work in:{" "}
+          {t("requirements.executionOrder")}{" "}
           <span className="font-semibold text-[var(--color-ink)]">
             {graph.execution_order.join(" → ")}
           </span>
@@ -113,7 +113,7 @@ export function RequirementsSection({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <label className="sr-only" htmlFor={`status-${requirement.id}`}>
-                  Status for {requirement.code}
+                  {t("requirements.statusFor", { code: requirement.code })}
                 </label>
                 <select
                   className="rounded-lg border border-[var(--color-line-strong)] px-2 py-1 text-sm"
@@ -139,10 +139,10 @@ export function RequirementsSection({
                   onClick={() => setDependencyFor(requirement.id)}
                   type="button"
                 >
-                  Depends on
+                  {t("requirements.dependsOn")}
                 </button>
                 <button
-                  aria-label={`Delete ${requirement.code}`}
+                  aria-label={t("requirements.deleteItem", { item: requirement.code })}
                   className="text-sm font-semibold text-[var(--color-critical)]"
                   disabled={pending === `requirement-${requirement.id}`}
                   onClick={() =>
@@ -152,7 +152,7 @@ export function RequirementsSection({
                   }
                   type="button"
                 >
-                  Delete
+                  {t("action.delete")}
                 </button>
               </div>
             </div>
@@ -160,7 +160,7 @@ export function RequirementsSection({
               <ul className="mt-3 space-y-1 border-t border-[var(--color-surface-sunken)] pt-3">
                 {dependenciesOf(requirement.id).map((edge) => (
                   <li className="flex items-center justify-between text-xs" key={edge.depends_on_id}>
-                    <span className="text-[var(--color-ink-muted)]">Depends on {edge.depends_on_code}</span>
+                    <span className="text-[var(--color-ink-muted)]">{t("requirements.dependsOnCode", { code: edge.depends_on_code })}</span>
                     <button
                       className="font-semibold text-[var(--color-critical)]"
                       disabled={pending === `dependency-${edge.depends_on_id}`}
@@ -177,7 +177,7 @@ export function RequirementsSection({
                       }
                       type="button"
                     >
-                      Remove
+                      {t("action.remove")}
                     </button>
                   </li>
                 ))}
@@ -241,7 +241,7 @@ export function RequirementsSection({
             </select>
           </label>
           <SubmitButton pending={pending === "add-requirement"} pendingLabel={t("action.adding")}>
-            Add requirement
+            {t("requirements.add")}
           </SubmitButton>
         </div>
       </form>
@@ -305,7 +305,7 @@ function DependencyPicker({
           {pending ? t("action.adding") : t("requirements.addDependency")}
         </button>
         <button className="btn-secondary" onClick={onClose} type="button">
-          Cancel
+          {t("action.cancel")}
         </button>
       </div>
     </div>

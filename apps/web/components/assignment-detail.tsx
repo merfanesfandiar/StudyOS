@@ -103,7 +103,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
         <Link className="text-sm font-semibold text-[var(--color-accent-hover)]" href="/assignments">
-          ← Back to assignments
+          {t("detail.back")}
         </Link>
         <StatusBadge status={specification.assignment.status} />
       </div>

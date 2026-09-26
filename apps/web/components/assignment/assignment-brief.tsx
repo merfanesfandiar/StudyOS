@@ -74,7 +74,7 @@ export function AssignmentBrief({
     <section className="card p-6" data-testid="assignment-brief" id="brief">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="section-title">Assignment brief</h2>
+          <h2 className="section-title">{t("brief.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             {assignment.course_code} · {assignment.course_name}
           </p>
@@ -160,13 +160,13 @@ export function AssignmentBrief({
           </div>
           <dl className="space-y-4 rounded-xl bg-[var(--color-canvas)] p-4 text-sm">
             <div>
-              <dt className="font-medium text-[var(--color-ink-subtle)]">Deadline</dt>
+              <dt className="font-medium text-[var(--color-ink-subtle)]">{t("brief.deadline")}</dt>
               <dd className="mt-1 font-semibold text-[var(--color-ink)]">{formatDate(assignment.deadline)}</dd>
             </div>
             <div>
-              <dt className="font-medium text-[var(--color-ink-subtle)]">Grading total</dt>
+              <dt className="font-medium text-[var(--color-ink-subtle)]">{t("brief.gradingTotal")}</dt>
               <dd className="mt-1 font-semibold text-[var(--color-ink)]">
-                {formatWeight(criteriaTotal)} of 100%
+                {t("brief.gradingOutOf", { earned: formatWeight(criteriaTotal), total: 100 })}
               </dd>
             </div>
           </dl>

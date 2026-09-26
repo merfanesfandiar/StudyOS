@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/error-message";
-import { CHECK_LABELS, humanize, statusLabel } from "@/lib/format";
+import { CHECK_LABELS, labelFor, statusLabel } from "@/lib/format";
 import type { AssignmentSpecification } from "@/lib/types";
 import { usePreferences } from "@/components/preferences-provider";
 import { Alert, CheckDot, ReadinessMeter, StatusBadge } from "@/components/ui";
@@ -65,7 +65,9 @@ export function ReadinessPanel({
           key: "readiness.valid",
           vars: {
             score: report.readiness.score,
-            missing: report.readiness.failing_checks.map(humanize).join(", "),
+            missing: report.readiness.failing_checks
+              .map((field) => labelFor(t, "readiness.field", field))
+              .join("، "),
           },
           status: assignment.status,
         });
@@ -130,7 +132,7 @@ export function ReadinessPanel({
           <ul className="mt-2 space-y-1 text-sm text-[var(--color-critical)]">
             {readiness.failing_checks.map((field) => (
               <li key={field}>
-                <span className="font-semibold">{humanize(field)}:</span>{" "}
+                <span className="font-semibold">{labelFor(t, "readiness.field", field)}:</span>{" "}
                 {failureMessage(specification, field)}
               </li>
             ))}
@@ -145,7 +147,7 @@ export function ReadinessPanel({
             <span className="min-w-0">
               <span className="font-semibold text-[var(--color-ink)]">{check.label}</span>{" "}
               <span className="text-xs text-[var(--color-ink-subtle)]">
-                {CHECK_LABELS[check.status]} · {check.weight}%
+                {t(CHECK_LABELS[check.status])} · {check.weight}%
                 {check.blocking ? ` · ${t("readiness.required")}` : ""}
               </span>
               <span className="block text-xs leading-5 text-[var(--color-ink-subtle)]">{check.message}</span>
