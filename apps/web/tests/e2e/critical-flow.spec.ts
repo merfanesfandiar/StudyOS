@@ -3,6 +3,36 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1").replace(
+  /\/$/,
+  "",
+);
+
+/**
+ * These tests need the real API and a real database, because the thing they
+ * check is the server's readiness gate and the client's view of a plan.
+ * Stubbing that away would test the fixture rather than the flow.
+ *
+ * So when the API is not running they are skipped, loudly, rather than failed.
+ * Reporting six failures on a laptop with no Postgres trains people to ignore
+ * red, which is worse than an honest skip -- and the failure is genuinely
+ * indistinguishable from a real regression if you only read the summary: both
+ * end with the test sitting on the register page.
+ */
+async function apiIsUp(): Promise<boolean> {
+  try {
+    const response = await fetch(`${API_URL}/health`, {
+      signal: AbortSignal.timeout(2_000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+let apiAvailable = false;
+let apiChecked = false;
+
 const briefPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -107,6 +137,23 @@ async function completeSpecification(page: Page): Promise<void> {
   await page.getByTestId("document-upload").setInputFiles(briefPath);
   await expect(page.getByTestId("document-item")).toHaveCount(1);
 }
+
+test.beforeEach(async () => {
+  if (apiChecked) return;
+  apiChecked = true;
+  apiAvailable = await apiIsUp();
+  if (!apiAvailable) {
+    console.warn(
+      `[e2e] skipping the full-stack flow: no API at ${API_URL}. ` +
+        "Start it with `docker compose up -d` to run these.",
+    );
+  }
+});
+
+test.beforeEach(async ({}, testInfo) => {
+  test.skip(!apiAvailable, "API not running");
+  void testInfo;
+});
 
 test("the readiness gate blocks an incomplete specification and releases it once complete", async ({
   page,

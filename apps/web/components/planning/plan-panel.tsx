@@ -60,7 +60,7 @@ export function PlanPanel({ assignmentId }: { assignmentId: string }) {
     generate,
     regenerate,
     approve,
-  } = usePlan(assignmentId);
+  } = usePlan(assignmentId, t);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("tasks");
   const [scope, setScope] = useState<RegenerateScope>("TASKS");

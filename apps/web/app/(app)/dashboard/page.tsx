@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { AssignmentCard } from "@/components/assignment-card";
 import { usePreferences } from "@/components/preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader } from "@/components/ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { formatDate } from "@/lib/format";
 import type { Dashboard, Notification } from "@/lib/types";
 
@@ -32,7 +33,7 @@ export default function DashboardPage() {
   }, []);
 
   if (failure) {
-    return <Alert>{failure instanceof ApiError ? failure.message : t("dashboard.loadFailed")}</Alert>;
+    return <Alert>{errorMessage(failure, t, "dashboard.loadFailed")}</Alert>;
   }
   if (!data) return <LoadingState />;
 

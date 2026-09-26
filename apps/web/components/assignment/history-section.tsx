@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { humanize } from "@/lib/format";
 import type { ActivityEvent, VersionSummary } from "@/lib/types";
 import { usePreferences } from "@/components/preferences-provider";
@@ -113,9 +114,7 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
   const pages = loading ? 1 : state.pages;
   const failure = loading ? null : state.failure;
   const error = failure
-    ? failure instanceof ApiError
-      ? failure.message
-      : t("history.activityFailed")
+    ? errorMessage(failure, t, "history.activityFailed")
     : "";
 
   return (
@@ -224,14 +223,10 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
 
   const { versions, failure, opening, snapshot, snapshotFailure } = state;
   const error = failure
-    ? failure instanceof ApiError
-      ? failure.message
-      : t("history.versionsFailed")
+    ? errorMessage(failure, t, "history.versionsFailed")
     : "";
   const snapshotError = snapshotFailure
-    ? snapshotFailure instanceof ApiError
-      ? snapshotFailure.message
-      : t("history.versionFailed")
+    ? errorMessage(snapshotFailure, t, "history.versionFailed")
     : "";
 
   return (

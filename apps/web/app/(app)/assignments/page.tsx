@@ -5,7 +5,8 @@ import { useEffect, useState } from "react";
 import { AssignmentCard } from "@/components/assignment-card";
 import { usePreferences } from "@/components/preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader } from "@/components/ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { statusLabel } from "@/lib/format";
 import type { MessageKey } from "@/lib/i18n/messages";
 import type { AssignmentFilters, AssignmentListItem, AssignmentStatus, Page } from "@/lib/types";
@@ -84,7 +85,7 @@ export default function AssignmentsPage() {
             // Kept as the caught value, translated at render: putting `t` in here
             // would re-run the fetch whenever the locale changed.
             error:
-              caught instanceof ApiError ? caught.message : t("assignments.loadFailed"),
+              errorMessage(caught, t, "assignments.loadFailed"),
           });
         });
     }, 200);

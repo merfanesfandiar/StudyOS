@@ -288,7 +288,7 @@ function DependencyPicker({
         <label className="field flex-1">
           <span>{t("requirements.dependsOn")}</span>
           <select onChange={(event) => setSelected(event.target.value)} value={selected}>
-            <option value="">Choose a requirement</option>
+            <option value="">{t("requirements.choose")}</option>
             {requirements.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.code} — {item.title}

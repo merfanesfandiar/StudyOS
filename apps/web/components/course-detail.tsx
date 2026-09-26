@@ -6,7 +6,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { AssignmentCard } from "./assignment-card";
 import { usePreferences } from "./preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader, SubmitButton } from "./ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import type { AssignmentListItem, Course } from "@/lib/types";
 import { useDocumentTitle } from "@/lib/use-document-title";
 
@@ -76,7 +77,7 @@ export function CourseDetail({ courseId }: { courseId: string }) {
     }
   }
 
-  const error = failure ? (failure instanceof ApiError ? failure.message : t("courses.loadFailed")) : "";
+  const error = failure ? (errorMessage(failure, t, "courses.loadFailed")) : "";
 
   if (!course) {
     if (error) return <Alert>{error}</Alert>;

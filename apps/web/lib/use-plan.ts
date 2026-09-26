@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
+import type { MessageKey } from "@/lib/i18n/messages";
+import type { Translate } from "@/lib/i18n/translate";
 import type { PlanningRun, RegenerateScope, WorkPlan } from "@/lib/planning-types";
 
 interface PlanState {
@@ -26,12 +29,6 @@ const INITIAL: PlanState = {
   actionError: "",
 };
 
-/** A failure worth showing the student, with the server's wording. */
-function messageFor(caught: unknown, fallback: string): string {
-  if (caught instanceof ApiError) return caught.message;
-  return fallback;
-}
-
 /**
  * The plan for one assignment, plus the actions a student may take on it.
  *
@@ -44,7 +41,7 @@ function messageFor(caught: unknown, fallback: string): string {
  * A null plan is an empty state, not a failure: an assignment that was never
  * planned has nothing wrong with it.
  */
-export function usePlan(assignmentId: string) {
+export function usePlan(assignmentId: string, t: Translate) {
   const [state, setState] = useState<PlanState>(INITIAL);
 
   const applyPlan = useCallback((plan: WorkPlan | null) => {
@@ -95,21 +92,21 @@ export function usePlan(assignmentId: string) {
         setState((previous) => ({
           ...previous,
           loading: false,
-          error: messageFor(caught, "The plan could not be loaded."),
+          error: errorMessage(caught, t, "plan.loadFailed"),
         }));
       },
     );
     return () => {
       active = false;
     };
-  }, [assignmentId, read]);
+  }, [assignmentId, read, t]);
 
   /** Every mutation returns the whole plan, so the view follows the server. */
   const run = useCallback(
     async (
       busy: NonNullable<PlanState["busy"]>,
       operation: () => Promise<WorkPlan>,
-      fallback: string,
+      fallback: MessageKey,
     ) => {
       setState((previous) => ({ ...previous, busy, actionError: "" }));
       try {
@@ -121,16 +118,16 @@ export function usePlan(assignmentId: string) {
         setState((previous) => ({
           ...previous,
           busy: null,
-          actionError: messageFor(caught, fallback),
+          actionError: errorMessage(caught, t, fallback),
         }));
       }
     },
-    [applyPlan, assignmentId, read],
+    [applyPlan, assignmentId, read, t],
   );
 
   const generate = useCallback(
     (force = false) =>
-      run("generate", () => api.generatePlan(assignmentId, { force }), "The plan could not be generated."),
+      run("generate", () => api.generatePlan(assignmentId, { force }), "plan.generateFailed"),
     [assignmentId, run],
   );
 
@@ -139,7 +136,7 @@ export function usePlan(assignmentId: string) {
       run(
         "regenerate",
         () => api.regeneratePlan(assignmentId, { scope, force: true }),
-        "The plan could not be regenerated.",
+        "plan.regenerateFailed",
       ),
     [assignmentId, run],
   );
@@ -147,7 +144,7 @@ export function usePlan(assignmentId: string) {
   const approve = useCallback(() => {
     const id = state.plan?.id;
     if (!id) return Promise.resolve();
-    return run("approve", () => api.approvePlan(assignmentId, id), "The plan could not be approved.");
+    return run("approve", () => api.approvePlan(assignmentId, id), "plan.approveFailed");
   }, [assignmentId, run, state.plan?.id]);
 
   const current = state.assignmentId === assignmentId ? state : INITIAL;

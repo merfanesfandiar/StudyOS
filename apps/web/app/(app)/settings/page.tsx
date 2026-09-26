@@ -5,7 +5,8 @@ import { useAuth } from "@/components/auth-provider";
 import { usePreferences } from "@/components/preferences-provider";
 import { LanguageToggle, ThemeToggle } from "@/components/preferences-controls";
 import { Alert, EmptyState, LoadingState, PageHeader } from "@/components/ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import type { Notification } from "@/lib/types";
 
@@ -45,7 +46,7 @@ export default function SettingsPage() {
     }
   }
 
-  const error = failure ? (failure instanceof ApiError ? failure.message : t("settings.loadFailed")) : "";
+  const error = failure ? (errorMessage(failure, t, "settings.loadFailed")) : "";
   const unread = notifications.filter((notification) => !notification.read_at).length;
 
   return (

@@ -1,7 +1,8 @@
 "use client";
 
 import { ChangeEvent, useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { formatFileSize } from "@/lib/format";
 import type { MessageKey } from "@/lib/i18n/messages";
 import type { AssignmentSpecification, Document } from "@/lib/types";
@@ -26,11 +27,7 @@ export function ResourcesSection({
   const { t, formatDate } = usePreferences();
   const { resources, assignment } = specification;
 
-  const error = failure
-    ? failure.caught instanceof ApiError
-      ? failure.caught.message
-      : t(failure.key)
-    : "";
+  const error = failure ? errorMessage(failure.caught, t, failure.key) : "";
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];

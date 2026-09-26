@@ -5,7 +5,8 @@ import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { usePreferences } from "@/components/preferences-provider";
 import { Alert, LoadingState, PageHeader, SubmitButton } from "./ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { toUtcDateTime } from "@/lib/format";
 import type { MessageKey } from "@/lib/i18n/messages";
 import type { Course } from "@/lib/types";
@@ -62,11 +63,7 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
     }
   }
 
-  const error = failure
-    ? failure.caught instanceof ApiError
-      ? failure.caught.message
-      : t(failure.key)
-    : "";
+  const error = failure ? errorMessage(failure.caught, t, failure.key) : "";
 
   if (loading) return <LoadingState label={t("new.preparing")} />;
 

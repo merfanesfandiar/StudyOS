@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { CHECK_LABELS, humanize, statusLabel } from "@/lib/format";
 import type { AssignmentSpecification } from "@/lib/types";
 import { usePreferences } from "@/components/preferences-provider";
@@ -78,9 +79,7 @@ export function ReadinessPanel({
   }
 
   const error = failure
-    ? failure instanceof ApiError
-      ? failure.message
-      : t("readiness.refused")
+    ? errorMessage(failure, t, "readiness.refused")
     : "";
   // A confirmation only applies to the state it confirmed, so a later demotion
   // cannot leave "marked ready" on screen next to an incomplete badge.

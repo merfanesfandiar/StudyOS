@@ -4,7 +4,8 @@ import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { usePreferences } from "@/components/preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader, SubmitButton } from "@/components/ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import type { Course } from "@/lib/types";
 
 export default function CoursesPage() {
@@ -56,7 +57,7 @@ export default function CoursesPage() {
     }
   }
 
-  const error = failure ? (failure instanceof ApiError ? failure.message : t("courses.loadFailed")) : "";
+  const error = failure ? (errorMessage(failure, t, "courses.loadFailed")) : "";
 
   if (loading) return <LoadingState />;
 
