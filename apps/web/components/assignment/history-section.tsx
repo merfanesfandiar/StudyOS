@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
-import { formatDate, humanize } from "@/lib/format";
+import { humanize } from "@/lib/format";
 import type { ActivityEvent, VersionSummary } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert } from "@/components/ui";
 
 type Tab = "activity" | "versions";
@@ -23,14 +24,15 @@ export function HistorySection({
   refreshToken: number;
 }) {
   const [tab, setTab] = useState<Tab>("activity");
+  const { t } = usePreferences();
 
   return (
     <section className="card p-6" data-testid="history-section" id="history">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="section-title">History</h2>
+          <h2 className="section-title">{t("history.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-            What changed, and the snapshots taken along the way.
+            {t("history.description")}
           </p>
         </div>
         <div className="flex gap-1 rounded-lg bg-[var(--color-surface-sunken)] p-1">
@@ -42,7 +44,7 @@ export function HistorySection({
             onClick={() => setTab("activity")}
             type="button"
           >
-            Activity
+            {t("history.activity")}
           </button>
           <button
             aria-pressed={tab === "versions"}
@@ -52,7 +54,7 @@ export function HistorySection({
             onClick={() => setTab("versions")}
             type="button"
           >
-            Versions
+            {t("history.versions")}
           </button>
         </div>
       </div>
@@ -70,10 +72,12 @@ interface ActivityState {
   page: number;
   events: ActivityEvent[];
   pages: number;
-  error: string;
+  /** The caught value, not a message: resolved at render so it follows the locale. */
+  failure: unknown;
 }
 
 function ActivityFeed({ assignmentId }: { assignmentId: string }) {
+  const { t, formatDate } = usePreferences();
   const [page, setPage] = useState(1);
   const [state, setState] = useState<ActivityState | null>(null);
 
@@ -87,7 +91,7 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
           page,
           events: result.items,
           pages: result.page.pages,
-          error: "",
+          failure: null,
         });
       })
       .catch((caught: unknown) => {
@@ -96,8 +100,7 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
           page,
           events: [],
           pages: 1,
-          error:
-            caught instanceof ApiError ? caught.message : "Could not load the activity feed.",
+          failure: caught,
         });
       });
     return () => {
@@ -108,17 +111,22 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
   const loading = state?.page !== page;
   const events = loading ? [] : state.events;
   const pages = loading ? 1 : state.pages;
-  const error = loading ? "" : state.error;
+  const failure = loading ? null : state.failure;
+  const error = failure
+    ? failure instanceof ApiError
+      ? failure.message
+      : t("history.activityFailed")
+    : "";
 
   return (
     <div className="mt-5">
       {error ? <Alert>{error}</Alert> : null}
       {loading && events.length === 0 ? (
-        <p className="text-sm text-[var(--color-ink-subtle)]">Loading activity…</p>
+        <p className="text-sm text-[var(--color-ink-subtle)]">{t("history.loadingActivity")}</p>
       ) : null}
       {!loading && events.length === 0 && !error ? (
         <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-          Nothing recorded yet.
+          {t("history.activityEmpty")}
         </p>
       ) : null}
       {events.length ? (
@@ -141,10 +149,10 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
             onClick={() => setPage((value) => Math.max(1, value - 1))}
             type="button"
           >
-            Newer
+            {t("history.newer")}
           </button>
           <span className="text-xs text-[var(--color-ink-subtle)]">
-            Page {page} of {pages}
+            {t("history.pageOf", { page, pages })}
           </span>
           <button
             className="btn-secondary"
@@ -152,7 +160,7 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
             onClick={() => setPage((value) => value + 1)}
             type="button"
           >
-            Older
+            {t("history.older")}
           </button>
         </div>
       ) : null}
@@ -162,18 +170,19 @@ function ActivityFeed({ assignmentId }: { assignmentId: string }) {
 
 interface VersionState {
   versions: VersionSummary[] | null;
-  error: string;
+  failure: unknown;
   opening: boolean;
-  snapshotError: string;
+  snapshotFailure: unknown;
   snapshot: Record<string, unknown> | null;
 }
 
 function VersionList({ assignmentId }: { assignmentId: string }) {
+  const { t, formatDate } = usePreferences();
   const [state, setState] = useState<VersionState>({
     versions: null,
-    error: "",
+    failure: null,
     opening: false,
-    snapshotError: "",
+    snapshotFailure: null,
     snapshot: null,
   });
 
@@ -183,15 +192,14 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
       .versions(assignmentId)
       .then((result) => {
         if (!active) return;
-        setState((current) => ({ ...current, versions: result.items, error: "" }));
+        setState((current) => ({ ...current, versions: result.items, failure: null }));
       })
       .catch((caught: unknown) => {
         if (!active) return;
         setState((current) => ({
           ...current,
           versions: [],
-          error:
-            caught instanceof ApiError ? caught.message : "Could not load the versions.",
+          failure: caught,
         }));
       });
     return () => {
@@ -200,31 +208,41 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
   }, [assignmentId]);
 
   async function openVersion(version: number) {
-    setState((current) => ({ ...current, opening: true, snapshotError: "", snapshot: null }));
+    setState((current) => ({ ...current, opening: true, snapshotFailure: null, snapshot: null }));
     try {
       const result = await api.version(assignmentId, version);
       setState((current) => ({ ...current, snapshot: result.snapshot }));
     } catch (caught) {
       setState((current) => ({
         ...current,
-        snapshotError: caught instanceof ApiError ? caught.message : "Could not load that version.",
+        snapshotFailure: caught,
       }));
     } finally {
       setState((current) => ({ ...current, opening: false }));
     }
   }
 
-  const { versions, error, opening, snapshot, snapshotError } = state;
+  const { versions, failure, opening, snapshot, snapshotFailure } = state;
+  const error = failure
+    ? failure instanceof ApiError
+      ? failure.message
+      : t("history.versionsFailed")
+    : "";
+  const snapshotError = snapshotFailure
+    ? snapshotFailure instanceof ApiError
+      ? snapshotFailure.message
+      : t("history.versionFailed")
+    : "";
 
   return (
     <div className="mt-5">
       {error ? <Alert>{error}</Alert> : null}
       {versions === null && !error ? (
-        <p className="text-sm text-[var(--color-ink-subtle)]">Loading versions…</p>
+        <p className="text-sm text-[var(--color-ink-subtle)]">{t("history.loadingVersions")}</p>
       ) : null}
       {versions?.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-          No snapshots yet. One is taken whenever the specification changes.
+          {t("history.versionsEmpty")}
         </p>
       ) : null}
       {versions?.length ? (
@@ -235,9 +253,9 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
               key={version.version}
             >
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-[var(--color-ink)]">Version {version.version}</p>
+                <p className="text-sm font-semibold text-[var(--color-ink)]">{t("history.version", { number: version.version })}</p>
                 <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
-                  {version.change_summary || "Specification snapshot"}
+                  {version.change_summary || t("history.snapshot")}
                 </p>
                 <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">{formatDate(version.created_at)}</p>
               </div>
@@ -247,7 +265,7 @@ function VersionList({ assignmentId }: { assignmentId: string }) {
                 onClick={() => void openVersion(version.version)}
                 type="button"
               >
-                View
+                {t("action.view")}
               </button>
             </li>
           ))}

@@ -2,8 +2,10 @@
 
 import { ChangeEvent, useState } from "react";
 import { ApiError, api } from "@/lib/api";
-import { formatDate, formatFileSize } from "@/lib/format";
+import { formatFileSize } from "@/lib/format";
+import type { MessageKey } from "@/lib/i18n/messages";
 import type { AssignmentSpecification, Document } from "@/lib/types";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert } from "@/components/ui";
 
 /** Uploaded evidence. StudyOS stores and serves it; it does not interpret it. */
@@ -15,22 +17,33 @@ export function ResourcesSection({
   onChanged: () => Promise<void>;
 }) {
   const [pending, setPending] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  // The caught value and the key for its fallback are kept together, so the
+  // message is chosen at render time from the catalogue rather than at catch
+  // time. Catching a non-ApiError here means something below the API layer
+  // broke, and each operation has its own way of saying so.
+  const [failure, setFailure] = useState<{ caught: unknown; key: MessageKey } | null>(null);
   const [notice, setNotice] = useState("");
+  const { t, formatDate } = usePreferences();
   const { resources, assignment } = specification;
+
+  const error = failure
+    ? failure.caught instanceof ApiError
+      ? failure.caught.message
+      : t(failure.key)
+    : "";
 
   async function upload(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
     setPending("upload");
-    setError("");
+    setFailure(null);
     setNotice("");
     try {
       await api.uploadDocument(assignment.id, file);
-      setNotice(`${file.name} uploaded.`);
+      setNotice(t("resources.uploaded", { name: file.name }));
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not upload the document.");
+      setFailure({ caught, key: "resources.uploadFailed" });
     } finally {
       event.target.value = "";
       setPending(null);
@@ -38,25 +51,25 @@ export function ResourcesSection({
   }
 
   async function download(item: Document) {
-    setError("");
+    setFailure(null);
     try {
       await api.downloadDocument(item.id, item.filename);
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not download the document.");
+      setFailure({ caught, key: "resources.downloadFailed" });
     }
   }
 
   async function remove(item: Document) {
-    if (!window.confirm(`Delete ${item.filename}?`)) return;
+    if (!window.confirm(t("resources.deleteConfirm", { name: item.filename }))) return;
     setPending(item.id);
-    setError("");
+    setFailure(null);
     setNotice("");
     try {
       await api.deleteDocument(item.id);
-      setNotice(`${item.filename} deleted.`);
+      setNotice(t("resources.deleted", { name: item.filename }));
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not delete the document.");
+      setFailure({ caught, key: "resources.deleteFailed" });
     } finally {
       setPending(null);
     }
@@ -66,9 +79,9 @@ export function ResourcesSection({
     <section className="card p-6" data-testid="resources-section" id="resources">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="section-title">Resources</h2>
+          <h2 className="section-title">{t("resources.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
-            Briefs, rubrics, and reference files. PDF, DOCX, MD, TXT, ZIP, and images up to 10 MB.
+            {t("resources.description")}
           </p>
         </div>
         <span className="rounded-full bg-[var(--color-surface-sunken)] px-2.5 py-1 text-xs font-bold text-[var(--color-ink-muted)]">
@@ -106,29 +119,29 @@ export function ResourcesSection({
                 onClick={() => void download(item)}
                 type="button"
               >
-                Download
+                {t("resources.download")}
               </button>
               <button
-                aria-label={`Delete ${item.filename}`}
+                aria-label={t("resources.deleteNamed", { name: item.filename })}
                 className="text-sm font-semibold text-[var(--color-critical)]"
                 disabled={pending === item.id}
                 onClick={() => void remove(item)}
                 type="button"
               >
-                Delete
+                {t("action.delete")}
               </button>
             </div>
           </article>
         ))}
         {resources.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-            No documents attached yet.
+            {t("resources.empty")}
           </p>
         ) : null}
       </div>
 
       <label className="btn-secondary mt-5 w-full">
-        {pending === "upload" ? "Uploading…" : "Upload document"}
+        {pending === "upload" ? t("resources.uploading") : t("resources.upload")}
         <input
           accept=".pdf,.txt,.docx,.md,.zip,.png,.jpg,.jpeg"
           className="sr-only"
