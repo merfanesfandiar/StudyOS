@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { AssignmentCard } from "@/components/assignment-card";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -11,7 +12,8 @@ import type { Dashboard, Notification } from "@/lib/types";
 export default function DashboardPage() {
   const [data, setData] = useState<Dashboard | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<unknown>(null);
+  const { t, count, formatNumber } = usePreferences();
 
   useEffect(() => {
     let active = true;
@@ -22,27 +24,45 @@ export default function DashboardPage() {
         setNotifications(items);
       })
       .catch((caught: unknown) => {
-        if (active) setError(caught instanceof ApiError ? caught.message : "Could not load the dashboard.");
+        if (active) setFailure(caught);
       });
     return () => {
       active = false;
     };
   }, []);
 
-  if (error) return <Alert>{error}</Alert>;
-  if (!data) return <LoadingState label="Loading dashboard" />;
+  if (failure) {
+    return <Alert>{failure instanceof ApiError ? failure.message : t("dashboard.loadFailed")}</Alert>;
+  }
+  if (!data) return <LoadingState />;
 
   const tiles = [
-    { label: "In progress", value: data.in_progress_assignments_count, hint: "Drafts and open work" },
-    { label: "Ready for analysis", value: data.ready_assignments_count, hint: "Gate passed" },
-    { label: "Incomplete", value: data.incomplete_assignments_count, hint: "Blocking checks failing" },
-    { label: "Completed", value: data.completed_assignments_count, hint: "Handed in" },
+    {
+      label: t("status.in_progress"),
+      value: data.in_progress_assignments_count,
+      hint: t("dashboard.hint.drafts"),
+    },
+    {
+      label: t("status.ready_for_analysis"),
+      value: data.ready_assignments_count,
+      hint: t("dashboard.hint.gate"),
+    },
+    {
+      label: t("dashboard.tile.incomplete"),
+      value: data.incomplete_assignments_count,
+      hint: t("dashboard.hint.blocking"),
+    },
+    {
+      label: t("status.completed"),
+      value: data.completed_assignments_count,
+      hint: t("dashboard.hint.handedIn"),
+    },
   ];
   const glance = [
-    { label: "Courses", value: data.courses_count },
-    { label: "Assignments", value: data.assignments_count },
-    { label: "Completion", value: `${data.completion_percentage}%` },
-    { label: "Average readiness", value: `${data.average_readiness_score}%` },
+    { label: t("nav.courses"), value: data.courses_count },
+    { label: t("nav.assignments"), value: data.assignments_count },
+    { label: t("dashboard.glance.completion"), value: formatNumber(data.completion_percentage, { style: "percent", maximumFractionDigits: 0 }) },
+    { label: t("dashboard.glance.readiness"), value: formatNumber(data.average_readiness_score, { style: "percent", maximumFractionDigits: 0 }) },
   ];
 
   return (
@@ -50,13 +70,13 @@ export default function DashboardPage() {
       <PageHeader
         action={
           <Link className="btn-primary" href="/assignments/new">
-            New assignment
+            {t("assignments.new")}
           </Link>
         }
-        description="See what needs attention and keep every brief moving forward."
-        title="Dashboard"
+        description={t("dashboard.description")}
+        title={t("nav.dashboard")}
       />
-      <section aria-label="Workspace summary" className="space-y-4">
+      <section aria-label={t("dashboard.workspaceSummary")} className="space-y-4">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {tiles.map((tile) => (
             <div className="card p-5" key={tile.label}>
@@ -80,9 +100,9 @@ export default function DashboardPage() {
       <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <section>
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="section-title">Upcoming deadlines</h2>
+            <h2 className="section-title">{t("dashboard.upcomingDeadlines")}</h2>
             <Link className="text-sm font-semibold text-[var(--color-accent-hover)]" href="/assignments">
-              View all
+              {t("dashboard.viewAll")}
             </Link>
           </div>
           {data.upcoming_assignments.length ? (
@@ -95,15 +115,15 @@ export default function DashboardPage() {
             <EmptyState
               action={
                 <Link className="btn-primary" href="/assignments/new">
-                  Create an assignment
+                  {t("assignments.create")}
                 </Link>
               }
-              description="Add a course assignment and its deadline to see it here."
-              title="Nothing due soon"
+              description={t("dashboard.emptyDeadlinesBody")}
+              title={t("dashboard.emptyDeadlines")}
             />
           )}
           <div className="mb-4 mt-9 flex items-center justify-between">
-            <h2 className="section-title">Recently updated</h2>
+            <h2 className="section-title">{t("dashboard.recentlyUpdated")}</h2>
           </div>
           {data.recent_assignments.length ? (
             <div className="card divide-y divide-[var(--color-surface-sunken)]">
@@ -116,9 +136,10 @@ export default function DashboardPage() {
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-[var(--color-ink)]">{assignment.title}</p>
                     <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
-                      {assignment.course_code} · {assignment.readiness_score}% ready ·{" "}
+                      {assignment.course_code} · {formatNumber(assignment.readiness_score, { style: "percent", maximumFractionDigits: 0 })}{" "}
+                      {t("dashboard.ready")} ·{" "}
                       {assignment.completed_requirements_count}/{assignment.requirements_count}{" "}
-                      requirements
+                      {t("requirements.title")}
                     </p>
                   </div>
                   <span className="shrink-0 text-xs text-[var(--color-ink-subtle)]">{formatDate(assignment.deadline)}</span>
@@ -126,15 +147,15 @@ export default function DashboardPage() {
               ))}
             </div>
           ) : (
-            <EmptyState description="Your latest assignments will appear here." title="No assignments yet" />
+            <EmptyState description={t("dashboard.emptyRecentBody")} title={t("dashboard.emptyAssignments")} />
           )}
         </section>
         <aside>
           <div className="mb-4 flex items-center justify-between">
-            <h2 className="section-title">Notifications</h2>
+            <h2 className="section-title">{t("dashboard.notifications")}</h2>
             {data.unread_notifications_count ? (
               <span className="rounded-full bg-[var(--color-accent-soft)] px-2.5 py-1 text-xs font-bold text-[var(--color-accent-hover)]">
-                {data.unread_notifications_count} new
+                {count("dashboard.unread", data.unread_notifications_count)}
               </span>
             ) : null}
           </div>
@@ -151,7 +172,9 @@ export default function DashboardPage() {
                 </div>
               ))
             ) : (
-              <div className="p-6 text-center text-sm text-[var(--color-ink-subtle)]">You are all caught up.</div>
+              <div className="p-6 text-center text-sm text-[var(--color-ink-subtle)]">
+                {t("dashboard.caughtUp")}
+              </div>
             )}
           </div>
         </aside>

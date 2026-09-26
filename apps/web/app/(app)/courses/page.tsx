@@ -2,17 +2,18 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
+import { usePreferences } from "@/components/preferences-provider";
 import { Alert, EmptyState, LoadingState, PageHeader, SubmitButton } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
-import { formatDate } from "@/lib/format";
 import type { Course } from "@/lib/types";
 
 export default function CoursesPage() {
   const [courses, setCourses] = useState<Course[]>([]);
   const [loading, setLoading] = useState(true);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<unknown>(null);
   const [success, setSuccess] = useState("");
+  const { t, count, formatDate } = usePreferences();
 
   useEffect(() => {
     let active = true;
@@ -22,9 +23,7 @@ export default function CoursesPage() {
         if (active) setCourses(items);
       })
       .catch((caught: unknown) => {
-        if (active) {
-          setError(caught instanceof ApiError ? caught.message : "Could not load courses.");
-        }
+        if (active) setFailure(caught);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -37,7 +36,7 @@ export default function CoursesPage() {
   async function createCourse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
-    setError("");
+    setFailure(null);
     setSuccess("");
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
@@ -48,22 +47,24 @@ export default function CoursesPage() {
         description: String(form.get("description") ?? "") || null,
       });
       setCourses((current) => [course, ...current]);
-      setSuccess(`${course.code} was added.`);
+      setSuccess(t("courses.added", { code: course.code }));
       formElement.reset();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "Could not create the course.");
+      setFailure(caught);
     } finally {
       setPending(false);
     }
   }
 
-  if (loading) return <LoadingState label="Loading courses" />;
+  const error = failure ? (failure instanceof ApiError ? failure.message : t("courses.loadFailed")) : "";
+
+  if (loading) return <LoadingState />;
 
   return (
     <div id="main-content">
       <PageHeader
-        description="Organize your academic subjects and connect every assignment to the right course."
-        title="Courses"
+        description={t("courses.description")}
+        title={t("nav.courses")}
       />
       <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <section>
@@ -83,41 +84,53 @@ export default function CoursesPage() {
                       <h2 className="mt-3 text-lg font-bold text-[var(--color-ink)]">{course.name}</h2>
                     </div>
                     <span className="text-xs font-semibold text-[var(--color-ink-subtle)]">
-                      {course.assignment_count} assignments
+                      {count("courses.assignmentCount", course.assignment_count)}
                     </span>
                   </div>
                   <p className="mt-4 line-clamp-2 min-h-10 text-sm leading-5 text-[var(--color-ink-muted)]">
-                    {course.description || "No course description yet."}
+                    {course.description || t("courses.noDescription")}
                   </p>
-                  <p className="mt-4 text-xs text-[var(--color-ink-subtle)]">Created {formatDate(course.created_at)}</p>
+                  <p className="mt-4 text-xs text-[var(--color-ink-subtle)]">
+                    {t("courses.created", { date: formatDate(course.created_at) })}
+                  </p>
                 </Link>
               ))}
             </div>
           ) : (
-            <EmptyState description="Create your first course, then add assignments to it." title="No courses yet" />
+            <EmptyState description={t("courses.emptyBody")} title={t("courses.empty")} />
           )}
         </section>
         <aside>
           <div className="card sticky top-24 p-5">
-            <h2 className="section-title">Add a course</h2>
-            <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">Course codes are unique in your workspace.</p>
+            <h2 className="section-title">{t("courses.create")}</h2>
+            <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">{t("courses.uniqueCode")}</p>
             <form className="mt-5 space-y-4" onSubmit={createCourse}>
               {error ? <Alert>{error}</Alert> : null}
               {success ? <Alert tone="success">{success}</Alert> : null}
               <label className="field">
-                <span>Course name</span>
+                <span>{t("courses.courseName")}</span>
                 <input maxLength={160} name="name" required type="text" />
               </label>
               <label className="field">
-                <span>Course code</span>
-                <input maxLength={32} name="code" placeholder="e.g. CS201" required type="text" />
+                <span>{t("courses.courseCode")}</span>
+                <input
+                  maxLength={32}
+                  name="code"
+                  placeholder={t("courses.codePlaceholder")}
+                  required
+                  type="text"
+                />
               </label>
               <label className="field">
-                <span>Description</span>
+                <span>{t("common.description")}</span>
                 <textarea maxLength={5000} name="description" />
               </label>
-              <SubmitButton className="btn-primary w-full" pending={pending} pendingLabel="Adding…">
-                Add course
+              <SubmitButton
+                className="btn-primary w-full"
+                pending={pending}
+                pendingLabel={t("common.adding")}
+              >
+                {t("courses.add")}
               </SubmitButton>
             </form>
           </div>
