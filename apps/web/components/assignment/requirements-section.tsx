@@ -43,7 +43,7 @@ export function RequirementsSection({
       await action();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "That change could not be saved.");
+      setError(caught instanceof ApiError ? caught.message : t("requirements.saveFailed"));
     } finally {
       setPending(null);
     }
@@ -53,7 +53,7 @@ export function RequirementsSection({
     <section className="card p-6" data-testid="requirements-section" id="requirements">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <h2 className="section-title">Requirements</h2>
+          <h2 className="section-title">{t("requirements.title")}</h2>
           <p className="mt-1 text-sm text-[var(--color-ink-subtle)]">
             Numbered once and never reused, so references stay valid after a deletion.
           </p>
@@ -98,7 +98,7 @@ export function RequirementsSection({
                     {priorityLabel(t, requirement.priority)}
                   </span>
                   <span className="rounded bg-[var(--color-surface-sunken)] px-2 py-0.5">
-                    {requirement.is_required ? "Required" : "Optional"}
+                    {requirement.is_required ? t("action.required") : t("action.optional")}
                   </span>
                   {dependenciesOf(requirement.id).length ? (
                     <span className="rounded bg-[var(--color-accent-soft)] px-2 py-0.5 text-[var(--color-accent-hover)]">
@@ -210,11 +210,11 @@ export function RequirementsSection({
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="field">
-            <span>Title</span>
+            <span>{t("requirements.fieldTitle")}</span>
             <input maxLength={240} name="title" required type="text" />
           </label>
           <label className="field">
-            <span>Type</span>
+            <span>{t("requirements.fieldType")}</span>
             <select defaultValue="FUNCTIONAL" name="type">
               {REQUIREMENT_TYPE_OPTIONS.map((value) => (
                 <option key={value} value={value}>
@@ -225,12 +225,12 @@ export function RequirementsSection({
           </label>
         </div>
         <label className="field">
-          <span>Description</span>
+          <span>{t("requirements.fieldDescription")}</span>
           <textarea maxLength={5000} name="description" />
         </label>
         <div className="flex items-end gap-3">
           <label className="field flex-1">
-            <span>Priority</span>
+            <span>{t("requirements.fieldPriority")}</span>
             <select defaultValue="MEDIUM" name="priority">
               {PRIORITY_OPTIONS.map((value) => (
                 <option key={value} value={value}>
@@ -239,7 +239,7 @@ export function RequirementsSection({
               ))}
             </select>
           </label>
-          <SubmitButton pending={pending === "add-requirement"} pendingLabel="Adding…">
+          <SubmitButton pending={pending === "add-requirement"} pendingLabel={t("action.adding")}>
             Add requirement
           </SubmitButton>
         </div>
@@ -276,6 +276,7 @@ function DependencyPicker({
   onCreate: (dependsOnId: string) => void;
   onClose: () => void;
 }) {
+  const { t } = usePreferences();
   const [selected, setSelected] = useState("");
   return (
     <div className="mt-4 rounded-xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-4">
@@ -284,7 +285,7 @@ function DependencyPicker({
       </p>
       <div className="mt-3 flex flex-wrap items-end gap-3">
         <label className="field flex-1">
-          <span>Depends on</span>
+          <span>{t("requirements.dependsOn")}</span>
           <select onChange={(event) => setSelected(event.target.value)} value={selected}>
             <option value="">Choose a requirement</option>
             {requirements.map((item) => (
@@ -300,7 +301,7 @@ function DependencyPicker({
           onClick={() => onCreate(selected)}
           type="button"
         >
-          {pending ? "Adding…" : "Add dependency"}
+          {pending ? t("action.adding") : t("requirements.addDependency")}
         </button>
         <button className="btn-secondary" onClick={onClose} type="button">
           Cancel
