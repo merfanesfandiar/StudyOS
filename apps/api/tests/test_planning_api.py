@@ -11,6 +11,7 @@ would otherwise hide.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -33,6 +34,62 @@ class _UnreachableProvider(LLMProvider):
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
         raise LLMUnavailableError("no route to host")
+
+
+class _UnvalidatableProvider(LLMProvider):
+    """A model that answers with a plan whose graph cannot be persisted.
+
+    Distinct from `_UnreachableProvider` on purpose. "No answer" and "an answer
+    that is wrong" reach the caller by different routes and fail for different
+    reasons, and a test suite that only exercises the first one will happily
+    pass while the second loses the failed run entirely.
+    """
+
+    name = "unvalidatable"
+    model = "unvalidatable-model-v1"
+
+    async def complete(self, request: LLMRequest) -> LLMResponse:
+        # Valid against `PlannerOutput`, so the failure lands in graph validation
+        # rather than in JSON parsing -- which would be a different error on a
+        # different path. The dependency names a task key that does not exist, so
+        # the graph rules have to reject it.
+        return LLMResponse(
+            content=json.dumps(
+                {
+                    "title": "A plan with a dangling dependency",
+                    "summary": "Valid schema, unsound graph.",
+                    "tasks": [
+                        {
+                            "key": "T-1",
+                            "title": "Write the introduction",
+                            "description": "Depends on a task that does not exist.",
+                            "depends_on": ["T-404"],
+                            "min_minutes": 45,
+                            "max_minutes": 90,
+                        }
+                    ],
+                    "milestones": [],
+                }
+            ),
+            provider=self.name,
+            model=self.model,
+        )
+
+
+@contextmanager
+def unvalidatable_provider(*, fallback_enabled: bool) -> Iterator[None]:
+    """A model that responds, badly, with the floor set explicitly."""
+    original_provider = planning_router._provider
+    original_fallback = planning_router.settings.planning_fallback_enabled
+    planning_router._provider = (  # type: ignore[assignment]
+        lambda model=None: _UnvalidatableProvider()
+    )
+    planning_router.settings.planning_fallback_enabled = fallback_enabled
+    try:
+        yield
+    finally:
+        planning_router._provider = original_provider  # type: ignore[assignment]
+        planning_router.settings.planning_fallback_enabled = original_fallback
 
 
 @contextmanager
@@ -740,6 +797,42 @@ async def test_a_failed_attempt_is_recorded_with_its_error(
     assert latest["completed_at"] is not None, "a failed run must be closed, not left RUNNING"
     assert latest["error_code"]
     assert latest["error_message"]
+
+
+async def test_a_rejected_proposal_is_recorded_like_a_missing_answer(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A model that answers with an unsound plan fails the same way a silent one does.
+
+    The requirement is durability, not the specific status code. `PlanGraphError`
+    is a bare `ValueError`, so before this was handled the request became an
+    unhandled 500 and the rollback at teardown took the failed run with it. The
+    student saw a 500 and a version history that claimed nothing had ever been
+    attempted, which is the exact lie the provider path was fixed to stop telling.
+    """
+    await _plan(client, assignment["id"])
+
+    with unvalidatable_provider(fallback_enabled=False):
+        rejected = await client.post(
+            f"/api/v1/assignments/{assignment['id']}/plans", json={"force": True}
+        )
+    assert rejected.status_code == 502, rejected.text
+    body = rejected.json()["error"]
+    assert body["code"] == "PLAN_REJECTED"
+    # The violations have to reach the caller, or the student is left guessing what
+    # to change about a 502.
+    assert body["details"]["violations"], "a rejection without violations is not actionable"
+
+    runs = (await client.get(f"/api/v1/assignments/{assignment['id']}/plans/runs")).json()
+    assert runs["page"]["total"] == 2, "the rejected attempt was not recorded"
+    latest = runs["items"][0]
+    assert latest["status"] == "FAILED"
+    assert latest["plan_id"] is None
+    assert latest["completed_at"] is not None, "a rejected run must be closed, not left RUNNING"
+    assert latest["error_code"] == "PLAN_REJECTED"
+
+    # A rejection is not a reason to abandon the student: the earlier plan stands.
+    assert (await client.get(f"/api/v1/assignments/{assignment['id']}/plans")).json() is not None
 
 
 async def test_model_selection_explains_the_choice_without_generating(

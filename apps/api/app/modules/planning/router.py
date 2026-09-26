@@ -43,6 +43,7 @@ from app.modules.analysis.service import (
 from app.modules.assignments.service import load_owned_assignment
 from app.modules.planning import service
 from app.modules.planning.complexity import score_complexity
+from app.modules.planning.graph import PlanGraphError
 from app.modules.planning.orchestrator import GenerationResult, generate_plan
 from app.modules.planning.planner import PlanningPreferences
 from app.schemas.analysis import PlanningContractResponse
@@ -224,10 +225,12 @@ async def _generate(
             prompt_version=settings.llm_planner_prompt_version,
             force=payload.force,
         )
-    except LLMError as exc:
+    except (LLMError, PlanGraphError) as exc:
+        code = getattr(exc, "code", None) or "PLAN_REJECTED"
+        violations = getattr(exc, "violations", None) or []
         logger.error(
-            "PLAN_GENERATION_PROVIDER_ERROR",
-            extra={"assignment_id": str(assignment.id), "code": exc.code},
+            "PLAN_GENERATION_ATTEMPT_FAILED",
+            extra={"assignment_id": str(assignment.id), "code": code},
         )
         # The orchestrator has already rolled the attempt's own work back to its
         # savepoint and closed the run as FAILED, so what is left pending is
@@ -235,6 +238,13 @@ async def _generate(
         # run. Committing those is the point -- rolling the whole transaction
         # back here would erase the only trace of a request that was made, and a
         # clean-looking history for a generation that failed is a lie.
+        #
+        # Both failure modes go through here for that reason. A model that
+        # returns an unvalidatable graph is as much a failed attempt as one that
+        # never answers, and when fallback is off both would otherwise be lost:
+        # `PlanGraphError` is a bare ValueError, so the generic handler turned it
+        # into a 500 and the rollback at request teardown took the failed run with
+        # it, leaving the history clean and the student staring at a 500.
         await record_audit(
             db,
             user_id=user.id,
@@ -243,14 +253,24 @@ async def _generate(
             event_type=AuditEventType.PLAN_GENERATION_FAILED,
             entity_type="Assignment",
             entity_id=assignment.id,
-            metadata={"code": exc.code, "trigger": trigger.value},
+            metadata={"code": code, "trigger": trigger.value, "violations": violations},
         )
         await db.commit()
+        if isinstance(exc, LLMError):
+            raise AppError(
+                503,
+                "PLANNER_UNAVAILABLE",
+                "The planning model is unavailable and no fallback was permitted.",
+                {"code": exc.code},
+            ) from exc
+        # 502, not 422: the request was well formed and the model was the thing
+        # that failed. The violations travel with the error so the caller can say
+        # what was wrong without the student guessing from a status code.
         raise AppError(
-            503,
-            "PLANNER_UNAVAILABLE",
-            "The planning model is unavailable and no fallback was permitted.",
-            {"code": exc.code},
+            502,
+            "PLAN_REJECTED",
+            "The proposed plan did not validate and no fallback was permitted.",
+            {"violations": violations},
         ) from exc
 
 
