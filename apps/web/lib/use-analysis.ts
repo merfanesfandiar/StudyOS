@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { ApiError, api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
+import type { MessageKey } from "@/lib/i18n/messages";
+import type { Translate } from "@/lib/i18n/translate";
 import type {
   AnalysisEditRequest,
   AssignmentAnalysis,
@@ -20,9 +23,7 @@ interface AnalysisState {
   actionError: string;
 }
 
-function messageFor(caught: unknown, fallback: string): string {
-  return caught instanceof ApiError ? caught.message : fallback;
-}
+
 
 /** An assignment that was never analyzed is an empty state, not a failure. */
 function isNotAnalyzed(caught: unknown): boolean {
@@ -50,7 +51,7 @@ const INITIAL: AnalysisState = {
  * `ANALYSIS_NOT_FOUND` simply means "not analyzed yet", so it is reported as an
  * empty state rather than an error.
  */
-export function useAnalysis(assignmentId: string, refreshToken?: number | string) {
+export function useAnalysis(assignmentId: string, t: Translate, refreshToken?: number | string) {
   const [state, setState] = useState<AnalysisState>(INITIAL);
 
   const applyResult = useCallback((analysis: AssignmentAnalysis) => {
@@ -65,17 +66,17 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
     }));
   }, []);
 
-  const failAction = useCallback((caught: unknown, fallback: string) => {
+  const failAction = useCallback((caught: unknown, fallback: MessageKey) => {
     setState((previous) => ({
       ...previous,
       busy: false,
-      actionError: messageFor(caught, fallback),
+      actionError: errorMessage(caught, t, fallback),
     }));
-  }, []);
+  }, [t]);
 
   /** Every mutation goes through here so the busy flag and errors stay uniform. */
   const run = useCallback(
-    async (operation: () => Promise<AssignmentAnalysis>, fallback: string) => {
+    async (operation: () => Promise<AssignmentAnalysis>, fallback: MessageKey) => {
       setState((previous) => ({ ...previous, busy: true, actionError: "" }));
       try {
         applyResult(await operation());
@@ -98,10 +99,10 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
       setState((previous) => ({
         ...previous,
         loading: false,
-        error: messageFor(caught, "Could not load the analysis."),
+        error: errorMessage(caught, t, "analysis.loadFailed"),
       }));
     }
-  }, [assignmentId, applyResult]);
+  }, [assignmentId, applyResult, t]);
 
   useEffect(() => {
     let active = true;
@@ -121,14 +122,14 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
         setState((previous) => ({
           ...previous,
           loading: false,
-          error: messageFor(caught, "Could not load the analysis."),
+          error: errorMessage(caught, t, "analysis.loadFailed"),
         }));
       },
     );
     return () => {
       active = false;
     };
-  }, [assignmentId, refreshToken, applyResult]);
+  }, [assignmentId, refreshToken, applyResult, t]);
 
   const analyze = useCallback(
     (options: { force?: boolean; userNotes?: string } = {}) =>
@@ -138,7 +139,7 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
             force: options.force ?? false,
             user_notes: options.userNotes ?? null,
           }),
-        "The analysis could not be generated.",
+        "analysis.generateFailed",
       ),
     [assignmentId, run],
   );
@@ -149,7 +150,7 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
         const id = state.analysis?.id;
         if (!id) throw new Error("No analysis to accept.");
         return api.acceptAnalysis(assignmentId, id, note);
-      }, "The analysis could not be accepted."),
+      }, "analysis.acceptFailed"),
     [assignmentId, run, state.analysis?.id],
   );
 
@@ -159,7 +160,7 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
         const id = state.analysis?.id;
         if (!id) throw new Error("No analysis to reject.");
         return api.rejectAnalysis(assignmentId, id, note);
-      }, "The analysis could not be rejected."),
+      }, "analysis.rejectFailed"),
     [assignmentId, run, state.analysis?.id],
   );
 
@@ -169,7 +170,7 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
         const id = state.analysis?.id;
         if (!id) throw new Error("No analysis to answer in.");
         return api.answerQuestion(assignmentId, id, questionId, answer);
-      }, "The answer could not be saved."),
+      }, "analysis.answerFailed"),
     [assignmentId, run, state.analysis?.id],
   );
 
@@ -179,7 +180,7 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
         const id = state.analysis?.id;
         if (!id) throw new Error("No analysis to update.");
         return api.dismissQuestion(assignmentId, id, questionId, reason);
-      }, "The question could not be dismissed."),
+      }, "analysis.dismissFailed"),
     [assignmentId, run, state.analysis?.id],
   );
 
@@ -189,7 +190,7 @@ export function useAnalysis(assignmentId: string, refreshToken?: number | string
         const id = state.analysis?.id;
         if (!id) throw new Error("No analysis to correct.");
         return api.editAnalysis(assignmentId, id, input);
-      }, "The correction could not be saved."),
+      }, "analysis.correctFailed"),
     [assignmentId, run, state.analysis?.id],
   );
 

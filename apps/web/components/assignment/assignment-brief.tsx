@@ -1,7 +1,8 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import {
   CLIENT_SETTABLE_STATUSES,
   formatDate,
@@ -63,7 +64,7 @@ export function AssignmentBrief({
       setNotice(t("brief.updated"));
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : t("brief.updateFailed"));
+      setError(errorMessage(caught, t, "brief.updateFailed"));
     } finally {
       setPending(false);
     }

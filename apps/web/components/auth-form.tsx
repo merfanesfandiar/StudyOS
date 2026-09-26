@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { ApiError } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import { useAuth } from "./auth-provider";
 import { usePreferences } from "./preferences-provider";
 import { Alert, SubmitButton } from "./ui";
@@ -29,7 +29,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       router.replace("/dashboard");
       router.refresh();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : t("auth.failed"));
+      setError(errorMessage(caught, t, "auth.failed"));
     } finally {
       setPending(false);
     }

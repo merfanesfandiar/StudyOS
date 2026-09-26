@@ -6,14 +6,17 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 import {
   LOCALE_STORAGE_KEY,
   THEME_STORAGE_KEY,
   isTheme,
+  notifyStoredPreferencesChanged,
   prefersDark,
+  subscribeToStoredPreferences,
+  subscribeToSystemDark,
   type Theme,
 } from "@/lib/theme";
 import { DEFAULT_LOCALE, dirFor, resolveLocale, type Locale } from "@/lib/i18n/locales";
@@ -42,6 +45,10 @@ interface PreferencesValue {
 
 const PreferencesContext = createContext<PreferencesValue | null>(null);
 
+const serverTheme = (): Theme => "system";
+const serverLocale = (): Locale => DEFAULT_LOCALE;
+const serverPrefersDark = (): boolean => false;
+
 function readStoredTheme(): Theme {
   if (typeof window === "undefined") return "system";
   const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
@@ -54,22 +61,25 @@ function readStoredLocale(): Locale {
 }
 
 export function PreferencesProvider({ children }: { children: ReactNode }) {
-  // Both start from storage, not from a hardcoded default, because the blocking
-  // script has already written the choice to the DOM and this must agree with it
-  // or the first client render will flip the page back.
-  const [theme, setThemeState] = useState<Theme>(readStoredTheme);
-  const [locale, setLocaleState] = useState<Locale>(readStoredLocale);
-  const [systemDark, setSystemDark] = useState<boolean>(prefersDark);
-
-  // Track the OS preference so `system` stays live: switching the laptop to dark
-  // mode should repaint an app that never touched its theme setting.
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const query = window.matchMedia("(prefers-color-scheme: dark)");
-    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
+  // The stored preferences are read through `useSyncExternalStore` rather than a
+  // `useState` initialiser, which is the obvious thing to reach for and is wrong
+  // here.
+  //
+  // A `useState` initialiser runs during render, on the server and in the
+  // browser, and the two disagree: there is no localStorage on the server, so it
+  // yields the default, while the browser yields the stored value. Every visitor
+  // whose locale is not the default then gets React error #418, "text content
+  // did not match" -- React discards the server markup and logs on every page
+  // load. The third argument is the fix: it is the value used for the server
+  // render *and* for hydration, so both agree by construction, and the client
+  // store takes over immediately afterwards.
+  //
+  // Nothing flashes as a result. The blocking script in the document head has
+  // already set `lang`, `dir` and the theme attribute before first paint, so the
+  // page comes up in the right language and direction regardless.
+  const theme = useSyncExternalStore(subscribeToStoredPreferences, readStoredTheme, serverTheme);
+  const locale = useSyncExternalStore(subscribeToStoredPreferences, readStoredLocale, serverLocale);
+  const systemDark = useSyncExternalStore(subscribeToSystemDark, prefersDark, serverPrefersDark);
 
   const effectiveTheme: "light" | "dark" = theme === "system" ? (systemDark ? "dark" : "light") : theme;
 
@@ -85,24 +95,29 @@ export function PreferencesProvider({ children }: { children: ReactNode }) {
     root.dir = dir;
   }, [dir, locale]);
 
+  // Writing the key is the update. The store notifies through the same
+  // subscription the reads use, so there is no second copy of this state to keep
+  // in step -- which is what `setThemeState` used to be.
   const setTheme = useCallback((next: Theme) => {
-    setThemeState(next);
     try {
       if (next === "system") window.localStorage.removeItem(THEME_STORAGE_KEY);
       else window.localStorage.setItem(THEME_STORAGE_KEY, next);
     } catch {
-      // Private browsing can refuse writes. The theme still applies for this
-      // session, which is better than throwing during a click handler.
+      // Private browsing can refuse writes. Private browsing is exactly when a
+      // throw here would be worst, and there is nothing to fall back to: the
+      // blocking script reads the same key, so a write that failed there is not
+      // a bug this code can paper over.
     }
+    notifyStoredPreferencesChanged();
   }, []);
 
   const setLocale = useCallback((next: Locale) => {
-    setLocaleState(next);
     try {
       window.localStorage.setItem(LOCALE_STORAGE_KEY, next);
     } catch {
-      // See setTheme: a failed write is not worth breaking the switch over.
+      // See setTheme.
     }
+    notifyStoredPreferencesChanged();
   }, []);
 
   const value = useMemo<PreferencesValue>(() => {

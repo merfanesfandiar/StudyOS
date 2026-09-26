@@ -14,7 +14,8 @@ import { DeliverablesSection, TaxonomySection } from "@/components/assignment/ta
 import { AnalysisPanel } from "@/components/assignment/analysis-panel";
 import { PlanPanel } from "@/components/planning/plan-panel";
 import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import type { MessageKey } from "@/lib/i18n/messages";
 import type { Course } from "@/lib/types";
 import { useSpecification } from "@/lib/use-specification";
@@ -37,7 +38,7 @@ const SECTIONS: { href: string; key: MessageKey }[] = [
 export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
   const router = useRouter();
   const { t } = usePreferences();
-  const { specification, graph, loading, error, refresh } = useSpecification(assignmentId);
+  const { specification, graph, loading, error, refresh } = useSpecification(assignmentId, t);
   const [courses, setCourses] = useState<Course[]>([]);
   const [deleteError, setDeleteError] = useState("");
 
@@ -67,7 +68,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
       router.refresh();
     } catch (caught) {
       setDeleteError(
-        caught instanceof ApiError ? caught.message : t("assignment.deleteFailed"),
+        errorMessage(caught, t, "assignment.deleteFailed"),
       );
     }
   }

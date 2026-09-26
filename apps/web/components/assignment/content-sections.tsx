@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import {
   CONSTRAINT_SEVERITY_OPTIONS,
   CONSTRAINT_TYPE_OPTIONS,
@@ -39,7 +40,7 @@ export function ConstraintsSection({
       await action();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : t("content.saveFailed"));
+      setError(errorMessage(caught, t, "content.saveFailed"));
     } finally {
       setPending(null);
     }
@@ -184,7 +185,7 @@ export function CriteriaSection({
       await action();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : "That change could not be saved.");
+      setError(errorMessage(caught, t, "content.saveFailed"));
     } finally {
       setPending(null);
     }

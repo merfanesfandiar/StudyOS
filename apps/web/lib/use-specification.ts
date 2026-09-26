@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
+import type { Translate } from "@/lib/i18n/translate";
 import type { AssignmentSpecification, DependencyGraph } from "@/lib/types";
 
 interface SpecificationState {
@@ -16,9 +18,7 @@ interface Loaded {
   graph: DependencyGraph | null;
 }
 
-function messageFor(caught: unknown, fallback: string): string {
-  return caught instanceof ApiError ? caught.message : fallback;
-}
+
 
 /** The graph is supporting detail, so its failure must not blank the editor. */
 async function loadSpecification(assignmentId: string): Promise<Loaded> {
@@ -58,7 +58,7 @@ function toState(
  * State carries the assignment id it belongs to, so a route change shows a
  * loading state instead of the previous assignment's data.
  */
-export function useSpecification(assignmentId: string) {
+export function useSpecification(assignmentId: string, t: Translate) {
   const [state, setState] = useState<SpecificationState | null>(null);
 
   const refresh = useCallback(async () => {
@@ -67,10 +67,10 @@ export function useSpecification(assignmentId: string) {
       setState((previous) => toState(assignmentId, loaded, "", previous));
     } catch (caught) {
       setState((previous) =>
-        toState(assignmentId, null, messageFor(caught, "Could not load the specification."), previous),
+        toState(assignmentId, null, errorMessage(caught, t, "specification.loadFailed"), previous),
       );
     }
-  }, [assignmentId]);
+  }, [assignmentId, t]);
 
   useEffect(() => {
     let active = true;
@@ -81,7 +81,7 @@ export function useSpecification(assignmentId: string) {
       (caught: unknown) => {
         if (active) {
           setState(
-            toState(assignmentId, null, messageFor(caught, "Could not load the specification."), null),
+            toState(assignmentId, null, errorMessage(caught, t, "specification.loadFailed"), null),
           );
         }
       },
@@ -89,7 +89,7 @@ export function useSpecification(assignmentId: string) {
     return () => {
       active = false;
     };
-  }, [assignmentId]);
+  }, [assignmentId, t]);
 
   const current = state?.id === assignmentId ? state : null;
   return {

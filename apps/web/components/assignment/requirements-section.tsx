@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { ApiError, api } from "@/lib/api";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 import {
   PRIORITY_OPTIONS,
   REQUIREMENT_STATUS_OPTIONS,
@@ -43,7 +44,7 @@ export function RequirementsSection({
       await action();
       await onChanged();
     } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : t("requirements.saveFailed"));
+      setError(errorMessage(caught, t, "requirements.saveFailed"));
     } finally {
       setPending(null);
     }

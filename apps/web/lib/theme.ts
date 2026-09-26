@@ -55,3 +55,38 @@ document.documentElement.lang=(l==="fa")?"fa-IR":(l==="en"?"en-US":"en-US");
 document.documentElement.dir=(l==="fa")?"rtl":"ltr";
 }catch(e){}})();`;
 }
+
+/**
+ * Change notification for the stored preferences.
+ *
+ * `localStorage` has no event of its own for writes made by the same tab, and
+ * this module is the only thing that writes these two keys, so it keeps its own
+ * listener set. The `storage` event covers other tabs, which a user with the
+ * app open twice would otherwise not see.
+ */
+const listeners = new Set<() => void>();
+
+function notify(): void {
+  for (const listener of listeners) listener();
+}
+
+export function notifyStoredPreferencesChanged(): void {
+  notify();
+}
+
+export function subscribeToStoredPreferences(listener: () => void): () => void {
+  listeners.add(listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    listeners.delete(listener);
+    window.removeEventListener("storage", listener);
+  };
+}
+
+/** Subscribe to the OS colour scheme so `system` stays live. */
+export function subscribeToSystemDark(listener: () => void): () => void {
+  if (typeof window.matchMedia !== "function") return () => {};
+  const query = window.matchMedia("(prefers-color-scheme: dark)");
+  query.addEventListener("change", listener);
+  return () => query.removeEventListener("change", listener);
+}

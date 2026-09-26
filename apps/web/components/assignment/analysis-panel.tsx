@@ -431,7 +431,7 @@ export function AnalysisPanel({
     dismissQuestion,
     setTypes,
     setDomains,
-  } = useAnalysis(assignmentId, refreshToken);
+  } = useAnalysis(assignmentId, t, refreshToken);
 
   if (loading) {
     return <LoadingState label={t("analysis.loading")} />;
