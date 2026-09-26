@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import { AuthProvider } from "@/components/auth-provider";
 import { PreferencesProvider } from "@/components/preferences-provider";
+import { SkipLink } from "@/components/skip-link";
 import { localeBootstrapScript, themeBootstrapScript } from "@/lib/theme";
 import "./globals.css";
 
@@ -45,13 +46,8 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
         <script dangerouslySetInnerHTML={{ __html: bootstrap }} />
       </head>
       <body>
-        <a
-          className="sr-only z-50 rounded-[var(--radius-control)] bg-[var(--color-accent)] px-4 py-2 font-semibold text-[var(--color-accent-ink)] focus:not-sr-only focus:fixed focus:start-4 focus:top-4"
-          href="#main-content"
-        >
-          Skip to content
-        </a>
         <PreferencesProvider>
+          <SkipLink />
           <AuthProvider>{children}</AuthProvider>
         </PreferencesProvider>
       </body>
