@@ -51,6 +51,8 @@ export const en = {
 
   "language.label": "Language",
   "language.toggle": "Change language",
+  "language.switchTo": "Switch to {language}",
+  "language.current": "Language: {language}",
 
   "auth.signIn": "Sign in",
   "auth.signUp": "Create account",
@@ -928,6 +930,8 @@ export const fa: Catalogue = {
 
   "language.label": "زبان",
   "language.toggle": "تغییر زبان",
+  "language.switchTo": "تغییر زبان به {language}",
+  "language.current": "زبان: {language}",
 
   "auth.signIn": "ورود",
   "auth.signUp": "ساخت حساب",

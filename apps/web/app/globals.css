@@ -69,80 +69,92 @@
 }
 
 :root[data-theme="dark"] {
-  color-scheme: dark;
 
-  --color-canvas: oklch(17% 0.012 265);
-  --color-surface: oklch(21.5% 0.014 265);
-  --color-surface-sunken: oklch(15% 0.012 265);
-  --color-surface-raised: oklch(25% 0.016 265);
+  /*
+   * These values are repeated verbatim in the `prefers-color-scheme` block below,
+   * which is the no-JS path: `theme.ts` only writes `data-theme` once JavaScript
+   * runs, so without the media query a dark-mode user with no stored preference
+   * would get the light palette. Keep the two lists identical -- a drift between
+   * them shows up as a page that looks wrong only for people who never touched
+   * the theme switch.
+   */
+
+  --color-canvas: oklch(12% 0.014 268);
+  --color-surface: oklch(22% 0.016 268);
+  --color-surface-sunken: oklch(8.5% 0.013 268);
+  --color-surface-raised: oklch(27% 0.02 268);
 
   /*
    * Not pure white. Pure white on a dark background is brighter than the
-   * surrounding page and reads as a hole; 92% is as light as text goes before
+   * surrounding page and reads as a hole; 95% is as light as text goes before
    * it starts to bloom on an OLED panel.
    */
-  --color-ink: oklch(93% 0.008 265);
-  --color-ink-muted: oklch(74% 0.014 265);
-  --color-ink-subtle: oklch(60% 0.014 265);
-  --color-ink-inverted: oklch(17% 0.012 265);
+  --color-ink: oklch(95% 0.01 268);
+  --color-ink-muted: oklch(76% 0.016 268);
+  --color-ink-subtle: oklch(66% 0.016 268);
+  --color-ink-inverted: oklch(12% 0.014 268);
 
-  --color-line: oklch(30% 0.016 265);
-  --color-line-strong: oklch(40% 0.02 265);
+  --color-line: oklch(29% 0.018 268);
+  --color-line-strong: oklch(38.5% 0.024 268);
 
-  --color-accent: oklch(70% 0.16 274);
-  --color-accent-hover: oklch(76% 0.16 274);
-  --color-accent-soft: oklch(28% 0.05 274);
-  --color-accent-ink: oklch(17% 0.012 265);
+  --color-accent: oklch(72% 0.17 272);
+  --color-accent-hover: oklch(78% 0.17 272);
+  --color-accent-soft: oklch(30% 0.055 272);
+  --color-accent-ink: oklch(12% 0.014 268);
 
   /* Status colours lift in lightness for dark backgrounds, and their `-soft`
      partners become tinted surfaces rather than tinted text backgrounds. */
-  --color-positive: oklch(74% 0.15 155);
-  --color-positive-soft: oklch(27% 0.05 155);
-  --color-caution: oklch(80% 0.14 80);
-  --color-caution-soft: oklch(29% 0.05 80);
-  --color-critical: oklch(70% 0.17 25);
-  --color-critical-soft: oklch(28% 0.06 25);
-  --color-info: oklch(72% 0.12 235);
-  --color-info-soft: oklch(27% 0.05 235);
+  --color-positive: oklch(76% 0.15 158);
+  --color-positive-soft: oklch(28% 0.05 158);
+  --color-caution: oklch(82% 0.14 82);
+  --color-caution-soft: oklch(30% 0.05 82);
+  --color-critical: oklch(72% 0.17 25);
+  --color-critical-soft: oklch(29% 0.06 25);
+  --color-info: oklch(74% 0.12 235);
+  --color-info-soft: oklch(28% 0.05 235);
 
-  --color-focus: oklch(72% 0.16 274);
-
-  /* A shadow on a dark surface is nearly invisible, so dark mode lifts the
-     surface instead and uses a border to do the separating. */
-  --shadow-card: 0 1px 2px oklch(0% 0 0 / 0.3);
-  --shadow-raised: 0 8px 24px oklch(0% 0 0 / 0.45);
+  --color-focus: oklch(74% 0.17 272);
 }
 
 /* Follow the OS when the user has not expressed a preference. */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
+  --color-canvas: oklch(12% 0.014 268);
+  --color-surface: oklch(22% 0.016 268);
+  --color-surface-sunken: oklch(8.5% 0.013 268);
+  --color-surface-raised: oklch(27% 0.02 268);
 
-    --color-canvas: oklch(17% 0.012 265);
-    --color-surface: oklch(21.5% 0.014 265);
-    --color-surface-sunken: oklch(15% 0.012 265);
-    --color-surface-raised: oklch(25% 0.016 265);
-    --color-ink: oklch(93% 0.008 265);
-    --color-ink-muted: oklch(74% 0.014 265);
-    --color-ink-subtle: oklch(60% 0.014 265);
-    --color-ink-inverted: oklch(17% 0.012 265);
-    --color-line: oklch(30% 0.016 265);
-    --color-line-strong: oklch(40% 0.02 265);
-    --color-accent: oklch(70% 0.16 274);
-    --color-accent-hover: oklch(76% 0.16 274);
-    --color-accent-soft: oklch(28% 0.05 274);
-    --color-accent-ink: oklch(17% 0.012 265);
-    --color-positive: oklch(74% 0.15 155);
-    --color-positive-soft: oklch(27% 0.05 155);
-    --color-caution: oklch(80% 0.14 80);
-    --color-caution-soft: oklch(29% 0.05 80);
-    --color-critical: oklch(70% 0.17 25);
-    --color-critical-soft: oklch(28% 0.06 25);
-    --color-info: oklch(72% 0.12 235);
-    --color-info-soft: oklch(27% 0.05 235);
-    --color-focus: oklch(72% 0.16 274);
-    --shadow-card: 0 1px 2px oklch(0% 0 0 / 0.3);
-    --shadow-raised: 0 8px 24px oklch(0% 0 0 / 0.45);
+  /*
+   * Not pure white. Pure white on a dark background is brighter than the
+   * surrounding page and reads as a hole; 95% is as light as text goes before
+   * it starts to bloom on an OLED panel.
+   */
+  --color-ink: oklch(95% 0.01 268);
+  --color-ink-muted: oklch(76% 0.016 268);
+  --color-ink-subtle: oklch(66% 0.016 268);
+  --color-ink-inverted: oklch(12% 0.014 268);
+
+  --color-line: oklch(29% 0.018 268);
+  --color-line-strong: oklch(38.5% 0.024 268);
+
+  --color-accent: oklch(72% 0.17 272);
+  --color-accent-hover: oklch(78% 0.17 272);
+  --color-accent-soft: oklch(30% 0.055 272);
+  --color-accent-ink: oklch(12% 0.014 268);
+
+  /* Status colours lift in lightness for dark backgrounds, and their `-soft`
+     partners become tinted surfaces rather than tinted text backgrounds. */
+  --color-positive: oklch(76% 0.15 158);
+  --color-positive-soft: oklch(28% 0.05 158);
+  --color-caution: oklch(82% 0.14 82);
+  --color-caution-soft: oklch(30% 0.05 82);
+  --color-critical: oklch(72% 0.17 25);
+  --color-critical-soft: oklch(29% 0.06 25);
+  --color-info: oklch(74% 0.12 235);
+  --color-info-soft: oklch(28% 0.05 235);
+
+  --color-focus: oklch(74% 0.17 272);
   }
 }
 

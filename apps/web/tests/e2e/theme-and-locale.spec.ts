@@ -94,6 +94,64 @@ async function tokenRgb(page: Page, token: string): Promise<[number, number, num
 
 const luminance = ([r, g, b]: [number, number, number]) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
+
+/**
+ * An authenticated page, for the controls that only exist inside the app shell.
+ *
+ * The shell is behind auth, and the login page has no theme or language control
+ * in it -- which is precisely why the compact language toggle went untested for
+ * as long as it was broken. Seeding preferences proves they are *applied*; it
+ * says nothing about whether the control you press to change them works.
+ */
+async function openShell(browser: Browser, theme: string, locale: string) {
+  const api = "http://localhost:8000/api/v1";
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await seed(page, theme, locale);
+  const user = {
+    id: "11111111-1111-4111-8111-111111111111",
+    name: "Sara",
+    email: "sara@example.edu",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+  const empty = { items: [], page: { page: 1, page_size: 20, total: 0, pages: 1 } };
+  // A single catch-all shape is not enough: the dashboard expects its stats
+  // object and throws on a page envelope, and Next answers a thrown route with
+  // its own English error page -- which then fails this suite for a reason that
+  // has nothing to do with preferences.
+  const shapes: Record<string, unknown> = {
+    "/courses": [],
+    "/assignments": empty,
+    "/notifications": [],
+    "/dashboard": {
+      upcoming_assignments: [],
+      recent_assignments: [],
+      courses_count: 0,
+      assignments_count: 0,
+      in_progress_assignments_count: 0,
+      ready_assignments_count: 0,
+      incomplete_assignments_count: 0,
+      completed_assignments_count: 0,
+      completion_percentage: 0,
+      average_readiness_score: 0,
+      unread_notifications_count: 0,
+    },
+  };
+  await page.route(`${api}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname.replace("/api/v1", "");
+    return route.fulfill({
+      json: shapes[path] ?? empty,
+      contentType: "application/json",
+    });
+  });
+  await page.route(`${api}/auth/me`, (route) =>
+    route.fulfill({ json: user, contentType: "application/json" }),
+  );
+  await page.goto("/dashboard");
+  return { context, page };
+}
+
 test.describe("theme", () => {
   test("the stored theme is applied before first paint", async ({ browser }) => {
     const { context, page } = await openWith(browser, "dark", "en");
@@ -229,6 +287,52 @@ test.describe("locale and direction", () => {
     } finally {
       await ltrRun.context.close();
       await rtlRun.context.close();
+    }
+  });
+});
+
+test.describe("the controls in the app shell", () => {
+  test("the compact language control switches the language when clicked", async ({ browser }) => {
+    // A real click, not a DOM-level `selectOption`.
+    //
+    // The previous control was a `<label>` wrapped around a visually hidden
+    // native `<select>`. Driving that select from the DOM changed the locale
+    // perfectly well, so nothing was wrong with the state -- but `sr-only` clips
+    // the control to a 1px box, so a user's click opened the OS picker at that
+    // degenerate position, away from the button. Setting the value in a test
+    // passed while the button did nothing for a person. Only clicking it proves
+    // the affordance.
+    const { context, page } = await openShell(browser, "light", "en");
+    try {
+      await expect(page.locator("h1, h2").first()).toBeVisible();
+      expect(await page.getAttribute("html", "lang")).toBe("en-US");
+
+      const control = page.getByRole("button", { name: /Switch to فارسی/ });
+      await control.click();
+
+      await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+      await expect(page.locator("html")).toHaveAttribute("lang", "fa-IR");
+      // The control now offers the way back, so the change is reversible from
+      // the same place rather than only through settings.
+      await expect(page.getByRole("button", { name: /تغییر زبان به English/ })).toBeVisible();
+      // And it survives a reload, which is what makes it a setting rather than a
+      // one-off.
+      await page.reload();
+      await expect(page.locator("html")).toHaveAttribute("dir", "rtl");
+    } finally {
+      await context.close();
+    }
+  });
+
+  test("the compact theme control switches the theme when clicked", async ({ browser }) => {
+    const { context, page } = await openShell(browser, "light", "en");
+    try {
+      await expect(page.locator("h1, h2").first()).toBeVisible();
+      const light = await canvasRgb(page);
+      await page.getByRole("button", { name: /theme/i }).first().click();
+      await expect.poll(async () => (await canvasRgb(page)) !== light).toBe(true);
+    } finally {
+      await context.close();
     }
   });
 });

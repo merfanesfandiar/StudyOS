@@ -103,28 +103,37 @@ export function LanguageToggle({ compact = false }: { compact?: boolean }) {
   const { locale, setLocale, t } = usePreferences();
 
   if (compact) {
-    // The current language is always written in that language. A globe icon
-    // with no label tells the user nothing about which language they are in,
-    // and "EN" tells them nothing if they cannot read Latin.
+    // A real button, not a `<label>` wrapped around a visually hidden native
+    // `<select>`.
+    //
+    // That was the previous design and it was quietly broken. `sr-only` clips
+    // the control to a 1px box, so a click opened the OS picker at that
+    // degenerate position -- far from where the button appears, sometimes not
+    // visibly at all. The button also had no focus ring and no pressed state,
+    // because a `<label>` is not a control. Toggling through the DOM worked, which
+    // is why no test caught it: nothing about the state was wrong, only the
+    // affordance.
+    //
+    // Two locales make a direct switch unambiguous, and it matches the theme
+    // button beside it. The full radio group still lives in settings, so both
+    // languages stay discoverable and nothing is lost by not cycling through a
+    // longer list here.
+    const index = LOCALES.indexOf(locale);
+    const next = LOCALES[(index + 1) % LOCALES.length];
+    // The current language is always written in that language: a globe icon
+    // says nothing about which language you are in, and "EN" says nothing to
+    // someone who cannot read Latin.
     const meta = LOCALE_META[locale];
     return (
-      <label className="btn-ghost !min-h-9 cursor-pointer !px-2" title={t("language.toggle")}>
-        <span aria-hidden="true" className="text-sm font-semibold">
-          {meta.label}
-        </span>
-        <select
-          aria-label={t("language.toggle")}
-          className="sr-only"
-          onChange={(event) => setLocale(event.target.value as (typeof LOCALES)[number])}
-          value={locale}
-        >
-          {LOCALES.map((option) => (
-            <option key={option} value={option}>
-              {LOCALE_META[option].label}
-            </option>
-          ))}
-        </select>
-      </label>
+      <button
+        aria-label={t("language.switchTo", { language: LOCALE_META[next].label })}
+        className="btn-ghost !min-h-9 !px-2 font-semibold"
+        onClick={() => setLocale(next)}
+        title={t("language.current", { language: meta.label })}
+        type="button"
+      >
+        <span aria-hidden="true">{meta.label}</span>
+      </button>
     );
   }
 
