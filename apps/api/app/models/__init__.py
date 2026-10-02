@@ -1,5 +1,11 @@
 from app.models.entities import (
     AcademicWorkPlan,
+    AgentArtifact,
+    AgentCheckpoint,
+    AgentDecision,
+    AgentEvent,
+    AgentRun,
+    AgentTaskExecution,
     AnalysisClassification,
     AnalysisQuestion,
     AnalysisRun,
@@ -33,6 +39,12 @@ from app.models.entities import (
 
 __all__ = [
     "AcademicWorkPlan",
+    "AgentArtifact",
+    "AgentCheckpoint",
+    "AgentDecision",
+    "AgentEvent",
+    "AgentRun",
+    "AgentTaskExecution",
     "AnalysisClassification",
     "AnalysisQuestion",
     "AnalysisRun",

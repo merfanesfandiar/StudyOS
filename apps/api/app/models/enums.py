@@ -342,6 +342,25 @@ class AuditEventType(StrEnum):
     PLAN_MARKED_STALE = "PLAN_MARKED_STALE"
     PLAN_PREFERENCES_UPDATED = "PLAN_PREFERENCES_UPDATED"
 
+    # Phase 5: the agent runtime lifecycle. Recorded for the same reason as the
+    # planner rows: a run must be attributable to a request, a user and a plan
+    # version even when it never completes.
+    AGENT_RUN_CREATED = "AGENT_RUN_CREATED"
+    AGENT_RUN_STARTED = "AGENT_RUN_STARTED"
+    AGENT_RUN_PAUSED = "AGENT_RUN_PAUSED"
+    AGENT_RUN_RESUMED = "AGENT_RUN_RESUMED"
+    AGENT_RUN_CANCELLED = "AGENT_RUN_CANCELLED"
+    AGENT_RUN_COMPLETED = "AGENT_RUN_COMPLETED"
+    AGENT_RUN_FAILED = "AGENT_RUN_FAILED"
+    AGENT_RUN_RETRIED = "AGENT_RUN_RETRIED"
+    AGENT_TASK_COMPLETED = "AGENT_TASK_COMPLETED"
+    AGENT_TASK_FAILED = "AGENT_TASK_FAILED"
+    AGENT_TASK_BLOCKED = "AGENT_TASK_BLOCKED"
+    AGENT_CHECKPOINT_CREATED = "AGENT_CHECKPOINT_CREATED"
+    AGENT_CHECKPOINT_RESOLVED = "AGENT_CHECKPOINT_RESOLVED"
+    AGENT_ARTIFACT_CREATED = "AGENT_ARTIFACT_CREATED"
+    AGENT_ARTIFACT_REVISED = "AGENT_ARTIFACT_REVISED"
+
 
 # ---------------------------------------------------------------------------
 # Phase 4: the Academic Planning Engine.
@@ -532,3 +551,193 @@ class PlanTrigger(StrEnum):
     REGENERATED = "REGENERATED"
     EDITED = "EDITED"
     APPROVED = "APPROVED"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: the Professional Agent Runtime.
+#
+# Agent vocabulary is domain-agnostic on the same terms as the planner's. There
+# is no "run_unit_tests" action or "code" executor: an action says what the
+# runtime decided, and the executor says how this task kind is carried out. The
+# only executor that implies an external capability is MOCK_TOOL, and even that
+# runs in-process.
+# ---------------------------------------------------------------------------
+
+
+class AgentRunStatus(StrEnum):
+    """Lifecycle of one agent run over an approved plan.
+
+    The interesting states are the ones where the runtime is *not* moving:
+    ``WAITING_FOR_USER`` is a deliberate hand-off, ``BLOCKED`` is a dependency
+    or resource wall, and ``PAUSED`` is a student decision. Keeping them apart
+    matters because they need different UI copy and different resume rules.
+    """
+
+    CREATED = "CREATED"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    WAITING_FOR_USER = "WAITING_FOR_USER"
+    PAUSED = "PAUSED"
+    BLOCKED = "BLOCKED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class AgentAction(StrEnum):
+    """The closed set of decisions the runtime may take.
+
+    A model may not invent an action. Anything outside this vocabulary is
+    rejected at the schema layer before it can reach the database, which is what
+    keeps "the model decided something" from meaning "the model decided anything".
+    """
+
+    EXECUTE_TASK = "EXECUTE_TASK"
+    ASK_USER = "ASK_USER"
+    REQUEST_APPROVAL = "REQUEST_APPROVAL"
+    CREATE_ARTIFACT = "CREATE_ARTIFACT"
+    UPDATE_ARTIFACT = "UPDATE_ARTIFACT"
+    REVIEW_RESULT = "REVIEW_RESULT"
+    RETRY_TASK = "RETRY_TASK"
+    MARK_BLOCKED = "MARK_BLOCKED"
+    COMPLETE_TASK = "COMPLETE_TASK"
+    PAUSE_RUN = "PAUSE_RUN"
+
+
+class AgentExecutorKind(StrEnum):
+    """How a task kind is executed.
+
+    One interface, several strategies. ``MOCK_TOOL`` is the deterministic
+    executor the tests drive; the rest resolve to provider-backed strategies in
+    Phase 5 and remain the extension point later workers plug into.
+    """
+
+    REASONING = "REASONING"
+    WRITING = "WRITING"
+    ANALYSIS = "ANALYSIS"
+    RESEARCH = "RESEARCH"
+    CALCULATION = "CALCULATION"
+    PLANNING = "PLANNING"
+    ARTIFACT = "ARTIFACT"
+    MOCK_TOOL = "MOCK_TOOL"
+
+
+class AgentExecutionStatus(StrEnum):
+    """Outcome of one attempt at one task."""
+
+    SUCCESS = "SUCCESS"
+    PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+    NEEDS_USER_INPUT = "NEEDS_USER_INPUT"
+    NEEDS_APPROVAL = "NEEDS_APPROVAL"
+    SKIPPED = "SKIPPED"
+
+
+class AgentArtifactType(StrEnum):
+    """What an artifact holds.
+
+    ``CODE`` exists as a type, not as a capability: the runtime may draft code
+    as text without ever executing it. See ``agent-runtime.md`` for why that
+    distinction is load-bearing.
+    """
+
+    TEXT = "TEXT"
+    MARKDOWN = "MARKDOWN"
+    REPORT = "REPORT"
+    OUTLINE = "OUTLINE"
+    SOLUTION = "SOLUTION"
+    CALCULATION = "CALCULATION"
+    PROOF_DRAFT = "PROOF_DRAFT"
+    PRESENTATION = "PRESENTATION"
+    RESEARCH_NOTES = "RESEARCH_NOTES"
+    CODE = "CODE"
+    DOCUMENT = "DOCUMENT"
+
+
+class AgentArtifactStatus(StrEnum):
+    DRAFT = "DRAFT"
+    ACTIVE = "ACTIVE"
+    SUPERSEDED = "SUPERSEDED"
+    ARCHIVED = "ARCHIVED"
+
+
+class AgentCheckpointType(StrEnum):
+    """Why the runtime stopped and handed control back to the student."""
+
+    CLARIFICATION = "CLARIFICATION"
+    APPROVAL = "APPROVAL"
+    REVIEW = "REVIEW"
+    DECISION = "DECISION"
+    MISSING_INFORMATION = "MISSING_INFORMATION"
+    PERMISSION = "PERMISSION"
+
+
+class AgentCheckpointStatus(StrEnum):
+    PENDING = "PENDING"
+    RESOLVED = "RESOLVED"
+    CANCELLED = "CANCELLED"
+    EXPIRED = "EXPIRED"
+
+
+class AgentEventType(StrEnum):
+    """The durable, user-safe activity stream.
+
+    This is what the activity panel renders. It is deliberately *not* a reasoning
+    trace: every value here is something a person can read and learn from.
+    """
+
+    RUN_CREATED = "RUN_CREATED"
+    RUN_STARTED = "RUN_STARTED"
+    TASK_SELECTED = "TASK_SELECTED"
+    CONTEXT_BUILT = "CONTEXT_BUILT"
+    MODEL_SELECTED = "MODEL_SELECTED"
+    DECISION_RECORDED = "DECISION_RECORDED"
+    TASK_STARTED = "TASK_STARTED"
+    TASK_COMPLETED = "TASK_COMPLETED"
+    TASK_FAILED = "TASK_FAILED"
+    TASK_RETRIED = "TASK_RETRIED"
+    TASK_BLOCKED = "TASK_BLOCKED"
+    TASK_SKIPPED = "TASK_SKIPPED"
+    ARTIFACT_CREATED = "ARTIFACT_CREATED"
+    ARTIFACT_UPDATED = "ARTIFACT_UPDATED"
+    CHECKPOINT_REQUESTED = "CHECKPOINT_REQUESTED"
+    CHECKPOINT_RESOLVED = "CHECKPOINT_RESOLVED"
+    RUN_PAUSED = "RUN_PAUSED"
+    RUN_RESUMED = "RUN_RESUMED"
+    RUN_CANCELLED = "RUN_CANCELLED"
+    RUN_COMPLETED = "RUN_COMPLETED"
+    RUN_FAILED = "RUN_FAILED"
+    RUN_RECOVERED = "RUN_RECOVERED"
+    TOOL_INVOKED = "TOOL_INVOKED"
+    TOOL_BLOCKED = "TOOL_BLOCKED"
+
+
+class AgentFailureCategory(StrEnum):
+    """Why an attempt failed, in terms the recovery policy can act on.
+
+    Retryability is a property of the category, not of the message, so backoff
+    and give-up decisions are testable without parsing English.
+    """
+
+    TRANSIENT_PROVIDER = "TRANSIENT_PROVIDER"
+    RATE_LIMITED = "RATE_LIMITED"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    CONTEXT_ERROR = "CONTEXT_ERROR"
+    DEPENDENCY_ERROR = "DEPENDENCY_ERROR"
+    PERMISSION_DENIED = "PERMISSION_DENIED"
+    USER_INPUT_REQUIRED = "USER_INPUT_REQUIRED"
+    UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
+    SYSTEM_ERROR = "SYSTEM_ERROR"
+    CANCELLED = "CANCELLED"
+
+
+class AgentRunMode(StrEnum):
+    """How much autonomy the student granted.
+
+    ``SUPERVISED`` is the default and the only mode that may ask a checkpoint
+    question mid-run. ``AUTONOMOUS`` runs to the next genuine wall.
+    """
+
+    SUPERVISED = "SUPERVISED"
+    AUTONOMOUS = "AUTONOMOUS"

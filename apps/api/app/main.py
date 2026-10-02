@@ -8,6 +8,7 @@ from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestLoggingMiddleware
+from app.modules.agent.router import router as agent_router
 from app.modules.analysis.router import router as analysis_router
 from app.modules.assignments import router as assignments_router
 from app.modules.assignments.content_router import router as assignment_content_router
@@ -66,6 +67,7 @@ app.include_router(taxonomy_router)
 app.include_router(specification_router)
 app.include_router(analysis_router)
 app.include_router(planning_router)
+app.include_router(agent_router)
 app.include_router(documents_router)
 app.include_router(dashboard_router)
 app.include_router(notifications_router)

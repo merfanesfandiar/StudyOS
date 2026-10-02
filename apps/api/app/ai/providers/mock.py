@@ -21,11 +21,70 @@ class MockLLMProvider(LLMProvider):
 
     def __init__(self, model: str = "mock-academic-analyzer-v1") -> None:
         self.model = model
+        #: Scripted agent outcomes, consumed in order. Lets a test drive the
+        #: runtime through success, failure, retry, checkpoint, partial
+        #: completion, invalid output and low confidence without a network call
+        #: and without monkeypatching the provider.
+        self._agent_script: list[str] = []
+
+    def script_agent(self, *outcomes: str) -> None:
+        """Queue raw decision payloads for the next agent calls."""
+        self._agent_script = list(outcomes)
 
     async def complete(self, request: LLMRequest) -> LLMResponse:
+        if "agent_input" in request.metadata:
+            return self._agent(request)
+        if "agent_execution_input" in request.metadata:
+            return self._execute(request)
         if "planner_input" in request.metadata:
             return self._plan(request)
         return self._analyze(request)
+
+    # -- Phase 5: the agent runtime ------------------------------------
+    #
+    # The mock answers agent calls deterministically. With no script queued it
+    # picks a valid action from the task context, so the default path is a
+    # well-behaved run; a queued script is how tests exercise the unhappy paths.
+    # There is no randomness anywhere here, which is what makes the runtime's
+    # retry and recovery behaviour reproducible.
+
+    def _agent(self, request: LLMRequest) -> LLMResponse:
+        if self._agent_script:
+            content = self._agent_script.pop(0)
+            return self._respond_text(content, request.metadata)
+        payload = request.metadata["agent_input"]
+        task_key = str(payload.get("task_key", "T1"))
+        decision = {
+            "action": "EXECUTE_TASK",
+            "task_key": task_key,
+            "reason": "This task is executable and its predecessors are done.",
+            "expected_output": "A draft the student can review.",
+            "confidence": 0.9,
+        }
+        return self._respond_text(json.dumps(decision), request.metadata)
+
+    def _execute(self, request: LLMRequest) -> LLMResponse:
+        payload = request.metadata["agent_execution_input"]
+        task_key = str(payload.get("task_key", "T1"))
+        task_type = str(payload.get("task_type", "OTHER"))
+        body = (
+            f"Work product for {task_key} ({task_type}).\n\n"
+            "Produced deterministically by the mock provider for offline runs, "
+            "CI and tests. A real provider would replace this with real work."
+        )
+        result = {"summary": f"Produced work for {task_key}.", "content": body}
+        return self._respond_text(json.dumps(result), request.metadata)
+
+    def _respond_text(self, content: str, payload: object) -> LLMResponse:
+        return LLMResponse(
+            content=content,
+            provider=self.name,
+            model=self.model,
+            usage=_approximate_usage(content, payload),
+        )
+
+    def _respond(self, result: object, payload: object) -> LLMResponse:
+        return self._respond_text(json.dumps(result, ensure_ascii=False, default=str), payload)
 
     def _analyze(self, request: LLMRequest) -> LLMResponse:
         payload = request.metadata.get("analyzer_input") or {}
@@ -55,20 +114,17 @@ class MockLLMProvider(LLMProvider):
         )
         return self._respond(plan.model_dump(mode="json"), request.metadata)
 
-    def _respond(self, result: object, payload: object) -> LLMResponse:
-        content = json.dumps(result, ensure_ascii=False, default=str)
 
-        # Approximate usage so token accounting and cost estimation are exercised
-        # without pretending to know real tokenizer output.
-        prompt_tokens = max(1, len(json.dumps(payload, default=str)) // 4)
-        completion_tokens = max(1, len(content) // 4)
-        return LLMResponse(
-            content=content,
-            provider=self.name,
-            model=self.model,
-            usage=LLMUsage(
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-            ),
-        )
+def _approximate_usage(content: str, payload: object) -> LLMUsage:
+    """Approximate token accounting.
+
+    Explicitly an approximation: it exists so token accounting and cost
+    estimation are exercised end to end, not to claim real tokenizer output.
+    """
+    prompt_tokens = max(1, len(json.dumps(payload, default=str)) // 4)
+    completion_tokens = max(1, len(content) // 4)
+    return LLMUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+    )

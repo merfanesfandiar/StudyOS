@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { AgentPanel } from "@/components/agent/agent-panel";
 import { usePlan } from "@/lib/use-plan";
 import type { PlanMilestone, PlanTask, RegenerateScope, WorkPlan } from "@/lib/planning-types";
 import { usePreferences } from "@/components/preferences-provider";
@@ -417,6 +418,14 @@ export function PlanPanel({ assignmentId }: { assignmentId: string }) {
       {lastRun?.routing_reason && tab === "history" && (
         <p className="muted text-xs">{lastRun.routing_reason}</p>
       )}
+
+      {/*
+        The agent runs the approved plan, so it belongs inside this panel rather
+        than beside it: the dependency is visible in the interface, and the
+        approval state that gates it is already here. It is not a second fetch of
+        the plan -- that would be two readers racing on one piece of state.
+      */}
+      <AgentPanel assignmentId={assignmentId} hasApprovedPlan={isApproved} />
     </section>
   );
 }

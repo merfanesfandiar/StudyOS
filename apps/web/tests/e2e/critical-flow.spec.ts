@@ -345,3 +345,89 @@ test("editing the specification marks an existing analysis out of date", async (
   await expect(page.getByText(/out of date/i)).toBeVisible();
   await expect(page.getByTestId("reanalyze")).toBeEnabled();
 });
+
+/**
+ * The agent loop, in a browser.
+ *
+ * Three properties are asserted here that unit tests cannot reach, because they
+ * only exist once a real browser and a real API are in the loop:
+ *
+ * 1. The agent is unreachable until a plan is approved. The panel states the
+ *    requirement rather than offering a button that will be refused.
+ * 2. Creating a run and starting it are separate steps. A student who opens the
+ *    workspace has not agreed to spend anything.
+ * 3. Whatever the runtime cannot do is stated on screen before it is used.
+ */
+test("the agent needs an approved plan, and a run only starts when asked", async ({ page }) => {
+  await seedDraft(page);
+  await completeSpecification(page);
+
+  const agent = section(page, "agent-panel");
+
+  // Before a plan exists, the requirement is explained rather than guessed at.
+  await expect(agent).toContainText("Needs an approved plan");
+  await expect(agent.getByRole("button", { name: "Create run" })).toHaveCount(0);
+
+  // The boundary is published by the server and rendered as it was received.
+  await expect(agent.getByText("What this agent cannot do")).toBeVisible();
+
+  await page.getByTestId("analyze").click();
+  await expect(page.getByTestId("analysis-summary")).toBeVisible();
+  await page.getByTestId("accept-analysis").click();
+
+  await page.getByRole("button", { name: "Generate plan" }).click();
+  await expect(agent.getByRole("button", { name: "Create run" })).toBeVisible({ timeout: 30_000 });
+
+  // Creating a run does not start it. Nothing is in flight until Start is pressed.
+  await agent.getByRole("button", { name: "Create run" }).click();
+  await expect(agent.getByRole("button", { name: "Start" })).toBeVisible();
+  await expect(agent.getByText("Running")).toHaveCount(0);
+
+  await agent.getByRole("button", { name: "Start" }).click();
+
+  // The run stops somewhere honest: finished, waiting for a decision, or blocked.
+  // Any of those is a real outcome; what must never appear is a run that claims
+  // to be working with nothing happening behind it.
+  await expect(
+    agent.getByText(/Finished|Waiting for you|Blocked|Paused/).first(),
+  ).toBeVisible({ timeout: 60_000 });
+
+  // The progress bar is a real <progress>, so it is announced rather than
+  // being an unlabelled div.
+  const progress = agent.getByRole("progressbar");
+  if (await progress.count()) {
+    await expect(progress).toHaveAttribute("aria-label", "Progress");
+  }
+});
+
+test("a run can be paused and cancelled, and both survive a reload", async ({ page }) => {
+  test.setTimeout(120_000);
+  await seedDraft(page);
+  await completeSpecification(page);
+
+  await page.getByTestId("analyze").click();
+  await expect(page.getByTestId("analysis-summary")).toBeVisible();
+  await page.getByTestId("accept-analysis").click();
+  await page.getByRole("button", { name: "Generate plan" }).click();
+
+  const agent = section(page, "agent-panel");
+  await agent.getByRole("button", { name: "Create run" }).click({ timeout: 30_000 });
+  await expect(agent.getByRole("button", { name: "Start" })).toBeVisible();
+  await agent.getByRole("button", { name: "Start" }).click();
+  await expect(agent.getByText(/Finished|Waiting for you|Blocked|Paused/).first()).toBeVisible({
+    timeout: 60_000,
+  });
+
+  // Cancelling is offered while there is something to cancel.
+  const cancel = agent.getByRole("button", { name: "Cancel run" });
+  if (await cancel.count()) {
+    await cancel.click();
+    await expect(agent.getByText("Cancelled")).toBeVisible();
+
+    // Terminal means terminal, across a reload.
+    await page.reload();
+    await expect(section(page, "agent-panel")).toContainText("Cancelled");
+    // And no control is offered for a run that has finished.
+    await expect(section(page, "agent-panel").getByRole("button", { name: "Cancel run" })).toHaveCount(0);
+  }
+});

@@ -35,6 +35,16 @@ import type {
   VersionSummary,
 } from "./types";
 import type {
+  AgentCapabilities,
+  AgentCheckpoint,
+  AgentCheckpointResolveInput,
+  AgentRun,
+  AgentRunActionInput,
+  AgentRunCreateInput,
+  AgentRunDetail,
+  RecoveryReport,
+} from "./agent-types";
+import type {
   ModelSelection,
   PlanGenerateInput,
   PlanRegenerateInput,
@@ -397,4 +407,86 @@ export const api = {
   /** The router's decision, explained. Powers the "which model" panel. */
   planModelSelection: (assignmentId: string) =>
     request<ModelSelection>(`/assignments/${assignmentId}/plans/model-selection`),
+
+  // -- Agent runtime --------------------------------------------------------
+  //
+  // The runtime executes an approved plan, so every route hangs off the
+  // assignment and is refused by the server without one. Reads never trigger
+  // work: creating a run does not start it, and starting it is a separate,
+  // deliberate call. That separation is what lets a student open the workspace
+  // without spending anything.
+
+  /**
+   * What the runtime can do, and what it cannot.
+   *
+   * Includes `absent_capabilities` on purpose. The UI shows it, so "can this run
+   * my code?" is answered on screen instead of in documentation nobody opens.
+   */
+  agentCapabilities: (assignmentId: string) =>
+    request<AgentCapabilities>(`/assignments/${assignmentId}/agent/capabilities`),
+
+  /** Creates the run. Does not start it. Refused without an approved plan. */
+  createAgentRun: (assignmentId: string, input: AgentRunCreateInput = {}) =>
+    request<AgentRun>(`/assignments/${assignmentId}/agent/runs`, {
+      method: "POST",
+      ...json(input),
+    }),
+  agentRuns: (assignmentId: string) =>
+    request<{ items: AgentRun[] }>(`/assignments/${assignmentId}/agent/runs`),
+  agentRun: (assignmentId: string, runId: string) =>
+    request<AgentRunDetail>(`/assignments/${assignmentId}/agent/runs/${runId}`),
+
+  /** Runs to the next real wall: a question, a budget, or the end. */
+  startAgentRun: (assignmentId: string, runId: string) =>
+    request<AgentRunDetail>(`/assignments/${assignmentId}/agent/runs/${runId}/start`, {
+      method: "POST",
+    }),
+  pauseAgentRun: (assignmentId: string, runId: string, note?: string) =>
+    request<AgentRunDetail>(`/assignments/${assignmentId}/agent/runs/${runId}/pause`, {
+      method: "POST",
+      ...json({ note } as AgentRunActionInput),
+    }),
+  /** `note` is required to resume from blocked: it is what the student did. */
+  resumeAgentRun: (assignmentId: string, runId: string, note?: string) =>
+    request<AgentRunDetail>(`/assignments/${assignmentId}/agent/runs/${runId}/resume`, {
+      method: "POST",
+      ...json({ note } as AgentRunActionInput),
+    }),
+  cancelAgentRun: (assignmentId: string, runId: string, note?: string) =>
+    request<AgentRunDetail>(`/assignments/${assignmentId}/agent/runs/${runId}/cancel`, {
+      method: "POST",
+      ...json({ note } as AgentRunActionInput),
+    }),
+
+  /** The question being asked, or null. Not an error when there is none. */
+  pendingAgentCheckpoint: (assignmentId: string, runId: string) =>
+    request<AgentCheckpoint | null>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/checkpoints/pending`,
+    ),
+  /**
+   * Answer a question.
+   *
+   * `selected_option` is validated by the server against the options actually
+   * offered, so a client left open from an earlier question cannot invent an
+   * answer the student never saw.
+   */
+  resolveAgentCheckpoint: (
+    assignmentId: string,
+    runId: string,
+    checkpointId: string,
+    input: AgentCheckpointResolveInput,
+  ) =>
+    request<AgentRunDetail>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/checkpoints/${checkpointId}/resolve`,
+      { method: "POST", ...json(input) },
+    ),
+
+  /**
+   * Reclaim abandoned runs for this assignment.
+   *
+   * Scoped to the assignment on the server, so this can never touch another
+   * student's work.
+   */
+  recoverAgentRuns: (assignmentId: string) =>
+    request<RecoveryReport>(`/assignments/${assignmentId}/agent/recover`, { method: "POST" }),
 };

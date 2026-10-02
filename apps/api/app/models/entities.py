@@ -27,6 +27,14 @@ from app.models.enums import (
     AcademicTaskPriority,
     AcademicTaskStatus,
     AcademicTaskType,
+    AgentArtifactStatus,
+    AgentArtifactType,
+    AgentCheckpointStatus,
+    AgentCheckpointType,
+    AgentExecutionStatus,
+    AgentExecutorKind,
+    AgentRunMode,
+    AgentRunStatus,
     AIMode,
     AnalysisReviewStatus,
     AnalysisRunStatus,
@@ -236,6 +244,11 @@ class Assignment(TimestampMixin, Base):
         back_populates="assignment",
         cascade="all, delete-orphan",
         order_by="PlanningRun.started_at",
+    )
+    agent_runs: Mapped[list[AgentRun]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AgentRun.created_at",
     )
 
 
@@ -927,6 +940,9 @@ class AcademicWorkPlan(TimestampMixin, Base):
     runs: Mapped[list[PlanningRun]] = relationship(
         back_populates="plan", cascade="all, delete-orphan"
     )
+    agent_runs: Mapped[list[AgentRun]] = relationship(
+        back_populates="plan", cascade="all, delete-orphan"
+    )
 
 
 class PlanTask(Base):
@@ -996,6 +1012,9 @@ class PlanTask(Base):
         back_populates="predecessor",
         cascade="all, delete-orphan",
         foreign_keys="PlanTaskDependency.predecessor_id",
+    )
+    agent_executions: Mapped[list[AgentTaskExecution]] = relationship(
+        back_populates="task", cascade="all, delete-orphan"
     )
 
 
@@ -1238,3 +1257,387 @@ class PlanningPreference(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: the Professional Agent Runtime.
+#
+# An agent run is a durable, resumable attempt to execute an approved plan. The
+# runtime is deliberately incapable of unrestricted action: it has no shell, no
+# browser, no outbound network and no filesystem access. What it does have is a
+# complete record of what it tried, why, at what cost, and what it produced — so
+# a run is auditable and restartable rather than a black box that either worked
+# or did not.
+#
+# The tables split along three seams:
+#
+#   * ``agent_runs`` is the lifecycle and the only place limits are enforced.
+#   * ``agent_task_executions`` is the per-attempt ledger, so a retried task
+#     keeps every failed attempt instead of overwriting the last one.
+#   * ``agent_events`` is the user-facing activity stream, deliberately separate
+#     from ``agent_decisions`` which holds the structured rationale.
+#
+# Nothing here stores chain-of-thought. Decisions record an action, a reason and
+# an outcome, which is what an auditor actually needs.
+# ---------------------------------------------------------------------------
+
+
+class AgentRun(TimestampMixin, Base):
+    """One attempt to execute an approved plan.
+
+    A run references the exact plan version it was started against. If the plan is
+    later regenerated the run stays bound to the version it is working on, because
+    "this task completed" is only meaningful relative to what the task said at the
+    time.
+    """
+
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        Index("ix_agent_runs_assignment_id", "assignment_id"),
+        Index("ix_agent_runs_plan_id", "plan_id"),
+        Index("ix_agent_runs_status", "status"),
+        Index("ix_agent_runs_assignment_status", "assignment_id", "status"),
+        Index("ix_agent_runs_idempotency_key", "idempotency_key"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    #: SET NULL, not CASCADE: deleting a plan must not delete the record of work
+    #: a student already did against it.
+    plan_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("academic_work_plans.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Frozen at creation. Used to detect that the underlying plan was regenerated
+    #: mid-run without re-reading the plan.
+    plan_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentRunStatus.CREATED.value
+    )
+    mode: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentRunMode.SUPERVISED.value
+    )
+    #: Set once the run stops for a checkpoint or a wall, and cleared on resume.
+    #: A run with no reason is indistinguishable from one that is merely slow.
+    paused_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    #: Which model served the most recent step, kept denormalised so the run
+    #: summary is one row read rather than a join over executions.
+    model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    model_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    routing_reason: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    #: Hard loop budget. Exceeding it fails the run with SYSTEM_ERROR rather than
+    #: looping forever; see ``AgentLimits``.
+    iteration_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_iterations: Mapped[int] = mapped_column(Integer, nullable=False, default=40)
+    max_cost: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), nullable=False, default=Decimal("5.000000")
+    )
+    #: Accumulated estimate. Compared against ``max_cost`` before each provider
+    #: call, so a runaway loop is stopped rather than discovered on the invoice.
+    estimated_cost: Mapped[Decimal] = mapped_column(
+        Numeric(12, 6), nullable=False, default=Decimal("0.000000")
+    )
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Deterministic key over assignment + plan version + request, so a double
+    #: click does not start two runs.
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Monotonic counter bumped inside the run lock before every step. A step that
+    #: finds its write lost means it was superseded by a concurrent writer.
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Set while a step is in flight. A run left RUNNING with a stale heartbeat
+    #: after a restart is what ``AgentRecoveryService`` looks for.
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    triggered_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    assignment: Mapped[Assignment] = relationship(back_populates="agent_runs")
+    plan: Mapped[AcademicWorkPlan | None] = relationship(back_populates="agent_runs")
+    triggered_by: Mapped[User | None] = relationship(foreign_keys=[triggered_by_id])
+    executions: Mapped[list[AgentTaskExecution]] = relationship(
+        back_populates="run", cascade="all, delete-orphan", order_by="AgentTaskExecution.attempt"
+    )
+    artifacts: Mapped[list[AgentArtifact]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    checkpoints: Mapped[list[AgentCheckpoint]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    events: Mapped[list[AgentEvent]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    decisions: Mapped[list[AgentDecision]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class AgentTaskExecution(Base):
+    """One attempt at one plan task.
+
+    A retried task gains a new row rather than being updated in place. Losing the
+    earlier attempts would lose the only evidence of *how* the work failed, which
+    is what makes the failure category and backoff policy meaningful over time.
+    """
+
+    __tablename__ = "agent_task_executions"
+    __table_args__ = (
+        UniqueConstraint("run_id", "task_id", "attempt", name="uq_agent_execution_attempt"),
+        Index("ix_agent_task_executions_run_id", "run_id"),
+        Index("ix_agent_task_executions_task_id", "task_id"),
+        Index("ix_agent_task_executions_status", "status"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_agent_execution_task", ondelete="CASCADE"),
+        nullable=False,
+    )
+    #: Plan-local key copied at execution time so the row is readable after the
+    #: task row changes and self-describing in the activity feed.
+    task_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: 1-based. Attempt 1 is the first try; a retry is attempt 2, and so on.
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=AgentExecutionStatus.FAILED.value
+    )
+    executor: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=AgentExecutorKind.REASONING.value
+    )
+    model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    model_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: What the executor produced. ``None`` for a failure that produced nothing.
+    output: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: User-safe structured rationale. Never raw model reasoning.
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    estimated_cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 6), nullable=True)
+    failure_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Recorded so the retry policy can back off based on elapsed time rather than
+    #: on a wall-clock guess.
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Rejected-by-validation detail when the model output failed the decision
+    #: contract. Kept apart from ``error_message`` so a schema failure is
+    #: distinguishable from an execution failure.
+    validation_errors: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[AgentRun] = relationship(back_populates="executions")
+    task: Mapped[PlanTask] = relationship(back_populates="agent_executions")
+
+
+class AgentArtifact(TimestampMixin, Base):
+    """Something the run produced, owned by the student and versioned by revision.
+
+    ``code`` is a permitted artifact type, but it is stored as text and never
+    executed by the runtime. That is the whole boundary in one column.
+    """
+
+    __tablename__ = "agent_artifacts"
+    __table_args__ = (
+        UniqueConstraint("run_id", "task_id", "revision", name="uq_agent_artifact_revision"),
+        Index("ix_agent_artifacts_run_id", "run_id"),
+        Index("ix_agent_artifacts_run_type", "run_id", "artifact_type"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_agent_artifact_task", ondelete="SET NULL"),
+        nullable=True,
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    artifact_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=AgentArtifactType.TEXT.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentArtifactStatus.DRAFT.value
+    )
+    #: The body. For MARKDOWN this is the rendered source; for CODE it is text
+    #: that is never run.
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    #: Structured companion to ``content`` for results that have one: a
+    #: calculation's intermediate values, a solution's steps.
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: 1-based revision counter. An update supersedes rather than overwrites, so
+    #: "what the run produced, then what the student asked for" stays answerable.
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    #: Free-text link to the assignment deliverable this satisfies, if any. A
+    #: string, not a foreign key: the agent must not claim a deliverable is done.
+    deliverable_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    created_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    run: Mapped[AgentRun] = relationship(back_populates="artifacts")
+    task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
+    created_by: Mapped[User | None] = relationship(foreign_keys=[created_by_id])
+
+
+class AgentCheckpoint(TimestampMixin, Base):
+    """A point where the runtime deliberately hands control back to the student.
+
+    Created with ``question`` so the UI can ask something specific, and resolved
+    with the student's own ``response``. The runtime never answers its own
+    question, which is what keeps supervised mode supervised.
+    """
+
+    __tablename__ = "agent_checkpoints"
+    __table_args__ = (
+        Index("ix_agent_checkpoints_run_id", "run_id"),
+        Index("ix_agent_checkpoints_run_status", "run_id", "status"),
+        Index("ix_agent_checkpoints_task_id", "task_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_agent_checkpoint_task", ondelete="SET NULL"),
+        nullable=True,
+    )
+    checkpoint_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=AgentCheckpointType.CLARIFICATION.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentCheckpointStatus.PENDING.value
+    )
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Why this could not proceed without a person. Shown in the UI alongside the
+    #: question so "please choose" and "you must choose" are distinguishable.
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    options: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    #: Set when a checkpoint expires without an answer so a blocked run cannot be
+    #: resumed into work the student never agreed to.
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    run: Mapped[AgentRun] = relationship(back_populates="checkpoints")
+    task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
+    resolved_by: Mapped[User | None] = relationship(foreign_keys=[resolved_by_id])
+
+
+class AgentEvent(Base):
+    """The durable, user-safe activity stream for one run.
+
+    Append-only and time-ordered so the activity panel can page it. ``summary`` is
+    written for a person; the structured detail sits in ``metadata_json``. This is
+    deliberately *not* a reasoning trace.
+    """
+
+    __tablename__ = "agent_events"
+    __table_args__ = (
+        UniqueConstraint("run_id", "sequence", name="uq_agent_events_run_sequence"),
+        Index("ix_agent_events_run_id_created_at", "run_id", "created_at"),
+        Index("ix_agent_events_run_id_sequence", "run_id", "sequence"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    #: Per-run monotonic counter. ``created_at`` alone is not enough: several
+    #: events can share a timestamp within one step.
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    #: User-safe one-line description. Never raw model output.
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    task_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_agent_event_task", ondelete="SET NULL"),
+        nullable=True,
+    )
+    execution_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "agent_task_executions.id", name="fk_agent_event_execution", ondelete="SET NULL"
+        ),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    run: Mapped[AgentRun] = relationship(back_populates="events")
+    task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
+    execution: Mapped[AgentTaskExecution | None] = relationship(foreign_keys=[execution_id])
+
+
+class AgentDecision(Base):
+    """A structured decision the runtime took, with its outcome.
+
+    This is the record of *what was decided and what happened*, written by the
+    runtime after validation, never by the model directly. ``action`` is
+    constrained to :class:`AgentAction`, and ``validation_errors`` retains what
+    was rejected so a model that keeps producing invalid output is visible rather
+    than merely retried.
+    """
+
+    __tablename__ = "agent_decisions"
+    __table_args__ = (
+        UniqueConstraint("run_id", "iteration", name="uq_agent_decision_iteration"),
+        Index("ix_agent_decisions_run_id", "run_id"),
+        Index("ix_agent_decisions_action", "action"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The runtime loop iteration that produced this decision. One decision per
+    #: iteration is what makes the budget auditable.
+    iteration: Mapped[int] = mapped_column(Integer, nullable=False)
+    action: Mapped[str] = mapped_column(String(30), nullable=False)
+    #: Concise, structured rationale. The only explanation the runtime stores.
+    reason: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    expected_output: Mapped[str | None] = mapped_column(Text, nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    model_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Validated action payload: task key, artifact id, question, and so on.
+    payload: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: What the runtime did about it. A decision with no outcome is a decision
+    #: the runtime never acted on, which is worth seeing.
+    outcome: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    executed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    run: Mapped[AgentRun] = relationship(back_populates="decisions")
