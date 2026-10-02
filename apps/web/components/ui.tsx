@@ -29,27 +29,35 @@ export function PageHeader({
   );
 }
 
-const STATUS_STYLES: Record<AssignmentStatus, string> = {
-  DRAFT: "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)] ring-[var(--color-line)]",
-  INCOMPLETE: "bg-[var(--color-caution)] text-[var(--color-caution)] ring-[var(--color-caution)]",
-  READY_FOR_ANALYSIS: "bg-[var(--color-positive-soft)] text-[var(--color-positive)] ring-[var(--color-positive)]",
-  ANALYSIS_IN_PROGRESS: "bg-[var(--color-info)] text-[var(--color-info)] ring-[var(--color-info)]",
-  ANALYZED: "bg-[var(--color-positive)] text-[var(--color-positive)] ring-[var(--color-positive)]",
-  COMPLETED: "bg-[var(--color-info-soft)] text-[var(--color-info)] ring-[var(--color-info-soft)]",
-  ARCHIVED: "bg-[var(--color-caution-soft)] text-[var(--color-caution)] ring-[var(--color-caution-soft)]",
+/**
+ * One pattern for every status: a soft tinted background, saturated text on top
+ * of it, and no ring.
+ *
+ * The ring was the reason this was hard to read. Several statuses used the
+ * saturated tone for background, text *and* ring at once, so the pill was one
+ * solid block of colour with same-coloured text on it: not low contrast,
+ * invisible. A `-soft` background keeps the status legible without shouting,
+ * and dropping the ring stops a second edge competing with the label for the
+ * same meaning. `DRAFT` is neutral rather than tinted, which is the point of it.
+ *
+ * Both pairs clear WCAG AA against their own background in both themes.
+ */
+export const STATUS_STYLES: Record<AssignmentStatus, string> = {
+  DRAFT: "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)]",
+  INCOMPLETE: "bg-[var(--color-caution-soft)] text-[var(--color-caution)]",
+  READY_FOR_ANALYSIS: "bg-[var(--color-positive-soft)] text-[var(--color-positive)]",
+  ANALYSIS_IN_PROGRESS: "bg-[var(--color-info-soft)] text-[var(--color-info)]",
+  ANALYZED: "bg-[var(--color-positive-soft)] text-[var(--color-positive)]",
+  COMPLETED: "bg-[var(--color-info-soft)] text-[var(--color-info)]",
+  ARCHIVED: "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)]",
   // Rows migrated from the previous phase can still hold this value.
-  ACTIVE: "bg-[var(--color-positive-soft)] text-[var(--color-positive)] ring-[var(--color-positive)]",
+  ACTIVE: "bg-[var(--color-positive-soft)] text-[var(--color-positive)]",
 };
 
 export function StatusBadge({ status }: { status: AssignmentStatus }) {
-  const styles = STATUS_STYLES;
   const { t } = usePreferences();
   return (
-    <span
-      className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${styles[status]}`}
-    >
-      {statusLabel(t, status)}
-    </span>
+    <span className={`badge ${STATUS_STYLES[status]}`}>{statusLabel(t, status)}</span>
   );
 }
 

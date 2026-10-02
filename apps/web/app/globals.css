@@ -19,34 +19,49 @@
  */
 
 @theme {
-  --color-canvas: oklch(98.2% 0.004 250);
-  --color-surface: oklch(100% 0 0);
-  --color-surface-sunken: oklch(96.5% 0.006 250);
+  --color-canvas: oklch(96% 0.005 250);
+  --color-surface: oklch(99% 0.002 250);
+  --color-surface-sunken: oklch(92.5% 0.006 250);
   --color-surface-raised: oklch(100% 0 0);
 
+  /*
+   * Every ink value is bounded by contrast against `surface`, not chosen by eye.
+   * `ink-subtle` sits at 54% because 56% lands at 4.5:1 on `surface` with
+   * nothing to spare and 62% -- where it was -- failed outright at 3.5:1.
+   */
   --color-ink: oklch(21% 0.02 260);
-  --color-ink-muted: oklch(48% 0.02 260);
-  --color-ink-subtle: oklch(62% 0.015 260);
+  --color-ink-muted: oklch(47% 0.02 260);
+  --color-ink-subtle: oklch(54% 0.015 260);
   --color-ink-inverted: oklch(99% 0 0);
 
-  --color-line: oklch(91% 0.008 260);
+  --color-line: oklch(90% 0.008 260);
   --color-line-strong: oklch(84% 0.012 260);
 
-  --color-accent: oklch(52% 0.19 274);
-  --color-accent-hover: oklch(45% 0.19 274);
-  --color-accent-soft: oklch(96% 0.02 274);
+  /*
+   * Status tones are text colours first. They are the label colour on a
+   * `-soft` badge, so they have to clear 4.5:1 against that tint -- which a
+   * tone light enough to look cheerful on white cannot do: at 56% the positive
+   * green managed 3.8:1 on its own badge and the amber managed 2.8:1.
+   *
+   * So the tones sit at 46% lightness, which clears AA on white *and* on the
+   * tint behind them, and the `-soft` partners are real tints at 93-94% rather
+   * than the near-white 96% that used to leave no headroom at all.
+   */
+  --color-accent: oklch(46% 0.19 274);
+  --color-accent-hover: oklch(40% 0.19 274);
+  --color-accent-soft: oklch(93% 0.06 274);
   --color-accent-ink: oklch(100% 0 0);
 
-  --color-positive: oklch(56% 0.14 155);
-  --color-positive-soft: oklch(95% 0.04 155);
-  --color-caution: oklch(66% 0.14 75);
-  --color-caution-soft: oklch(96% 0.05 85);
-  --color-critical: oklch(55% 0.19 25);
-  --color-critical-soft: oklch(96% 0.03 25);
-  --color-info: oklch(56% 0.12 235);
-  --color-info-soft: oklch(96% 0.03 235);
+  --color-positive: oklch(46% 0.15 158);
+  --color-positive-soft: oklch(93% 0.06 158);
+  --color-caution: oklch(46% 0.14 78);
+  --color-caution-soft: oklch(94% 0.07 82);
+  --color-critical: oklch(46% 0.18 25);
+  --color-critical-soft: oklch(94% 0.05 25);
+  --color-info: oklch(46% 0.13 240);
+  --color-info-soft: oklch(93% 0.05 240);
 
-  --color-focus: oklch(52% 0.19 274);
+  --color-focus: oklch(46% 0.19 274);
 
   /*
    * Radii and shadows are tokens for the same reason colours are: a shadow that
