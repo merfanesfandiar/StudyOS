@@ -260,7 +260,8 @@ async def start_run(
     assignment: Assignment,
     analysis: AssignmentAnalysis | None,
     user_id: UUID,
-    idempotency_key: str,
+    idempotency_key: str | None,
+    input_fingerprint: str,
     provider: str,
     model: str,
     model_tier: ModelTier,
@@ -279,6 +280,7 @@ async def start_run(
         analysis_revision=analysis.revision if analysis is not None else None,
         triggered_by_id=user_id,
         idempotency_key=idempotency_key,
+        input_fingerprint=input_fingerprint,
         status=PlanningRunStatus.RUNNING.value,
         provider=provider,
         model=model,
@@ -471,6 +473,7 @@ async def persist_plan(
     reason: str,
     preferences: PlanningPreferences,
     idempotency_key: str | None = None,
+    input_fingerprint: str | None = None,
     preserve: Sequence[PlanTask] = (),
     changed_sections: Sequence[str] = (),
     used_fallback: bool = False,
@@ -503,6 +506,7 @@ async def persist_plan(
         min_minutes=plan_output.min_minutes,
         max_minutes=plan_output.max_minutes,
         idempotency_key=idempotency_key,
+        input_fingerprint=input_fingerprint,
     )
     plan.payload = {
         **(plan.payload or {}),

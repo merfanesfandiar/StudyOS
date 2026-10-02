@@ -15,13 +15,17 @@ import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from app.ai.errors import LLMUnavailableError
 from app.ai.provider import LLMProvider, LLMRequest, LLMResponse
+from app.models.entities import AcademicWorkPlan
+from app.models.enums import EffortLevel, PlanStatus, PlanTrigger
 from app.modules.planning import router as planning_router
 from httpx import AsyncClient
+from sqlalchemy import insert, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import register_user
 
@@ -545,6 +549,69 @@ async def test_force_replans_even_with_the_same_idempotency_key(
     forced = await _plan(client, assignment["id"], force=True, **body)
     assert forced["id"] != first["id"]
     assert forced["version"] == 2
+
+
+async def test_the_input_fingerprint_is_not_used_as_a_deduplication_key(
+    client: AsyncClient, assignment: dict, db_session: AsyncSession
+) -> None:
+    """A regeneration of unchanged input must be allowed.
+
+    The audit found the deterministic input hash stored in the column that also
+    served as the client idempotency key. Once that column was correctly made
+    unique, every regeneration of an unchanged plan failed with a 409 — the
+    content hash was never a dedup target, so constraining it forbade a
+    supported action. The two concepts now live in separate columns.
+    """
+    first = await _plan(client, assignment["id"])
+    second = await _plan(client, assignment["id"])
+
+    assert second["version"] == first["version"] + 1
+
+    rows = (
+        await db_session.execute(
+            select(AcademicWorkPlan).where(AcademicWorkPlan.assignment_id == UUID(assignment["id"]))
+        )
+    ).scalars().all()
+    assert all(row.idempotency_key is None for row in rows), "no client key was sent"
+    assert all(row.input_fingerprint for row in rows), "the fingerprint must still be recorded"
+    # Identical input, so identical fingerprint - which is exactly why the
+    # fingerprint cannot be the unique column.
+    assert len({row.input_fingerprint for row in rows}) == 1
+
+
+async def test_a_repeated_client_key_is_rejected_by_the_database(
+    client: AsyncClient, assignment: dict, db_session: AsyncSession
+) -> None:
+    """The unique constraint has to be real, not merely declared.
+
+    The dedup path is a ``SELECT`` then ``INSERT``, which is racy: two
+    concurrent requests can both miss. Before ``0007`` the column carried only a
+    non-unique index, so the ``IntegrityError`` handler that reads as the safety
+    net could never fire and a double-submitted request produced two plans.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    await _plan(client, assignment["id"], idempotency_key="only-once")
+
+    with pytest.raises(IntegrityError):
+        await db_session.execute(
+            insert(AcademicWorkPlan).values(
+                id=uuid4(),
+                assignment_id=UUID(assignment["id"]),
+                analysis_id=None,
+                version=999,
+                trigger=PlanTrigger.GENERATED.value,
+                reason="duplicate",
+                title="t",
+                summary="",
+                status=PlanStatus.READY_FOR_REVIEW.value,
+                objectives=[],
+                payload={},
+                estimated_effort=EffortLevel.UNKNOWN.value,
+                idempotency_key="only-once",
+                input_fingerprint="x",
+            )
+        )
 
 
 async def test_planning_a_superseded_analysis_is_refused(

@@ -26,7 +26,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -121,7 +121,16 @@ async def generate_plan(
 ) -> GenerationResult:
     """Produce a validated plan and persist it as a new version."""
     complexity = score_complexity(contract)
-    key = idempotency_key or plan_idempotency_key(
+    # Two different things, previously conflated under one name.
+    #
+    # ``fingerprint`` is a deterministic hash of everything that shapes the
+    # output. It is *not* an idempotency key: regenerating an unchanged plan is a
+    # legitimate request that must produce a new version, so it can never be
+    # constrained to be unique.
+    #
+    # ``key`` is the client's own request key, and it is the only thing a retry
+    # may be deduplicated against.
+    fingerprint = plan_idempotency_key(
         assignment_id=str(assignment.id),
         analysis_revision=analysis.revision,
         prompt_version=prompt_version,
@@ -130,12 +139,20 @@ async def generate_plan(
         style=preferences.style.value,
         guidance=preferences.guidance.value,
     )
+    key = idempotency_key
+    if force and key is not None:
+        # `force` means "this is a new request despite identical input", so it
+        # needs a new identity; reusing the client's key would collide with the
+        # plan that key already produced. The fingerprint keeps the evidence
+        # that the input really was identical, which is the part an operator
+        # needs. This mirrors what the analysis orchestrator already does.
+        key = f"{key}:{uuid4().hex}"
 
     # A repeated request with the same key must not produce a second version or a
     # second model call. Checked before anything is written, so a double-clicked
     # button costs nothing. `force` is the explicit way to ask for a fresh plan
     # anyway, so it is the one thing that skips this.
-    if idempotency_key is not None and not force:
+    if key is not None and not force:
         existing = await find_idempotent_plan(assignment.id, key, db)
         if existing is not None:
             graph = await load_plan_graph(db, existing)
@@ -153,6 +170,7 @@ async def generate_plan(
         analysis=analysis,
         user_id=user_id,
         idempotency_key=key,
+        input_fingerprint=fingerprint,
         provider=provider.name,
         model=provider.model,
         model_tier=selection.tier,
@@ -258,6 +276,7 @@ async def generate_plan(
         reason=reason or ("deterministic fallback" if used_fallback else ""),
         preferences=preferences,
         idempotency_key=key,
+        input_fingerprint=fingerprint,
         preserve=preserve,
         changed_sections=_changed_sections(proposed, rejections),
         used_fallback=used_fallback,

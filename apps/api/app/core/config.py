@@ -5,13 +5,34 @@ from typing import Literal
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+#: Values that were once the shipped defaults. They are rejected in production
+#: by name as well as by length, because a placeholder that happens to be long
+#: enough is still a placeholder.
+_INSECURE_SECRET_KEYS = frozenset(
+    {
+        "",
+        "change-me-in-production",
+        "development-only-change-this-secret",
+        "changeme",
+        "secret",
+    }
+)
+
+#: Cookie names that look like a session identifier rather than a name. A
+#: browser sends ``__Host-``-style cookies more defensively and frameworks
+#: treat them as first-party, which is what an auth cookie should be.
+_INSECURE_COOKIE_NAMES = frozenset({"session", "sessionid", "session_id", "sid", "token"})
+
 
 class Settings(BaseSettings):
     app_name: str = "StudyOS API"
     environment: Literal["development", "test", "staging", "production"] = "development"
     database_url: str = "postgresql+asyncpg://studyos:studyos@localhost:5432/studyos"
     database_admin_url: str = "postgresql+asyncpg://studyos:studyos@localhost:5432/postgres"
-    secret_key: str = "development-only-change-this-secret"
+    #: Token signing key. There is deliberately no usable default: a shipped
+    #: secret means anyone who reads the repository can mint a session for any
+    #: user, so production refuses to start without an explicit value.
+    secret_key: str = Field(default="", min_length=16)
     access_token_expire_minutes: int = Field(default=30, ge=5, le=1440)
     cors_origins: str = "http://localhost:3000"
     cookie_secure: bool = False
@@ -19,6 +40,27 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("./data/uploads")
     max_upload_size: int = Field(default=10 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     log_level: str = "INFO"
+
+    # -- Connection pooling --------------------------------------------------
+    #
+    # These were previously left to SQLAlchemy's defaults, which size a pool
+    # for a short-lived request workload. This application's dominant workload
+    # is long-running agent runs, so the pool is sized explicitly and its
+    # relationship to Postgres ``max_connections`` is documented here rather
+    # than discovered during an incident.
+    #
+    # Budget: ``(pool_size + max_overflow) * processes <= max_connections``,
+    # leaving headroom for migrations and admin sessions. At the defaults below
+    # that allows ~5 API processes against a 100-connection server.
+    db_pool_size: int = Field(default=5, ge=1, le=100)
+    db_max_overflow: int = Field(default=10, ge=0, le=100)
+    #: How long a caller waits for a connection before the request fails. Kept
+    #: short deliberately: a queued agent request is better told to retry than
+    #: left holding a worker for 30 seconds.
+    db_pool_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    #: Recycle below typical proxy/server idle timeouts so a stale connection is
+    #: replaced rather than surfacing as a mid-request error.
+    db_pool_recycle: int = Field(default=1800, ge=60, le=86400)
 
     # -- Phase 3: universal academic assignment intelligence -----------------
     #: The analyzer is disabled by default in the sense that it always uses the
@@ -118,6 +160,55 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    def validate_for_startup(self) -> None:
+        """Refuse to start a production process on unsafe configuration.
+
+        Every finding here is a setting whose insecure default is convenient in
+        development and catastrophic in production. Failing at startup is the
+        only reliable moment: a value that is merely *logged* as a warning has
+        a habit of being read and ignored, and a deployed container that starts
+        cleanly is the signal an operator is watching for.
+        """
+        if not self.is_production:
+            return
+
+        problems: list[str] = []
+
+        if not self.secret_key:
+            problems.append(
+                "SECRET_KEY is unset. Generate one with "
+                "`python -c \"import secrets; print(secrets.token_urlsafe(48))\"`."
+            )
+        elif self.secret_key in _INSECURE_SECRET_KEYS or len(self.secret_key) < 32:
+            problems.append(
+                "SECRET_KEY is a known placeholder or shorter than 32 characters. "
+                "Anyone who can read the repository could sign their own session."
+            )
+
+        if not self.cookie_secure:
+            problems.append(
+                "COOKIE_SECURE is false, so the session cookie is sent over plain "
+                "HTTP. Set it to true and terminate TLS in front of the API."
+            )
+
+        if "*" in self.cors_origin_list:
+            problems.append(
+                "CORS_ORIGINS contains '*'. Credentials cannot be combined with a "
+                "wildcard origin safely, so list the allowed origins explicitly."
+            )
+
+        if self.cookie_name in _INSECURE_COOKIE_NAMES:
+            problems.append(
+                f"COOKIE_NAME is {self.cookie_name!r}. A cookie named like a session "
+                "id invites a fixation attack."
+            )
+
+        if problems:
+            raise RuntimeError(
+                "Refusing to start in production with an unsafe configuration:\n"
+                + "\n".join(f"  - {problem}" for problem in problems)
+            )
 
 
 @lru_cache

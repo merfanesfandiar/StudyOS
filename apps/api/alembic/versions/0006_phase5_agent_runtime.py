@@ -76,8 +76,8 @@ def upgrade() -> None:
         sa.Column("completed_at", sa.DateTime(timezone=True)),
         sa.Column("duration_ms", sa.Integer()),
         sa.Column("triggered_by_id", sa.Uuid()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.ForeignKeyConstraint(["assignment_id"], ["assignments.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["plan_id"], ["academic_work_plans.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["triggered_by_id"], ["users.id"], ondelete="SET NULL"),
@@ -103,7 +103,7 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text()),
         sa.Column("duration_ms", sa.Integer()),
         sa.Column("validation_errors", sa.JSON()),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
+        sa.Column("started_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("completed_at", sa.DateTime(timezone=True)),
         sa.UniqueConstraint("run_id", "task_id", "attempt", name="uq_agent_execution_attempt"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.id"], ondelete="CASCADE"),
@@ -124,8 +124,8 @@ def upgrade() -> None:
         sa.Column("revision", sa.Integer(), nullable=False),
         sa.Column("deliverable_key", sa.String(80)),
         sa.Column("created_by_id", sa.Uuid()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.UniqueConstraint("run_id", "task_id", "revision", name="uq_agent_artifact_revision"),
         sa.ForeignKeyConstraint(["created_by_id"], ["users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.id"], ondelete="CASCADE"),
@@ -145,13 +145,13 @@ def upgrade() -> None:
         sa.Column("options", sa.JSON()),
         sa.Column("response", sa.Text()),
         sa.Column(
-            "requested_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"
+            "requested_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
         ),
         sa.Column("resolved_at", sa.DateTime(timezone=True)),
         sa.Column("resolved_by_id", sa.Uuid()),
         sa.Column("expires_at", sa.DateTime(timezone=True)),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.ForeignKeyConstraint(["resolved_by_id"], ["users.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
@@ -168,7 +168,7 @@ def upgrade() -> None:
         sa.Column("metadata_json", sa.JSON(), nullable=False),
         sa.Column("task_id", sa.Uuid()),
         sa.Column("execution_id", sa.Uuid()),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.ForeignKeyConstraint(
             ["execution_id"],
             ["agent_task_executions.id"],
@@ -197,7 +197,7 @@ def upgrade() -> None:
         sa.Column("payload", sa.JSON()),
         sa.Column("outcome", sa.String(40)),
         sa.Column(
-            "executed_at", sa.DateTime(timezone=True), nullable=False, server_default="now()"
+            "executed_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
         ),
         sa.UniqueConstraint("run_id", "iteration", name="uq_agent_decision_iteration"),
         sa.ForeignKeyConstraint(["run_id"], ["agent_runs.id"], ondelete="CASCADE"),

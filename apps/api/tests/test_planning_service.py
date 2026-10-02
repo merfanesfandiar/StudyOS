@@ -680,6 +680,7 @@ async def test_run_records_the_model_that_answered(
         analysis=analysis,
         user_id=owner.id,
         idempotency_key="r" * 64,
+        input_fingerprint="f" * 64,
         provider="mock",
         model="mock-academic-analyzer-v1",
         model_tier=ModelTier.ADVANCED,

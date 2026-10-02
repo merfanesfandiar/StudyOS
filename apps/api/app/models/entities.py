@@ -5,9 +5,11 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
+import sqlalchemy
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -99,8 +101,16 @@ class Workspace(TimestampMixin, Base):
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: ``RESTRICT``. A workspace is shareable via ``WorkspaceMember``, so cascading
+    #: from ``owner_id`` meant deleting one member destroyed every course,
+    #: assignment, analysis, plan, run and artifact belonging to everyone else.
     owner_id: Mapped[UUID] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "users.id", name="fk_workspaces_owner_id_users", ondelete="RESTRICT"
+        ),
+        nullable=False,
+        index=True,
     )
 
     owner: Mapped[User] = relationship(back_populates="owned_workspaces", foreign_keys=[owner_id])
@@ -715,7 +725,7 @@ class AnalysisRun(TimestampMixin, Base):
         Index("ix_analysis_runs_assignment_id", "assignment_id"),
         Index("ix_analysis_runs_status", "status"),
         Index("ix_analysis_runs_assignment_started", "assignment_id", "started_at"),
-        Index("ix_analysis_runs_idempotency_key", "idempotency_key"),
+        Index("uq_analysis_runs_idempotency_key", "idempotency_key", unique=True),
     )
 
     #: Time-ordered so the run list is stable when several runs share a second.
@@ -859,6 +869,18 @@ class AcademicWorkPlan(TimestampMixin, Base):
             "status",
         ),
         Index("ix_academic_work_plans_plan_status", "status"),
+        CheckConstraint(
+            "status IN ('DRAFT','GENERATING','READY_FOR_REVIEW','APPROVED',"
+            "'IN_PROGRESS','COMPLETED','ARCHIVED','STALE')",
+            name="status_valid",
+        ),
+        Index(
+            "uq_academic_work_plans_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            sqlite_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+            postgresql_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -889,9 +911,7 @@ class AcademicWorkPlan(TimestampMixin, Base):
     changed_sections: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     title: Mapped[str] = mapped_column(String(240), nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=PlanStatus.DRAFT.value, index=True
-    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default=PlanStatus.DRAFT.value)
     objectives: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     #: The validated plan payload: tasks, milestones, verification points, effort
     #: and risk. Kept as JSON for the same reason the analysis payload is: it is a
@@ -913,7 +933,15 @@ class AcademicWorkPlan(TimestampMixin, Base):
     )
     #: Deterministic key over assignment + analysis + planner prompt + model, so a
     #: repeated identical request does not bill twice.
+    #: The *client-supplied* request key, unique per assignment. This is the
+    #: deduplication target, so it is the one column that has to be
+    #: constrained. Regeneration is a legitimate repeat of identical input, so
+    #: constraining the input fingerprint instead would forbid it outright.
     idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: Deterministic hash of everything that shapes the output, kept for
+    #: observability ('did the prompt change between versions?') and
+    #: deliberately not unique.
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     assignment: Mapped[Assignment] = relationship(back_populates="plans")
     analysis: Mapped[AssignmentAnalysis | None] = relationship(foreign_keys=[analysis_id])
@@ -1180,7 +1208,13 @@ class PlanningRun(TimestampMixin, Base):
         Index("ix_planning_runs_plan_id", "plan_id"),
         Index("ix_planning_runs_status", "status"),
         Index("ix_planning_runs_assignment_started", "assignment_id", "started_at"),
-        Index("ix_planning_runs_idempotency_key", "idempotency_key"),
+        Index(
+            "uq_planning_runs_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            sqlite_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+            postgresql_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -1210,7 +1244,11 @@ class PlanningRun(TimestampMixin, Base):
     fell_back_from_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
     prompt_version: Mapped[str] = mapped_column(String(64), nullable=False)
     analysis_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: Client-supplied request key, when the caller supplied one. Nullable
+    #: because a plain regeneration is *not* a duplicate request; the
+    #: reasoning is recorded once on ``AcademicWorkPlan.idempotency_key``.
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -1297,7 +1335,18 @@ class AgentRun(TimestampMixin, Base):
         Index("ix_agent_runs_plan_id", "plan_id"),
         Index("ix_agent_runs_status", "status"),
         Index("ix_agent_runs_assignment_status", "assignment_id", "status"),
-        Index("ix_agent_runs_idempotency_key", "idempotency_key"),
+        CheckConstraint(
+            "status IN ('CREATED','STARTING','RUNNING','WAITING_FOR_USER','PAUSED',"
+            "'BLOCKED','COMPLETED','FAILED','CANCELLED')",
+            name="status_valid",
+        ),
+        Index(
+            "uq_agent_runs_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            sqlite_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+            postgresql_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -1396,15 +1445,24 @@ class AgentTaskExecution(Base):
         Index("ix_agent_task_executions_run_id", "run_id"),
         Index("ix_agent_task_executions_task_id", "task_id"),
         Index("ix_agent_task_executions_status", "status"),
+        CheckConstraint(
+            "status IN ('SUCCESS', 'PARTIAL_SUCCESS', 'FAILED', 'BLOCKED', "
+            "'NEEDS_USER_INPUT', 'NEEDS_APPROVAL', 'SKIPPED')",
+            name="status_valid",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
     run_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
     )
+    #: ``SET NULL``, not ``CASCADE``. The class docstring explains why the attempt
+    #: history must outlive the task, and three sibling columns already do this.
+    #: The column stays non-nullable because every attempt is written while its
+    #: task exists; the FK only guards deletion of that task afterwards.
     task_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("plan_tasks.id", name="fk_agent_execution_task", ondelete="CASCADE"),
+        ForeignKey("plan_tasks.id", name="fk_agent_execution_task", ondelete="SET NULL"),
         nullable=False,
     )
     #: Plan-local key copied at execution time so the row is readable after the
@@ -1458,6 +1516,11 @@ class AgentArtifact(TimestampMixin, Base):
         UniqueConstraint("run_id", "task_id", "revision", name="uq_agent_artifact_revision"),
         Index("ix_agent_artifacts_run_id", "run_id"),
         Index("ix_agent_artifacts_run_type", "run_id", "artifact_type"),
+        Index("ix_agent_artifacts_worker_name", "worker_name"),
+        CheckConstraint(
+            "status IN ('DRAFT','ACTIVE','SUPERSEDED','ARCHIVED')",
+            name="status_valid",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
@@ -1482,6 +1545,10 @@ class AgentArtifact(TimestampMixin, Base):
     #: Structured companion to ``content`` for results that have one: a
     #: calculation's intermediate values, a solution's steps.
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Which worker produced this, e.g. ``core`` or ``math_solver``. ``None`` means
+    #: the core runtime wrote it directly. This is the column that makes a
+    #: specialised worker's output attributable, reviewable and excluded by name.
+    worker_name: Mapped[str | None] = mapped_column(String(60), nullable=True)
     #: 1-based revision counter. An update supersedes rather than overwrites, so
     #: "what the run produced, then what the student asked for" stays answerable.
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -1510,6 +1577,10 @@ class AgentCheckpoint(TimestampMixin, Base):
         Index("ix_agent_checkpoints_run_id", "run_id"),
         Index("ix_agent_checkpoints_run_status", "run_id", "status"),
         Index("ix_agent_checkpoints_task_id", "task_id"),
+        CheckConstraint(
+            "status IN ('PENDING','RESOLVED','CANCELLED','EXPIRED')",
+            name="status_valid",
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
