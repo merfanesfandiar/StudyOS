@@ -141,8 +141,8 @@ made crashed-startup runs unreclaimable, and several mypy and lint issues.
 | Gate | Command | Result |
 | --- | --- | --- |
 | API lint | `ruff check app tests alembic` | all checks passed |
-| API types | `mypy app` | 2 pre-existing errors in Phase 4 files, none in Phase 5 |
-| API tests | `pytest -q` | 305 passed, 871 warnings |
+| API types | `mypy app` | clean, 122 source files |
+| API tests | `pytest -q` | 309 passed, 880 warnings |
 | API migration | `tests/test_migrations.py` | 3 passed |
 | Web types | `tsc --noEmit` | clean |
 | Web lint | `eslint .` | clean |
@@ -150,12 +150,31 @@ made crashed-startup runs unreclaimable, and several mypy and lint issues.
 | Web build | `npm run build` | compiled successfully |
 | Browser | `playwright test` | 19 passed, 8 skipped (API absent) |
 
-The 2 mypy errors are in `app/modules/planning/router.py:400` and
-`app/modules/assignments/requirements.py:291`. Both files are untouched by Phase 5 and both errors
-predate it; they are recorded here rather than quietly fixed inside an unrelated phase.
+`mypy app` is clean. It was not at the start of this phase: it reported two errors in untouched Phase 4
+code, which were recorded rather than fixed inside an unrelated phase. They were then fixed properly,
+because both turned out to be worth reading.
+
+**One was dead code pretending to be a check.** `regenerate_plan` built its planning contract with
+`payload.analysis_id if isinstance(payload, PlanGenerateRequest) else None`. The endpoint's payload is a
+`PlanRegenerateRequest`, which has no `analysis_id` field and never will, so the branch could not be
+taken. The condition existed to look deliberate and to mislead the next reader. The same line appeared
+in `generate_plan_for_assignment`, where the `isinstance` test was a tautology and the `else` was
+unreachable. Both are now direct: generate passes the student's `analysis_id`, regenerate passes `None`
+and takes the current analysis, which is what regeneration means. A regenerate request that tries to
+name an analysis is now refused rather than silently ignored.
+
+**The other was a type that depended on a branch.** `execution_order`'s ranking key was one of two
+lambdas picked by a conditional: one returned `(rank, id)`, the other returned `str(node)`. Collapsed to
+a single key returning a tuple always. With no rank every node scores 0, so the order degenerates to
+ordering by id -- which is exactly what the string branch did. An empty rank dict now takes the same
+path as `None`; previously the two were only equal by accident.
+
+Neither change alters observable behaviour, and both now have tests: a regenerate naming an analysis is
+rejected, an empty rank matches no rank, and the topological order survives either way.
 
 The 38 new backend tests are 22 runtime tests (planning, lifecycle, budgets, recovery, determinism) and
-16 HTTP tests running against the real router with a deterministic provider. The 14 new web tests cover
+16 HTTP tests running against the real router with a deterministic provider. Four more were added with
+the mypy fixes above, bringing the API suite to 309. The 14 new web tests cover
 the panel's states, and the 2 new browser tests cover the create/start separation and terminal-state
 persistence across a reload.
 
@@ -168,7 +187,7 @@ persistence across a reload.
 - **No real model was ever called.** Every provider in this phase was the deterministic mock. Latency,
   token accounting, rate limiting, and real failure modes are unmeasured. The code paths that read a
   provider's reported usage are exercised by the mock's values, not by a provider's.
-- **PostgreSQL was not available.** All 305 backend tests ran on SQLite. The `SELECT ... FOR UPDATE`
+- **PostgreSQL was not available.** All 309 backend tests ran on SQLite. The `SELECT ... FOR UPDATE`
   locking path and the new unique constraint are correct in the schema but unexercised against a real
   database engine.
 - **Visual layout was not inspected.** No screenshots were available, so the panel is verified

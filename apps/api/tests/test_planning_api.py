@@ -898,3 +898,28 @@ async def test_a_model_produced_plan_does_not_claim_a_fallback(
     plan = await _plan(client, assignment["id"])
     assert plan["used_fallback"] is False
     assert plan["rejection_reasons"] == []
+
+
+async def test_regeneration_refuses_a_client_named_analysis(
+    client: AsyncClient, assignment: dict
+) -> None:
+    """A regenerate request cannot choose the analysis it is built from.
+
+    The bug this pins is a dead branch in the router that read
+    ``payload.analysis_id`` off a request model that has no such field. The
+    branch could never be taken, so the check that made it look deliberate
+    existed only to confuse the next reader -- and mypy was the only thing
+    noticing. Regeneration is defined as re-planning the *current* plan's
+    subject, so the input is rejected rather than quietly honoured.
+    """
+    await _plan(client, assignment["id"])
+    base = f"/api/v1/assignments/{assignment['id']}/plans/regenerate"
+
+    stale_looking = await client.post(
+        base, json={"analysis_id": "11111111-1111-1111-1111-111111111111"}
+    )
+    assert stale_looking.status_code == 422, stale_looking.text
+
+    # And the documented request shape still works, so this is a refusal of the
+    # extra field rather than the endpoint being broken.
+    assert (await client.post(base, json={})).status_code == 201

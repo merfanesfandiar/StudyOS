@@ -306,12 +306,10 @@ async def generate_plan_for_assignment(
         raise AppError(503, "PLANNING_DISABLED", "Planning is disabled.")
 
     assignment = await load_owned_assignment(assignment_id, user.id, db)
-    contract, analysis = await _contract_for(
-        assignment,
-        db,
-        payload.analysis_id if isinstance(payload, PlanGenerateRequest) else None,
-        user.id,
-    )
+    # The student may name the analysis to plan from. `_contract_for` refuses one
+    # that is no longer current rather than silently planning from a different
+    # analysis than the request asked for.
+    contract, analysis = await _contract_for(assignment, db, payload.analysis_id, user.id)
 
     await record_audit(
         db,
@@ -394,12 +392,12 @@ async def regenerate_plan(
     if current.status == PlanStatus.ARCHIVED.value:
         raise AppError(409, "PLAN_ARCHIVED", "An archived plan cannot be regenerated.")
 
-    contract, analysis = await _contract_for(
-        assignment,
-        db,
-        payload.analysis_id if isinstance(payload, PlanGenerateRequest) else None,
-        user.id,
-    )
+    # Always from the current analysis. A regenerate request cannot name one and
+    # should not: letting a stale client choose the basis of the new plan would
+    # mean the plan could be rebuilt from an analysis the student never asked
+    # for. `None` means "the latest", and `_contract_for` already refuses to
+    # plan from a superseded analysis.
+    contract, analysis = await _contract_for(assignment, db, None, user.id)
     preserve: Sequence[PlanTask] = ()
     if payload.preserve_user_edits:
         preserve = tuple(await service.user_authored_tasks(current.id, db))

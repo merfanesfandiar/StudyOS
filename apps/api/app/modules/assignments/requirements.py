@@ -288,7 +288,13 @@ def execution_order(
     ``rank`` breaks ties between requirements that are equally free to run, so
     the order follows the numbering the student sees instead of a random id.
     """
-    order_key = (lambda node: (rank.get(node, 0), str(node))) if rank else (lambda node: str(node))
+    # One key for both cases. With no rank every node scores 0, so the tuple
+    # degenerates to ordering by id -- which is what the bare-string fallback did.
+    # Two lambdas returning different types meant the key's type depended on a
+    # branch, which is the kind of thing that type-checks in a narrow slice and
+    # breaks when a caller passes an empty dict.
+    def order_key(node: UUID) -> tuple[int, str]:
+        return (rank.get(node, 0) if rank else 0, str(node))
     indegree = {node: len(dependencies) for node, dependencies in graph.items()}
     dependents: dict[UUID, list[UUID]] = {node: [] for node in graph}
     for node, dependencies in graph.items():

@@ -8,8 +8,10 @@ confirm the history.
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from uuid import UUID, uuid4
 
 import pytest
+from app.modules.assignments.requirements import execution_order
 from httpx import AsyncClient
 
 from tests.conftest import register_user
@@ -794,3 +796,66 @@ async def test_dashboard_reports_readiness_progress(client: AsyncClient) -> None
     assert dashboard["average_readiness_score"] > 0
     # The dashboard payload is the list row, not the whole nested assignment.
     assert "requirements" not in listed["Ready to go"]
+
+
+# ---------------------------------------------------------------------------
+# execution_order, called directly
+#
+# The ranking key used to be two lambdas chosen by a conditional: one returned
+# (rank, id), the other returned just the id. That made the key's type depend on
+# a branch, which mypy rejected. The fix collapsed it to one key that returns a
+# tuple always -- but "the type is consistent" is not the property a student
+# depends on. What matters is that the order is still a valid topological order
+# and still deterministic when there is nothing to rank by.
+# ---------------------------------------------------------------------------
+
+
+def test_execution_order_without_a_rank_still_respects_dependencies() -> None:
+    a, b, c, d = uuid4(), uuid4(), uuid4(), uuid4()
+    # d -> a -> b, and c stands alone.
+    graph: dict[UUID, set[UUID]] = {a: {d}, b: {a}, c: set(), d: set()}
+
+    order = execution_order(dict(graph))
+
+    assert set(order) == {a, b, c, d}, "every requirement appears exactly once"
+    assert len(order) == 4, "no requirement is listed twice"
+    assert order.index(d) < order.index(a) < order.index(b), (
+        "a requirement must come after everything it depends on, ranked or not"
+    )
+
+
+def test_an_empty_rank_orders_exactly_like_no_rank() -> None:
+    """An empty dict is falsy, so it must take the same path as ``None``.
+
+    If it did not, the order would silently change based on whether a caller
+    happened to build an empty ranking rather than skip the argument.
+    """
+    ids = [uuid4() for _ in range(6)]
+    graph: dict[UUID, set[UUID]] = {node: set() for node in ids}
+    graph[ids[0]] = {ids[5]}
+    graph[ids[3]] = {ids[0]}
+
+    unranked = execution_order(dict(graph))
+    empty_rank = execution_order(dict(graph), {})
+
+    assert empty_rank == unranked, (
+        "an empty ranking must not reorder the graph relative to no ranking"
+    )
+    assert empty_rank.index(ids[5]) < empty_rank.index(ids[0]) < empty_rank.index(ids[3])
+
+
+def test_a_rank_is_honoured_over_the_id_order() -> None:
+    """The student's own numbering decides ties, so the plan reads in that order."""
+    ids = [uuid4() for _ in range(4)]
+    graph: dict[UUID, set[UUID]] = {node: set() for node in ids}
+    graph[ids[0]] = {ids[1]}
+
+    # Rank ids[1] ahead of ids[0] even though its id sorts later.
+    rank = {ids[1]: 0, ids[2]: 1, ids[3]: 2, ids[0]: 3}
+    order = execution_order(dict(graph), rank)
+
+    assert order.index(ids[1]) < order.index(ids[0]), "the rank beats the id"
+    # Still a valid topological order regardless.
+    for node, dependencies in graph.items():
+        for dependency in dependencies:
+            assert order.index(dependency) < order.index(node)
