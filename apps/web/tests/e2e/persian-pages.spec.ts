@@ -4,6 +4,7 @@ import {
   ANALYSIS,
   ASSIGNMENT_ID,
   DEPENDENCY_GRAPH,
+  PLAN,
   SPECIFICATION,
 } from "../fixtures/specification";
 
@@ -233,7 +234,7 @@ interface Case {
    * instead of a heading on the detail route, so a failed load cannot leave the
    * scan reading an error page and finding nothing to complain about.
    */
-  waitsFor?: string;
+  waitsFor?: string | string[];
   /** Overrides for this case only; the shared table covers the rest. */
   routes?: Array<[string, Stub]>;
   name?: string;
@@ -263,6 +264,23 @@ const PAGES: Case[] = [
     routes: [[`/assignments/${ASSIGNMENT_ID}/analysis`, ok(ANALYSIS)]],
     name: "with an analysis",
   },
+  {
+    path: `/assignments/${ASSIGNMENT_ID}`,
+    heading: null,
+    // The third state, and the one that was still unchecked. The planning panel
+    // is not a separate route -- it renders inside the detail page -- but it
+    // only appears once a plan exists, so every earlier case rendered it as an
+    // empty state. An empty state is the state with the least text in it, so
+    // the densest part of the planning UI was never scanned at all.
+    // Two anchors, not one: the plan title alone would still pass if the body
+    // below it failed to render, which is the case that needs checking.
+    waitsFor: [PLAN.title, PLAN.tasks[0].title, PLAN.milestones[0].title],
+    routes: [
+      [`/assignments/${ASSIGNMENT_ID}/analysis`, ok(ANALYSIS)],
+      [`/assignments/${ASSIGNMENT_ID}/plans`, ok(PLAN)],
+    ],
+    name: "with an analysis and a plan",
+  },
 ];
 
 test.describe("no page keeps English text in a Persian build", () => {
@@ -272,7 +290,9 @@ test.describe("no page keeps English text in a Persian build", () => {
       try {
         await page.goto(path);
         if (waitsFor) {
-          await expect(page.getByText(waitsFor).first()).toBeVisible({ timeout: 15_000 });
+          for (const anchor of [waitsFor].flat()) {
+            await expect(page.getByText(anchor).first()).toBeVisible({ timeout: 15_000 });
+          }
         } else {
           await expect(page.locator("h1, h2").first()).toBeVisible();
           // Confirm the page really is Persian before scanning it, so a redirect

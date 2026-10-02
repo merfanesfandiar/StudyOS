@@ -251,3 +251,43 @@ def test_requirement_coverage_drops_when_an_item_is_dropped() -> None:
     # Two of three is a genuinely partial rate, not a pass.
     assert coverage_of(full, full[:2]) < 0.99
     assert coverage_of(full, full[:2]) > 0.0
+
+
+def test_requirement_coverage_is_not_pooled_across_produced_items() -> None:
+    """A requirement must be covered by one statement, not by fragments of several.
+
+    Pooling the vocabulary of every produced statement let unrelated output
+    combine into coverage. Each statement below supplies two of the brief item's
+    four content words, none of them enough alone, so the pooled union used to
+    reach the threshold and report full coverage for a requirement that nothing
+    actually answered.
+    """
+    required = [
+        "Prove the uniform convergence theorem using epsilon delta "
+        "definitions carefully"
+    ]
+
+    # Each statement overlaps 0.25 and 0.375 of the brief item -- both short of
+    # the 0.4 threshold. Their pooled vocabulary overlaps 0.625, which is what
+    # the old union-based check scored.
+    pooled_only = ["Prove the uniform", "delta definitions carefully"]
+
+    assert coverage_of(required, pooled_only) == 0.0
+    # The same requirement is covered when one statement does carry it.
+    assert coverage_of(required, [required[0]]) == 1.0
+
+
+def test_requirement_coverage_still_accepts_one_paraphrase() -> None:
+    """Per-item scoring must not become stricter than paraphrase allows.
+
+    The reason the threshold sits at 0.4 is that a correct answer rewords the
+    brief. Scoring items separately only changes *which* items count, never the
+    bar a single item has to clear.
+    """
+    required = ["Prove Theorem 4.2 using the definition of uniform convergence"]
+    paraphrase = [
+        "Justify the argument directly from the definition of uniform convergence",
+        "Discuss the weather forecast",
+    ]
+
+    assert coverage_of(required, paraphrase) == 1.0

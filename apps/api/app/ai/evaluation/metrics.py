@@ -91,11 +91,19 @@ def coverage_of(required: list[str], produced: list[str]) -> float:
 
     Measured against the brief's own wording, so it can legitimately fall short:
     an analyzer that misses half the stated requirements scores 0.5, not 1.0.
+
+    The threshold is scored against each produced item on its own, never
+    against the pooled vocabulary of all of them. Pooling let unrelated
+    statements combine into coverage that no single one of them provides: a
+    brief item whose words were split across two statements about different
+    subjects would be marked covered even though nothing in the output addresses
+    it. Coverage is a claim about one statement answering one requirement, so
+    the intersection has to be non-empty per item.
     """
     if not required:
         return 1.0
-    produced_tokens = set().union(*(_tokens(item) for item in produced)) if produced else set()
-    if not produced_tokens:
+    produced_token_sets = [_tokens(item) for item in produced]
+    if not any(produced_token_sets):
         return 0.0
     hits = 0
     for item in required:
@@ -109,7 +117,10 @@ def coverage_of(required: list[str], produced: list[str]) -> float:
         # definition of uniform convergence", which shares three content words
         # out of seven. Requiring more overlap would score correct paraphrases
         # as missing requirements, which is the failure mode that matters.
-        if len(wanted & produced_tokens) / len(wanted) >= COVERAGE_OVERLAP:
+        if any(
+            len(wanted & tokens) / len(wanted) >= COVERAGE_OVERLAP
+            for tokens in produced_token_sets
+        ):
             hits += 1
     return round(hits / len(required), 4)
 

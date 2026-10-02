@@ -3,6 +3,7 @@ import type {
   AssignmentSpecification,
   DependencyGraph,
 } from "../../lib/types";
+import type { WorkPlan } from "../../lib/planning-types";
 
 /**
  * A populated assignment specification, shaped by the API's own response schema.
@@ -635,4 +636,213 @@ export const ANALYSIS: AssignmentAnalysis = {
   "review_note": null,
   "created_at": "سنجه",
   "updated_at": "2026-01-01T00:00:00+00:00"
+};
+
+/**
+ * A plan with every part of it populated.
+ *
+ * The planning panel only appears once a plan exists, so until this existed the
+ * Persian scan rendered it as an empty state -- which is exactly the state with
+ * the least text in it. That is the same trap the specification fixture was
+ * written to avoid: an empty fixture passes a page that is mostly
+ * untranslated.
+ *
+ * Every branch that renders chrome is filled deliberately: a task in each
+ * status, a milestone that is partly complete, a verification point, a risk, a
+ * schedule warning, validation warnings and a fallback notice. A plan with one
+ * completed task and nothing else would leave most of the panel's strings
+ * unrendered and therefore unchecked.
+ *
+ * `analysis_id` is populated even though the version predates nothing, because
+ * a plan with no analysis id takes a different branch in the panel.
+ */
+export const PLAN: WorkPlan = {
+  id: "b7c8d9e0-1f2a-4b3c-8d4e-5f6a7b8c9d0e",
+  assignment_id: ASSIGNMENT_ID,
+  analysis_id: "c8d9e0f1-2a3b-4c5d-9e6f-7a8b9c0d1e2f",
+  version: 2,
+  trigger: "REGENERATED",
+  reason: "پس از بازبینی تحلیل، بخش وظایف بازسازی شد.",
+  changed_sections: ["tasks", "milestones"],
+  title: "برنامهٔ مطالعه برای تحلیل داده‌های آزمایشگاهی",
+  summary: "این برنامه کار را به پنج مرحله تقسیم می‌کند و پیش از ارائه، هر گام را با یک سنجه بررسی می‌کند.",
+  status: "READY_FOR_REVIEW",
+  objectives: [
+    "داده‌های خام آزمایشگاه را پاک‌سازی و خلاصه کن",
+    "روش تحلیل را با شواهد پشتیبانی کن",
+  ],
+  estimated_effort: "HIGH",
+  min_minutes: 900,
+  max_minutes: 1500,
+  is_stale: true,
+  approved_at: null,
+  created_at: "2026-02-03T09:00:00Z",
+  updated_at: "2026-02-05T14:30:00Z",
+  progress_percentage: 40,
+  used_fallback: true,
+  validation_warnings: ["دو وظیفه زمان‌بندی هم‌پوشانی دارند", "یک وابستگی چرخه‌ای وجود دارد"],
+  rejection_reasons: [],
+  schedule_risk: {
+    level: "HIGH",
+    estimated_minutes: 1500,
+    available_minutes: 1200,
+    is_overcommitted: true,
+    summary: "بیشترین تخمین از زمان باقی‌مانده بیشتر است.",
+    factors: ["مهلت نزدیک است", "دو وابستگی پشت سر هم"],
+  },
+  tasks: [
+    {
+      id: "11111111-2222-4333-8444-555555555555",
+      key: "T1",
+      title: "خواندن برگهٔ آزمایش",
+      description: "پروتکل را بخوان و متغیرهای مستقل و وابسته را مشخص کن.",
+      type: "READ",
+      status: "COMPLETED",
+      priority: "HIGH",
+      position: 1,
+      estimated_effort: "LOW",
+      min_minutes: 30,
+      max_minutes: 45,
+      verification_method: "فهرست متغیرها را با برگه تطبیق بده",
+      acceptance_criteria: ["همهٔ متغیرها نام‌گذاری شده باشند", "واحدها مشخص باشند"],
+      resources: ["برگهٔ آزمایش", "راهنمای درس"],
+      notes: "قبل از شروع، یک بار کامل بخوان.",
+      is_user_authored: true,
+      depends_on: [],
+      related_requirements: ["REQ-1"],
+      related_deliverables: ["D1"],
+      blocked_by: [],
+    },
+    {
+      id: "22222222-3333-4444-8555-666666666666",
+      key: "T2",
+      title: "پاک‌سازی داده‌های خام",
+      description: "مقادیر گمشده و پرت را حذف کن.",
+      type: "ANALYZE_DATA",
+      status: "IN_PROGRESS",
+      priority: "HIGH",
+      position: 2,
+      estimated_effort: "MEDIUM",
+      min_minutes: 120,
+      max_minutes: 180,
+      verification_method: "گزارش تعداد ردیف حذف‌شده",
+      acceptance_criteria: ["هیچ مقدار گمشده‌ای باقی نماند"],
+      resources: ["راهنمای درس"],
+      notes: null,
+      is_user_authored: false,
+      depends_on: ["T1"],
+      related_requirements: ["REQ-1"],
+      related_deliverables: ["D1"],
+      blocked_by: [],
+    },
+    {
+      id: "33333333-4444-4555-8666-777777777777",
+      key: "T3",
+      title: "انتخاب آزمون آماری",
+      description: "یک آزمون متناسب با نوع داده انتخاب کن.",
+      type: "ANALYZE",
+      status: "BLOCKED",
+      priority: "MEDIUM",
+      position: 3,
+      estimated_effort: "MEDIUM",
+      min_minutes: 60,
+      max_minutes: 90,
+      verification_method: "دلیل انتخاب را در یک پاراگراف بنویس",
+      acceptance_criteria: ["آزمون با نوع داده سازگار باشد"],
+      resources: [],
+      notes: null,
+      is_user_authored: false,
+      depends_on: ["T2"],
+      related_requirements: ["REQ-1", "REQ-2"],
+      related_deliverables: ["D2"],
+      blocked_by: ["T2"],
+    },
+    {
+      id: "44444444-5555-4666-8777-888888888888",
+      key: "T4",
+      title: "نوشتن بخش روش",
+      description: "روش را با توجیه آماری بنویس.",
+      type: "WRITE",
+      status: "PENDING",
+      priority: "MEDIUM",
+      position: 4,
+      estimated_effort: "HIGH",
+      min_minutes: 180,
+      max_minutes: 300,
+      verification_method: null,
+      acceptance_criteria: [],
+      resources: ["قالب گزارش"],
+      notes: null,
+      is_user_authored: false,
+      depends_on: ["T3"],
+      related_requirements: ["REQ-2"],
+      related_deliverables: ["D2"],
+      blocked_by: ["T3"],
+    },
+    {
+      id: "55555555-6666-4777-8888-999999999999",
+      key: "T5",
+      title: "بازبینی نهایی",
+      description: "پیش از تحویل، یک بار کامل بخوان.",
+      type: "REVIEW",
+      status: "SKIPPED",
+      priority: "LOW",
+      position: 5,
+      estimated_effort: "VERY_LOW",
+      min_minutes: 20,
+      max_minutes: 30,
+      verification_method: "خواندن نهایی",
+      acceptance_criteria: ["خطای تایپی نداشته باشد"],
+      resources: [],
+      notes: null,
+      is_user_authored: false,
+      depends_on: ["T4"],
+      related_requirements: [],
+      related_deliverables: ["D2"],
+      blocked_by: [],
+    },
+  ],
+  milestones: [
+    {
+      id: "66666666-7777-4888-8999-aaaaaaaaaaaa",
+      key: "M1",
+      title: "آماده‌سازی داده",
+      description: "خواندن و پاک‌سازی",
+      position: 1,
+      status: "IN_PROGRESS",
+      task_keys: ["T1", "T2"],
+      completed_task_count: 1,
+      task_count: 2,
+    },
+    {
+      id: "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
+      key: "M2",
+      title: "تحلیل و نگارش",
+      description: null,
+      position: 2,
+      status: "BLOCKED",
+      task_keys: ["T3", "T4"],
+      completed_task_count: 0,
+      task_count: 2,
+    },
+  ],
+  verification_points: [
+    {
+      key: "V1",
+      title: "درستی پاک‌سازی",
+      description: "بررسی کن که ردیف‌های حذف‌شده منطقی باشند.",
+      method: "مقایسه با نسخهٔ خام",
+      task_keys: ["T2"],
+      related_requirements: ["REQ-1"],
+    },
+  ],
+  risks: [
+    {
+      key: "R1",
+      description: "اگر داده‌ها نرمال نباشند، آزمون انتخابی باید عوض شود.",
+      severity: "MEDIUM",
+      mitigation: "پیش از انتخاب آزمون، نرمال بودن را بررسی کن.",
+      related_task_keys: ["T2", "T3"],
+    },
+  ],
 };

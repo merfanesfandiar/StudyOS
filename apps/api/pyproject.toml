@@ -49,6 +49,14 @@ src = ["app", "tests"]
 select = ["E", "F", "I", "UP", "B", "ASYNC"]
 ignore = ["B008"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic's autogenerate emits one long line per column and per constraint, which
+# cannot be wrapped without making the migration harder to read than the
+# hand-written ones beside it. The existing migrations are hand-formatted and
+# lint clean; this exempts the generated ones rather than forcing an author to
+# reflow machine output before the first commit.
+"alembic/versions/*" = ["E501"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

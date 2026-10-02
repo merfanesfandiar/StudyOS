@@ -13,8 +13,8 @@ right-to-left layout. The localization work made those two features
 reachable in both languages, including the error paths, which is where the
 work turned out to be.
 
-Every gate passes against the numbers recorded below: 265 API tests, 119 web
-unit tests, 16 real-browser tests, ruff, mypy across 108 files, tsc, eslint, and
+Every gate passes against the numbers recorded below: 267 API tests, 119 web
+unit tests, 17 real-browser tests, ruff, mypy across 108 files, tsc, eslint, and
 a clean production build. Six end-to-end tests skip themselves when the API is
 not running, and the four checks that genuinely cannot run here are named
 rather than left implied — *What was not verified* is the most important section
@@ -176,18 +176,18 @@ prose in JSX rather than by any test.
 | --- | --- | --- |
 | API lint | `ruff check app tests alembic` | all checks passed |
 | API types | `mypy app` | clean, 108 source files |
-| API tests | `pytest -q` | 265 passed, 786 warnings |
+| API tests | `pytest -q` | 267 passed, 786 warnings |
 | API schema | `alembic heads` | `0005_phase4_planning` (single head) |
 | Golden analysis evaluation | `python -m app.ai.evaluation.report` | every fixture passed, every planted defect detected |
 | Web types | `tsc --noEmit` | clean |
 | Web lint | `eslint .` | clean |
 | Web unit | `vitest run` | 119 passed, 8 files |
 | Web build | `npm run build` | compiled successfully |
-| Browser | `playwright test` | 16 passed, 6 skipped (API absent) |
+| Browser | `playwright test` | 17 passed, 6 skipped (API absent) |
 | Local production parity | `npm run start` | HTML and `/_next/static` assets both 200 |
 
-The 16 browser tests are 9 theme-and-RTL checks (`theme-and-locale.spec.ts`)
-and 7 authenticated-page translation scans (`persian-pages.spec.ts`). The
+The 17 browser tests are 9 theme-and-RTL checks (`theme-and-locale.spec.ts`)
+and 8 authenticated-page translation scans (`persian-pages.spec.ts`). The
 translation scan intercepts API traffic, renders each page in Persian, and fails
 on untranslated Latin text with an allowlist for product names and units. It
 found the network-error defect above, and then a second class of defect that unit
@@ -241,24 +241,41 @@ where this project is currently least certain.
   through the deterministic mock provider and the golden evaluation. Real
   provider latency, rate limits, and output drift are unmeasured, and the
   `LLMError → 503` path has been tested against a simulated failure only.
-- **Phase 3's `coverage_of` can over-report.** The union-based check can mark a
-  requirement covered by a criterion that satisfies it only partially. Carried
-  forward unresolved; it is a correctness question about the traceability view,
-  not a rendering bug.
+- **`alembic/versions` is exempt from `E501`.** Hand-written migrations are
+  hand-formatted and lint clean; Alembic's autogenerate emits one long line per
+  column and constraint, so generated files are exempt rather than requiring an
+  author to reflow machine output before the first commit.
+
+---
+
+## Closed since the first draft of this report
+
+- **`coverage_of` no longer over-reports.** The union-based check scored a
+  requirement against the pooled vocabulary of *every* produced statement, so
+  unrelated output could combine into coverage that no single statement provided.
+  A brief item whose words were split across two statements about different
+  subjects was reported as covered. The threshold is now scored per produced
+  item. Golden evaluation is unchanged at `requirement_coverage: 1.0` across all
+  twelve fixtures, which is the evidence that this did not simply get stricter:
+  paraphrase still scores as coverage, only cross-item pooling stopped counting.
+- **The planning panel is scanned.** It renders inside `/assignments/[id]`
+  rather than on its own route, and only appears once a plan exists — so every
+  earlier scan had rendered it as an empty state, which is the state with the
+  least text in it. A populated plan fixture now exercises every branch: each
+  task status, a partly complete milestone, a verification point, a risk, an
+  overcommitted schedule, validation warnings and a fallback notice. It was
+  already fully translated, which the fixture rather than the assertion is what
+  established.
+- **`alembic/script.py.mako` restored.** Authoring a migration now works;
+  verified by generating one against a clean database. Migrations were already
+  runnable — this was only ever a missing file.
 
 ---
 
 ## Known limitations and next steps
 
-1. Extend the Persian scan to the planning panel at `/plans/runs/[run_id]`, which
-   is the one remaining string-dense surface and is still covered by unit tests
-   and review only.
-2. Fix `coverage_of` to require a non-empty intersection for the covering
-   criteria, or relabel the view as indicative.
-3. Restore `alembic/script.py.mako`, which is absent. It does not block
-   existing migrations, but it is needed to author a new one.
-4. Measure real provider behaviour — latency, cost, and rate limits — before
+1. Measure real provider behaviour — latency, cost, and rate limits — before
    enabling OpenAI in a deployed environment, and confirm the timeout in
    `llm_timeout_seconds` is realistic against observed p95.
-5. Phase 5 and autonomous task execution remain out of scope by design. Nothing
+2. Phase 5 and autonomous task execution remain out of scope by design. Nothing
    in this phase executes a plan; a plan is inert until a human approves it.
