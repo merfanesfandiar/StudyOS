@@ -64,6 +64,13 @@ class ConstraintType(StrEnum):
 
 
 class ConstraintSeverity(StrEnum):
+    #: Non-negotiable. A brief that says "must be 12 pages" or "must cite five
+    #: peer-reviewed sources" is this, and it is distinct from urgency: a
+    #: non-negotiable constraint can still be due next week. Added because the
+    #: planner already tested for ``HARD`` when deciding whether to warn about
+    #: limiting constraints, so a MUST-style constraint could never raise the
+    #: warning its own code path was written to raise.
+    HARD = "HARD"
     INFO = "INFO"
     WARNING = "WARNING"
     IMPORTANT = "IMPORTANT"

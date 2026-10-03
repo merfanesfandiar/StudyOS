@@ -8,9 +8,10 @@ This is where the pieces meet. The rules it exists to enforce:
 * **The loop is bounded.** Every iteration checks the iteration, cost and artifact
   budgets *before* doing work, so a bad run stops with an explanation instead of
   discovering its cost later.
-* **One run, one writer.** :func:`_lock_run` takes a row lock and bumps
-  ``lock_version``; a step that finds its version superseded knows it lost a race
-  and stops rather than double-writing.
+* **One run, one writer.** :func:`claim_step` advances ``lock_version`` with a
+  compare-and-swap that is committed before any provider call, so exactly one
+  writer holds an iteration and no lock is held while the model is thinking. The
+  version is also what sequences the event log.
 * **Every step is recorded before it is acted on.** Events, decisions and
   executions are persisted in the same transaction as the state change they
   describe, so a crash can never leave the activity feed disagreeing with the
@@ -34,7 +35,7 @@ from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -575,6 +576,35 @@ async def create_run(
 # ---------------------------------------------------------------------------
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    """Interpret a naive datetime as UTC.
+
+    SQLite stores ``DateTime(timezone=True)`` without an offset and hands it back
+    naive, while PostgreSQL round-trips it correctly. Any timestamp read back from
+    SQLite is therefore ambiguous, and comparing one against ``now(UTC)`` raises
+    ``TypeError`` instead of producing an answer. Treating naive values as UTC is
+    correct on both engines: that is the only timezone this application ever
+    writes.
+
+    This was latent rather than absent. It only became reachable once
+    :func:`claim_step` began committing and refreshing the run mid-loop, which
+    is the first time these objects were ever re-read from the database instead
+    of being carried in memory from the writer that created them.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
+
+
+def _elapsed_ms(since: datetime | None) -> int | None:
+    started = as_utc(since)
+    if started is None:
+        return None
+    return int((datetime.now(UTC) - started).total_seconds() * 1000)
+
+
 def _limits_for(run: AgentRun) -> AgentLimits:
     """Rebuild the run's own budget.
 
@@ -611,19 +641,85 @@ def _set_status(run: AgentRun, target: AgentRunStatus, *, reason: str | None = N
         run.error_category = None
 
 
-async def _lock_run(run: AgentRun, db: AsyncSession) -> AgentRun:
-    """Claim the run for writing.
+class RunClaimLost(RuntimeError):
+    """Another writer advanced this run between our read and our claim.
 
-    ``SELECT ... FOR UPDATE`` plus a ``lock_version`` bump gives one writer at a
-    time and a way to detect that a writer was superseded. SQLite has no row
-    locks, so the version bump is what actually carries the guarantee there; on
-    PostgreSQL both do.
+    Not an ``AppError`` because no client caused it and none should be told
+    about it: the recovery of whatever superseded us is the caller's job.
+
+    Carries only the identity that was contended, for the log line. The status is
+    not attached: ``parse_status`` deliberately refuses to guess a value it does
+    not recognise, and after a lost claim the authoritative status is the one the
+    *winner* wrote, which the caller re-reads from the database.
     """
-    await db.execute(select(AgentRun.id).where(AgentRun.id == run.id).with_for_update())
-    run.lock_version = (run.lock_version or 0) + 1
-    run.heartbeat_at = datetime.now(UTC)
-    await db.flush()
-    return run
+
+    def __init__(self, message: str, run_id: UUID, expected: int) -> None:
+        super().__init__(message)
+        self.run_id = run_id
+        self.expected = expected
+
+
+async def claim_step(run: AgentRun, db: AsyncSession) -> int:
+    """Atomically reserve one iteration of *run*, and return the new version.
+
+    Replaces a ``SELECT ... FOR UPDATE`` that was held for the whole run. That
+    arrangement was the defect: the row lock stayed open across every provider
+    call in the loop, so a 60-second step held a database connection and a row
+    lock for 60 seconds, and the pool sized for short requests ran dry under
+    exactly the workload that needed it most.
+
+    An ``UPDATE ... WHERE lock_version = expected`` gives the same single-writer
+    guarantee without a held lock, for two reasons. It is atomic, so exactly one
+    concurrent writer can observe ``rowcount == 1``; and it is a single
+    statement, so the claim is committed immediately by the caller rather than
+    being pinned to a transaction that must stay open until the step finishes.
+
+    The version is read back rather than assumed, because ``_append_event``
+    advances it as a side effect and the next claim must compare against the
+    committed value, not the one we guessed.
+    """
+    expected = run.lock_version or 0
+    previous_iterations = run.iteration_count or 0
+    run_id = run.id
+    now = datetime.now(UTC)
+    stmt = (
+        update(AgentRun)
+        .where(AgentRun.id == run.id, AgentRun.lock_version == expected)
+        .values(
+            lock_version=expected + 1,
+            heartbeat_at=now,
+            # Counted here rather than by the caller so the counter and the claim
+            # cannot disagree. A separate increment would be a lost update waiting
+            # to happen: two writers that both believed they held version N would
+            # both add one to the same row.
+            iteration_count=func.coalesce(AgentRun.iteration_count, 0) + 1,
+        )
+        .execution_options(synchronize_session=False)
+    )
+    result = await db.execute(stmt)
+    if result.rowcount != 1:
+        # ``run_id`` is captured above because the rollback expires every
+        # attribute on ``run``, and reading one after that needs IO on a session
+        # that is mid-teardown.
+        await db.rollback()
+        raise RunClaimLost(
+            f"run {run_id} advanced past version {expected}", run_id, expected
+        )
+
+    # Commit the claim on its own so no lock or connection is held while the
+    # provider runs.
+    await db.commit()
+
+    # Reflect the write onto the instance from what we know we wrote, rather than
+    # re-reading it. A refresh would open a fresh transaction and leave one open
+    # across the provider call, reintroducing exactly the pinning this function
+    # exists to remove - and the values here are not guesses: the CAS proved
+    # nobody else wrote, so we are the only writer and our own arithmetic is
+    # authoritative.
+    run.lock_version = expected + 1
+    run.iteration_count = previous_iterations + 1
+    run.heartbeat_at = now
+    return expected + 1
 
 
 async def start_run(run: AgentRun, user: User, db: AsyncSession) -> AgentRun:
@@ -1109,10 +1205,18 @@ async def execute_run(
 ) -> StepOutcome:
     """Drive a run until it stops.
 
-    Runs steps inline and in one transaction per step, so a crash mid-run leaves a
-    consistent database and a recoverable state. A background worker would be the
-    natural next step, but doing it inline keeps the ordering guarantee simple:
-    a step's persistence completes before the next one starts.
+    Each iteration claims a version, commits the claim, and only then calls the
+    provider. That ordering matters: the previous implementation took a row lock
+    before the loop and held it until the run ended, so every step's provider
+    call happened inside an open transaction holding a lock on the run row. A
+    slow step therefore pinned a database connection for its whole duration, and
+    the guarantee it bought - one writer - is available without a held lock
+    because the claim is a compare-and-swap.
+
+    A crash mid-run therefore leaves a consistent database and a recoverable
+    state. A background worker would be the natural next step, but doing it inline
+    keeps the ordering guarantee simple: a step's persistence completes before
+    the next one starts.
 
     ``max_steps`` bounds this call without touching the run's own budget, which is
     what lets a test drive a partial run and a later call continue it.
@@ -1135,7 +1239,10 @@ async def execute_run(
             {"status": run.status, "paused_reason": run.paused_reason},
         )
 
-    await _lock_run(run, db)
+    # Whatever the caller did before handing the run over (e.g. start_run) is
+    # committed here, so the claim below is the only thing this function's own
+    # transactions have to serialise against.
+    await db.commit()
     # Re-entering a run that is already going is normal — a resumed step, or a
     # checkpoint answered moments ago. The state machine has no RUNNING -> RUNNING
     # edge on purpose, so treat that as the no-op it is instead of a contradiction.
@@ -1187,8 +1294,29 @@ async def execute_run(
                 category=exc.category,
             )
 
-        await _lock_run(run, db)
-        run.iteration_count += 1
+        run_id = run.id
+        try:
+            await claim_step(run, db)
+        except RunClaimLost as lost:
+            # Another writer is mid-step. Stopping is correct: continuing would
+            # mean two executors working the same plan, which is precisely what
+            # the single-writer rule exists to prevent.
+            logger.info(
+                "agent_step_claim_lost",
+                extra={"run_id": str(run_id), "detail": str(lost)},
+            )
+            await db.rollback()
+            # Re-read rather than trusting the stale in-memory status: the whole
+            # point of the race is that another writer has since changed it, and
+            # reporting our own copy would be a lie.
+            current = await db.scalar(
+                select(AgentRun.status).where(AgentRun.id == run_id)
+            )
+            return StepOutcome(
+                kind="BUSY",
+                run_status=parse_status(current or AgentRunStatus.RUNNING.value),
+                detail="Another worker is already advancing this run.",
+            )
 
         nodes = await _task_nodes(db, plan)
         selection = select_next_task(nodes)
@@ -2118,7 +2246,7 @@ async def _fail_run(
     run.error_category = category.value
     _set_status(run, AgentRunStatus.FAILED, reason=message[:200])
     if run.started_at is not None:
-        run.duration_ms = int((datetime.now(UTC) - run.started_at).total_seconds() * 1000)
+        run.duration_ms = _elapsed_ms(run.started_at)
     await _resolve_open_checkpoints(
         db, run, user, resolution="The run failed before this was answered."
     )
@@ -2171,8 +2299,7 @@ async def _finish_run(
     counts = progress(nodes)
     if complete:
         _set_status(run, AgentRunStatus.COMPLETED, reason=None)
-        if run.started_at is not None:
-            run.duration_ms = int((datetime.now(UTC) - run.started_at).total_seconds() * 1000)
+        run.duration_ms = _elapsed_ms(run.started_at)
         if run.plan_id is not None:
             plan = await db.get(AcademicWorkPlan, run.plan_id)
             if plan is not None and plan.status in {
