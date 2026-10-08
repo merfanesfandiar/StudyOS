@@ -34,6 +34,7 @@ configure_logging(settings.log_level)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     get_storage()
+    settings.validate_for_startup()
     await _run_recovery_sweep()
     yield
 
