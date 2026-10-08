@@ -124,6 +124,18 @@ class Settings(BaseSettings):
     agent_max_cost_per_run: float = Field(default=5.0, ge=0.0, le=1000.0)
     #: Ceiling on one provider call, so a single step cannot blow the budget.
     agent_max_cost_per_step: float = Field(default=1.0, ge=0.0, le=100.0)
+    #: Ceiling on one call's completion tokens. Distinct from ``llm_max_output_tokens``
+    #: (a request), this is the run's own limit (a budget), and it is what stops a
+    #: model that decides to write an essay inside a "draft this outline" step.
+    agent_max_output_tokens_per_step: int = Field(default=4000, ge=256, le=64000)
+    #: Ceiling on prompt tokens for one call. The prompt is assembled from the
+    #: student's own brief and the plan, so a large assignment could otherwise
+    #: bill for a context the model will not use.
+    agent_max_input_tokens_per_step: int = Field(default=32000, ge=256, le=400000)
+    #: Ceiling on tokens for a whole run. The iteration budget alone does not
+    #: bound spend: forty steps of five thousand tokens each is not forty cheap
+    #: steps.
+    agent_max_tokens_per_run: int = Field(default=400_000, ge=1_000, le=10_000_000)
     #: Upper bound on the assembled context for one step. Context is truncated
     #: deterministically from the least important source rather than by cutting
     #: the instruction block, so a prompt can never become instructionless.
@@ -145,6 +157,26 @@ class Settings(BaseSettings):
     #: When true, ``AUTONOMOUS`` runs may proceed past a REVIEW checkpoint that
     #: the task's acceptance criteria do not depend on.
     agent_allow_autonomous_review: bool = False
+
+    # ------------------------------------------------------------------
+    # Model pricing.
+    #
+    # ``{"model-name": {"prompt": 0.005, "completion": 0.015}}`` in dollars per
+    # 1,000 tokens. A model absent from this map is *unpriced*, not free, and a
+    # run on an unpriced model records no cost.
+    #
+    # It is configuration rather than a constant because prices change and a
+    # deployment may point at a self-hosted or discounted endpoint. Leaving it
+    # empty is a valid, honest configuration; what is not valid is a cost guardrail
+    # that silently assumes unknown models are free, which is how the agent's
+    # cost limit came to never firing.
+    # ------------------------------------------------------------------
+    llm_pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
+    #: What to do when a run's selected model has no entry in ``llm_pricing``.
+    #: ``record`` keeps the run working and reports it as uncosted. ``refuse``
+    #: makes an unpriced deployment unusable, which is the correct choice for
+    #: anyone who needs the guarantee to be real rather than advisory.
+    llm_unpriced_model_policy: Literal["record", "refuse"] = "record"
 
     model_config = SettingsConfigDict(
         env_file=(".env", "../../.env"),

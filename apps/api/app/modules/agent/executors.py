@@ -70,7 +70,12 @@ class ExecutionRequest:
     """What an executor is handed. Data only — no session, no request, no clock."""
 
     run_id: UUID
-    task_id: UUID
+    #: The execution row's task reference. ``None`` only for an attempt whose task
+    #: has since been deleted — the column is ``ON DELETE SET NULL`` precisely so
+    #: that history survives the deletion, which means "the task this attempt was
+    #: for" can legitimately be gone. An executor that needs the live task should
+    #: use ``task_key`` to look it up rather than assume this is present.
+    task_id: UUID | None
     task_key: str
     task_type: str
     task_title: str

@@ -43,7 +43,7 @@ from sqlalchemy.orm import selectinload
 from app.ai import LLMError, LLMTimeoutError
 from app.ai.errors import LLMUnavailableError
 from app.ai.prompts.agent import build_decision_request, build_execution_request
-from app.ai.provider import LLMProvider, LLMResponse
+from app.ai.provider import LLMProvider, LLMRequest, LLMResponse, approximate_tokens
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.logging import logger
@@ -99,7 +99,11 @@ from app.modules.agent.limits import (
     BudgetExceeded,
     assert_artifact_budget,
     assert_cost_budget,
+    assert_input_token_budget,
     assert_iteration_budget,
+    assert_priced_model,
+    assert_token_budget,
+    estimate_step_cost,
     may_retry,
 )
 from app.modules.agent.ml import PredictorRegistry, advise
@@ -531,6 +535,11 @@ async def create_run(
         mode=mode.value,
         max_iterations=limits.max_iterations,
         max_cost=ceiling,
+        # Snapshotted with the rest of the budget. A resumed run must be judged by
+        # the rules it started under; see ``AgentLimits`` and migration 0008.
+        max_tokens=limits.max_tokens_per_run,
+        max_output_tokens_per_step=limits.max_output_tokens_per_step,
+        max_input_tokens_per_step=limits.max_input_tokens_per_step,
         estimated_cost=Decimal("0"),
         idempotency_key=key,
         triggered_by_id=user.id,
@@ -617,6 +626,9 @@ def _limits_for(run: AgentRun) -> AgentLimits:
         max_consecutive_failures=settings.agent_max_consecutive_failures,
         max_cost_per_run=Decimal(str(run.max_cost)),
         max_cost_per_step=Decimal(str(settings.agent_max_cost_per_step)),
+        max_output_tokens_per_step=run.max_output_tokens_per_step,
+        max_input_tokens_per_step=run.max_input_tokens_per_step,
+        max_tokens_per_run=run.max_tokens,
         step_timeout_seconds=settings.agent_step_timeout_seconds,
         max_artifacts=settings.agent_max_artifacts,
         retry_backoff_seconds=settings.agent_retry_backoff_seconds,
@@ -1483,13 +1495,14 @@ async def _run_step(
         )
     else:
         try:
-            assert_cost_budget(
-                limits,
-                Decimal(str(run.estimated_cost)),
-                Decimal(str(settings.agent_max_cost_per_step)) / 2,
+            request = build_decision_request(
+                context,
+                registry=tools,
+                max_output_tokens=_decision_output_tokens(limits),
             )
+            _gate_provider_call(run, limits, provider, request)
             response = await asyncio.wait_for(
-                provider.complete(build_decision_request(context, registry=tools)),
+                provider.complete(request),
                 timeout=limits.step_timeout_seconds,
             )
             decision_raw = response.content
@@ -2003,10 +2016,66 @@ def _charge_run(run: AgentRun, response: LLMResponse) -> None:
     for key, value in response.usage.as_dict().items():
         totals[key] = int(totals.get(key, 0)) + int(value)
     run.token_usage = totals
-    if response.estimated_cost:
-        run.estimated_cost = Decimal(str(run.estimated_cost)) + Decimal(
+    # ``is not None`` rather than truthiness: a genuinely zero-cost call (a cached
+    # or free-tier response) is a cost of zero and must be added, while an
+    # unpriced deployment must leave the total alone. Both used to be skipped,
+    # which is how a run could report 0.00 having spent nothing verifiable.
+    if response.estimated_cost is not None:
+        # ``or 0`` for the un-flushed case: the column default only applies on
+        # INSERT, so a run built in memory and charged before its flush has None
+        # here, and ``Decimal(str(None))`` raises rather than defaulting.
+        run.estimated_cost = Decimal(str(run.estimated_cost or 0)) + Decimal(
             str(response.estimated_cost)
         )
+
+
+def _decision_output_tokens(limits: AgentLimits) -> int:
+    """Output-token allowance for a decision step.
+
+    Split from the per-step ceiling by ``decision_token_ratio`` because deciding
+    and producing are not the same task and were never given separate budgets: a
+    decision is a small structured object, work product is a document. Charging
+    both the full ceiling would let every decision reserve as much output as the
+    task it was deciding on, which over a long run is most of the budget spent on
+    permission slips.
+
+    At least 256 tokens regardless of ratio. A decision that cannot fit in the
+    allowance cannot be expressed at all, and a run that fails on a budget
+    arithmetic detail rather than a real limit is a worse failure than one that
+    spends slightly more than planned.
+    """
+    ceiling = int(limits.max_output_tokens_per_step * limits.decision_token_ratio)
+    return max(256, min(ceiling, limits.max_output_tokens_per_step))
+
+
+def _gate_provider_call(
+    run: AgentRun,
+    limits: AgentLimits,
+    provider: LLMProvider,
+    request: LLMRequest,
+) -> None:
+    """Refuse a provider call that breaches a budget, before it is made.
+
+    One helper for both call sites because a budget checked in one place and not
+    the other is not a budget. It measures the prompt that is about to be sent
+    rather than what comes back, prices it against the model actually configured
+    for the call, and projects the completion at its own ceiling so a run cannot
+    spend its remaining budget four times over in a single call.
+
+    Raises :class:`BudgetExceeded`; the caller converts that into a terminal
+    structured failure.
+    """
+    pricing = provider.pricing()
+    assert_priced_model(pricing, provider.model)
+
+    prompt_tokens = approximate_tokens(request.messages)
+    assert_input_token_budget(limits, prompt_tokens)
+
+    spent = Decimal(str(run.estimated_cost or 0))
+    assert_token_budget(limits, int((run.token_usage or {}).get("total_tokens", 0)), prompt_tokens)
+
+    output_ceiling = min(request.max_output_tokens, limits.max_output_tokens_per_step)
+    assert_cost_budget(limits, spent, estimate_step_cost(pricing, prompt_tokens, output_ceiling))
 
 
 async def _close_execution(
@@ -2063,14 +2132,15 @@ async def _execute_and_finish(
         )
     else:
         try:
+            request = build_execution_request(
+                context,
+                task_title=task.title if task else node.key,
+                task_type=node.type,
+                max_output_tokens=limits.max_output_tokens_per_step,
+            )
+            _gate_provider_call(run, limits, provider, request)
             response = await asyncio.wait_for(
-                provider.complete(
-                    build_execution_request(
-                        context,
-                        task_title=task.title if task else node.key,
-                        task_type=node.type,
-                    )
-                ),
+                provider.complete(request),
                 timeout=limits.step_timeout_seconds,
             )
             payload = parse_execution_output(response.content)

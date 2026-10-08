@@ -17,7 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
-from app.core.config import Settings
+from app.ai.provider import LLMUsage, ModelPricing
+from app.core.config import Settings, get_settings
 from app.models.enums import AgentFailureCategory, AgentRunStatus
 
 
@@ -54,6 +55,16 @@ class AgentLimits:
     max_consecutive_failures: int
     max_cost_per_run: Decimal
     max_cost_per_step: Decimal
+    #: Output-token ceiling for one call, passed to the provider as
+    #: ``max_output_tokens`` rather than checked afterwards. A limit observed after
+    #: the response arrives is a report of what happened, not a budget.
+    max_output_tokens_per_step: int
+    #: Prompt-token ceiling for one call, enforced against the assembled prompt
+    #: before it is sent.
+    max_input_tokens_per_step: int
+    #: Token ceiling for the whole run. The iteration budget does not imply it:
+    #: forty permitted steps at five thousand tokens each is not a bounded spend.
+    max_tokens_per_run: int
     step_timeout_seconds: float
     max_artifacts: int
     retry_backoff_seconds: float
@@ -69,6 +80,9 @@ class AgentLimits:
             max_consecutive_failures=settings.agent_max_consecutive_failures,
             max_cost_per_run=Decimal(str(settings.agent_max_cost_per_run)),
             max_cost_per_step=Decimal(str(settings.agent_max_cost_per_step)),
+            max_output_tokens_per_step=settings.agent_max_output_tokens_per_step,
+            max_input_tokens_per_step=settings.agent_max_input_tokens_per_step,
+            max_tokens_per_run=settings.agent_max_tokens_per_run,
             step_timeout_seconds=settings.agent_step_timeout_seconds,
             max_artifacts=settings.agent_max_artifacts,
             retry_backoff_seconds=settings.agent_retry_backoff_seconds,
@@ -97,11 +111,52 @@ def assert_iteration_budget(limits: AgentLimits, iteration: int) -> None:
         )
 
 
+def assert_token_budget(limits: AgentLimits, run_total_tokens: int, step_tokens: int) -> None:
+    """Refuse a call that would breach the per-run token ceiling.
+
+    *step_tokens* is the size of the prompt about to be sent. The completion is
+    bounded separately by ``max_output_tokens_per_step``, which is passed to the
+    provider, so the run total is projected as prompt plus that ceiling: checking
+    only the prompt would let a run spend four times its remaining budget in one
+    call while every individual prompt looked affordable.
+    """
+    projected = run_total_tokens + step_tokens + limits.max_output_tokens_per_step
+    if limits.max_tokens_per_run > 0 and projected > limits.max_tokens_per_run:
+        raise BudgetExceeded(
+            "AGENT_TOKEN_LIMIT",
+            (
+                f"This run reached its limit of {limits.max_tokens_per_run} tokens. "
+                "Raise the limit or resume with a smaller budget to continue."
+            ),
+        )
+
+
+def assert_input_token_budget(limits: AgentLimits, prompt_tokens: int) -> None:
+    """Refuse to send a prompt larger than the per-call input ceiling.
+
+    A single oversized prompt is not a budget problem, it is a bug or an
+    oversized assignment, and it is reported as such rather than as a run that ran
+    out of money.
+    """
+    if prompt_tokens > limits.max_input_tokens_per_step:
+        raise BudgetExceeded(
+            "AGENT_INPUT_TOO_LARGE",
+            (
+                f"This step's context is about {prompt_tokens} tokens, over the "
+                f"per-step limit of {limits.max_input_tokens_per_step}."
+            ),
+        )
+
+
 def assert_cost_budget(limits: AgentLimits, spent: Decimal, step_estimate: Decimal) -> None:
     """Refuse a provider call that would breach either cost ceiling.
 
     Checked *before* the call, not after: the point of a budget is that the
     unauthorised spend never happens.
+
+    Both ceilings are skipped when they are zero, which means "unbounded". They
+    are not skipped when the estimate is unknown: an unknown cost against a real
+    ceiling is handled by :func:`assert_priced_model` before it gets here.
     """
     if limits.max_cost_per_run > 0 and spent + step_estimate > limits.max_cost_per_run:
         raise BudgetExceeded(
@@ -116,6 +171,49 @@ def assert_cost_budget(limits: AgentLimits, spent: Decimal, step_estimate: Decim
             "AGENT_STEP_COST_LIMIT",
             f"Step {step_estimate} exceeds the per-step limit of {limits.max_cost_per_step}.",
         )
+
+
+def estimate_step_cost(
+    pricing: ModelPricing | None,
+    prompt_tokens: int,
+    output_tokens: int,
+) -> Decimal:
+    """Cost of one call, or zero when the model has no configured price.
+
+    Zero here means "cannot be estimated", and the caller must treat it as such by
+    consulting :func:`assert_priced_model`. Substituting zero because a number was
+    unavailable is precisely how a budget that never fires looks like a budget
+    that was never approached.
+    """
+    if pricing is None:
+        return Decimal("0")
+    return Decimal(str(pricing.cost_for(LLMUsage(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=output_tokens,
+        total_tokens=prompt_tokens + output_tokens,
+    ))))
+
+
+def assert_priced_model(pricing: ModelPricing | None, model: str) -> None:
+    """Refuse to run uncosted when the deployment demands real prices.
+
+    With ``LLM_UNPRICED_MODEL_POLICY=refuse`` a run on a model with no configured
+    price stops immediately with an explanation. The alternative - proceeding and
+    recording no cost - produces a run whose cost column is empty while it spends
+    real money, and an operator has no way to tell which runs those are.
+    """
+    if pricing is not None:
+        return
+    if get_settings().llm_unpriced_model_policy != "refuse":
+        return
+    raise BudgetExceeded(
+        "AGENT_MODEL_UNPRICED",
+        (
+            f"No price is configured for {model}, and this deployment refuses to run "
+            "unpriced models. Add it to LLM_PRICING or set "
+            "LLM_UNPRICED_MODEL_POLICY=record."
+        ),
+    )
 
 
 def assert_artifact_budget(limits: AgentLimits, artifact_count: int) -> None:

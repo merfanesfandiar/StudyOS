@@ -702,8 +702,12 @@ class AssignmentAnalysis(TimestampMixin, Base):
 
     assignment: Mapped[Assignment] = relationship(back_populates="analyses")
     reviewed_by: Mapped[User | None] = relationship(foreign_keys=[reviewed_by_id])
+    #: Not ``delete-orphan``: the foreign key is ``ON DELETE SET NULL`` and an ORM
+    #: delete cascade silently overrides it. Run history must outlive the analysis
+    #: that produced it - ``assignment_id`` is ``CASCADE``, so deleting the whole
+    #: assignment still removes the runs.
     runs: Mapped[list[AnalysisRun]] = relationship(
-        back_populates="analysis", cascade="all, delete-orphan"
+        back_populates="analysis"
     )
     questions: Mapped[list[AnalysisQuestion]] = relationship(
         back_populates="analysis",
@@ -965,11 +969,15 @@ class AcademicWorkPlan(TimestampMixin, Base):
         cascade="all, delete-orphan",
         order_by="(PlanMilestone.position, PlanMilestone.created_at)",
     )
+    #: Not ``delete-orphan`` on either: ``plan_id`` is ``ON DELETE SET NULL`` so run
+    #: history outlives the plan it was scheduled from, and an ORM delete cascade
+    #: silently overrides that. ``assignment_id`` is ``CASCADE`` - deleting the
+    #: assignment still removes the runs, which is the ownership that matters.
     runs: Mapped[list[PlanningRun]] = relationship(
-        back_populates="plan", cascade="all, delete-orphan"
+        back_populates="plan"
     )
     agent_runs: Mapped[list[AgentRun]] = relationship(
-        back_populates="plan", cascade="all, delete-orphan"
+        back_populates="plan"
     )
 
 
@@ -1041,8 +1049,19 @@ class PlanTask(Base):
         cascade="all, delete-orphan",
         foreign_keys="PlanTaskDependency.predecessor_id",
     )
+    #: Deliberately **not** ``cascade="all, delete-orphan"``.
+    #:
+    #: An ORM delete cascade is issued as explicit ``DELETE`` statements by the
+    #: unit of work and silently overrides whatever the foreign key says. This one
+    #: therefore defeated ``ON DELETE SET NULL`` completely: ``0007`` set the
+    #: action and wrote the rationale for preserving attempt history, and then
+    #: every ``session.delete(task)`` deleted that history anyway. The column
+    #: action is the one that should decide, so nothing here may cascade a delete.
+    #:
+    #: The row survives with ``task_id`` cleared; ``task_key`` keeps it
+    #: attributable without the task it was recorded for.
     agent_executions: Mapped[list[AgentTaskExecution]] = relationship(
-        back_populates="task", cascade="all, delete-orphan"
+        back_populates="task"
     )
 
 
@@ -1389,6 +1408,20 @@ class AgentRun(TimestampMixin, Base):
     max_cost: Mapped[Decimal] = mapped_column(
         Numeric(12, 6), nullable=False, default=Decimal("5.000000")
     )
+    #: Remaining budgets, snapshotted onto the run alongside ``max_iterations``
+    #: and ``max_cost``. The iteration bound alone does not bound spend: forty
+    #: permitted steps of five thousand tokens each is not a bounded run, so the
+    #: token ceilings have to be part of what a run was promised at creation.
+    #: Stored rather than read from settings because a resumed run must keep the
+    #: rules it started under, and a config reload must not move the ceiling under
+    #: a run that is already partway through.
+    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=400_000)
+    max_output_tokens_per_step: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=4_000
+    )
+    max_input_tokens_per_step: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=32_000
+    )
     #: Accumulated estimate. Compared against ``max_cost`` before each provider
     #: call, so a runaway loop is stopped rather than discovered on the invoice.
     estimated_cost: Mapped[Decimal] = mapped_column(
@@ -1458,12 +1491,16 @@ class AgentTaskExecution(Base):
     )
     #: ``SET NULL``, not ``CASCADE``. The class docstring explains why the attempt
     #: history must outlive the task, and three sibling columns already do this.
-    #: The column stays non-nullable because every attempt is written while its
-    #: task exists; the FK only guards deletion of that task afterwards.
-    task_id: Mapped[UUID] = mapped_column(
+    #: Nullable because ``SET NULL`` and ``NOT NULL`` cannot both hold: against a
+    #: non-nullable column the action makes the delete *fail* rather than preserve
+    #: the row, so the column meant to guarantee the history was the one
+    #: guaranteeing the task could never be deleted. Every attempt is still
+    #: written with a ``task_id`` while its task exists; only a deletion clears it,
+    #: and ``task_key`` below keeps the row attributable.
+    task_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("plan_tasks.id", name="fk_agent_execution_task", ondelete="SET NULL"),
-        nullable=False,
+        nullable=True,
     )
     #: Plan-local key copied at execution time so the row is readable after the
     #: task row changes and self-describing in the activity feed.

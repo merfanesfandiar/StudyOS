@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 
 from app.ai import heuristics
-from app.ai.provider import LLMProvider, LLMRequest, LLMResponse, LLMUsage
+from app.ai.provider import LLMProvider, LLMRequest, LLMResponse, LLMUsage, approximate_tokens
 from app.schemas.analysis import PlanningContractResponse
 
 
@@ -51,7 +51,7 @@ class MockLLMProvider(LLMProvider):
     def _agent(self, request: LLMRequest) -> LLMResponse:
         if self._agent_script:
             content = self._agent_script.pop(0)
-            return self._respond_text(content, request.metadata)
+            return self._respond_text(content, request)
         payload = request.metadata["agent_input"]
         task_key = str(payload.get("task_key", "T1"))
         decision = {
@@ -61,7 +61,7 @@ class MockLLMProvider(LLMProvider):
             "expected_output": "A draft the student can review.",
             "confidence": 0.9,
         }
-        return self._respond_text(json.dumps(decision), request.metadata)
+        return self._respond_text(json.dumps(decision), request)
 
     def _execute(self, request: LLMRequest) -> LLMResponse:
         payload = request.metadata["agent_execution_input"]
@@ -73,24 +73,30 @@ class MockLLMProvider(LLMProvider):
             "CI and tests. A real provider would replace this with real work."
         )
         result = {"summary": f"Produced work for {task_key}.", "content": body}
-        return self._respond_text(json.dumps(result), request.metadata)
+        return self._respond_text(json.dumps(result), request)
 
-    def _respond_text(self, content: str, payload: object) -> LLMResponse:
+    def _respond_text(self, content: str, request: LLMRequest) -> LLMResponse:
+        usage = _approximate_usage(content, request)
         return LLMResponse(
             content=content,
             provider=self.name,
             model=self.model,
-            usage=_approximate_usage(content, payload),
+            usage=usage,
+            # Priced like any other model. The mock is free in the sense that no
+            # money moves, but leaving this None would mean the cost guardrails
+            # never execute on any CI run, which is exactly how they came to
+            # never fire anywhere.
+            estimated_cost=self.cost_of(usage),
         )
 
-    def _respond(self, result: object, payload: object) -> LLMResponse:
-        return self._respond_text(json.dumps(result, ensure_ascii=False, default=str), payload)
+    def _respond(self, result: object, request: LLMRequest) -> LLMResponse:
+        return self._respond_text(json.dumps(result, ensure_ascii=False, default=str), request)
 
     def _analyze(self, request: LLMRequest) -> LLMResponse:
         payload = request.metadata.get("analyzer_input") or {}
         include_questions = bool(request.metadata.get("include_questions", True))
         result = heuristics.analyze(payload, include_questions=include_questions)
-        return self._respond(result, payload)
+        return self._respond(result, request)
 
     def _plan(self, request: LLMRequest) -> LLMResponse:
         """Answer a planning call from the contract the request carried.
@@ -112,16 +118,22 @@ class MockLLMProvider(LLMProvider):
             preferences=preferences,
             max_task_count=int(request.metadata.get("max_task_count", 60)),
         )
-        return self._respond(plan.model_dump(mode="json"), request.metadata)
+        return self._respond(plan.model_dump(mode="json"), request)
 
 
-def _approximate_usage(content: str, payload: object) -> LLMUsage:
+def _approximate_usage(content: str, request: LLMRequest) -> LLMUsage:
     """Approximate token accounting.
 
-    Explicitly an approximation: it exists so token accounting and cost
-    estimation are exercised end to end, not to claim real tokenizer output.
+    Explicitly an approximation: it exists so token accounting and cost estimation
+    are exercised end to end, not to claim real tokenizer output.
+
+    Measured from the request's real messages rather than from the application
+    metadata. The metadata is a JSON summary the mock never sends, so counting it
+    would report a prompt size unrelated to the prompt built - and then the budget
+    gate and the charge would disagree on every CI run, which is the disagreement
+    this is meant to rule out.
     """
-    prompt_tokens = max(1, len(json.dumps(payload, default=str)) // 4)
+    prompt_tokens = approximate_tokens(request.messages)
     completion_tokens = max(1, len(content) // 4)
     return LLMUsage(
         prompt_tokens=prompt_tokens,

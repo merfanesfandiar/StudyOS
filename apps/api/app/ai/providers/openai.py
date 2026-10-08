@@ -103,13 +103,19 @@ class OpenAIProvider(LLMProvider):
             )
 
         usage = payload.get("usage") or {}
+        usage = LLMUsage(
+            prompt_tokens=int(usage.get("prompt_tokens") or 0),
+            completion_tokens=int(usage.get("completion_tokens") or 0),
+            total_tokens=int(usage.get("total_tokens") or 0),
+        )
+        # Priced against the model the response names, not the one requested. A
+        # provider is free to answer with a different model, and budgeting against
+        # the request while billing against the response is how the two diverge.
+        reached = str(payload.get("model") or self.model)
         return LLMResponse(
             content=content,
             provider=self.name,
-            model=str(payload.get("model") or self.model),
-            usage=LLMUsage(
-                prompt_tokens=int(usage.get("prompt_tokens") or 0),
-                completion_tokens=int(usage.get("completion_tokens") or 0),
-                total_tokens=int(usage.get("total_tokens") or 0),
-            ),
+            model=reached,
+            usage=usage,
+            estimated_cost=self.cost_of_usage(usage, reached),
         )
