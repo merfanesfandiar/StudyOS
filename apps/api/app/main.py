@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -24,6 +25,8 @@ from app.modules.notifications import router as notifications_router
 from app.modules.planning.router import router as planning_router
 from app.storage import get_storage
 
+logger = logging.getLogger(__name__)
+
 settings = get_settings()
 configure_logging(settings.log_level)
 
@@ -31,7 +34,33 @@ configure_logging(settings.log_level)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     get_storage()
+    await _run_recovery_sweep()
     yield
+
+
+async def _run_recovery_sweep() -> None:
+    """Reclaim runs a previous worker left behind before serving traffic.
+
+    Runs are executed synchronously inside requests in this deployment, so a
+    crash between requests abandons a run that may be stuck in ``RUNNING``. The
+    first request to surface it would then find it while it is still stale,
+    usually mid-step after the new worker has already started. Sweeping at boot
+    parks such runs before the first request, so the first class of problems a
+    student never sees is the one recovery exists for.
+
+    The sweep is best-effort: a database that is not ready yet must not take the
+    whole process down. It is also idempotent, so running it on every worker at
+    boot is safe.
+    """
+    try:
+        from app.db.session import SessionFactory
+        from app.modules.agent import recovery
+
+        async with SessionFactory() as db:
+            report = await recovery.recover_stale_runs(db, get_settings())
+            logger.info("agent_recovery_sweep done=%s", report.as_dict())
+    except Exception:  # pragma: no cover - defensive boot path
+        logger.exception("agent_recovery_sweep failed; the app will still start")
 
 
 app = FastAPI(

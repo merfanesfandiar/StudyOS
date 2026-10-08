@@ -207,11 +207,15 @@ async def expire_checkpoints(
     *,
     now: datetime | None = None,
     assignment_id: UUID | None = None,
-) -> list[AgentCheckpoint]:
+) -> tuple[list[AgentCheckpoint], list[UUID]]:
     """Expire pending checkpoints past their TTL so runs are not stuck forever.
 
     A pending checkpoint with no student behind it is indistinguishable from an
     unanswered one, and an unanswered one must not hold a run open forever.
+    Expiring a checkpoint also releases the run that raised it: a run whose only
+    pending checkpoint just expired is no longer blocked on a question nobody
+    will answer, so it leaves ``WAITING_FOR_USER`` and is parked in ``PAUSED``,
+    where a student can resume it at leisure.
 
     ``assignment_id`` keeps a caller-scoped sweep inside the assignment it owns.
     """
@@ -232,14 +236,71 @@ async def expire_checkpoints(
             AgentRun.assignment_id == assignment_id
         )
     expired = list(await db.scalars(stmt))
+    released: list[UUID] = []
     for checkpoint in expired:
         checkpoint.status = AgentCheckpointStatus.EXPIRED.value
         checkpoint.resolved_at = moment
         checkpoint.response = CHECKPOINT_EXPIRED
+        if await _release_waiting_run(db, checkpoint):
+            released.append(checkpoint.run_id)
     if expired:
         await db.flush()
-        logger.warning("agent_checkpoints_expired count=%s", len(expired))
-    return expired
+        logger.warning(
+            "agent_checkpoints_expired count=%s released=%s", len(expired), len(released)
+        )
+    return expired, released
+
+
+async def _release_waiting_run(db: AsyncSession, checkpoint: AgentCheckpoint) -> bool:
+    """Release a run whose last pending checkpoint has just expired.
+
+    Setting only the checkpoint status leaves the run in ``WAITING_FOR_USER``
+    with no question left to answer -- a state nothing else knows how to leave.
+    The run is parked in ``PAUSED`` (the checkpoint that blocked it is gone, so
+    waiting on it is no longer honest), never resumed automatically, keeping the
+    module's "paused, never auto-resumed" contract.
+
+    Returns ``True`` if the run was actually released.
+    """
+    run = await db.get(AgentRun, checkpoint.run_id)
+    if run is None or parse_status(run.status) is not AgentRunStatus.WAITING_FOR_USER:
+        return False
+
+    still_pending = await db.scalar(
+        select(AgentCheckpoint.id)
+        .where(
+            AgentCheckpoint.run_id == run.id,
+            AgentCheckpoint.status == AgentCheckpointStatus.PENDING.value,
+        )
+        .limit(1)
+    )
+    if still_pending is not None:
+        return False  # another question is still open; the run keeps waiting on it
+
+    assert_transition(AgentRunStatus.WAITING_FOR_USER, AgentRunStatus.PAUSED)
+    run.paused_reason = CHECKPOINT_EXPIRED[:300]
+    run.status = AgentRunStatus.PAUSED.value
+    await _append_event(
+        db,
+        run,
+        AgentEventType.RUN_RECOVERED,
+        CHECKPOINT_EXPIRED,
+        metadata={
+            "from_status": AgentRunStatus.WAITING_FOR_USER.value,
+            "checkpoint_id": str(checkpoint.id),
+        },
+    )
+    await _audit(
+        db,
+        run,
+        AuditEventType.AGENT_RUN_PAUSED,
+        entity_type="agent_run",
+        entity_id=run.id,
+        metadata={"released_from": AgentRunStatus.WAITING_FOR_USER.value},
+    )
+    await db.flush()
+    logger.warning("agent_run_released run_id=%s (checkpoint %s expired)", run.id, checkpoint.id)
+    return True
 
 
 async def recover_stale_runs(
@@ -268,10 +329,13 @@ async def recover_stale_runs(
         if await pause_stale_run(db, run, reason=reason):
             paused.append(run.id)
 
-    expired = await expire_checkpoints(
+    expired, released = await expire_checkpoints(
         db, settings.agent_checkpoint_ttl_seconds, now=moment, assignment_id=assignment_id
     )
-    return RecoveryReport(runs_paused=len(paused), checkpoints_expired=len(expired), run_ids=paused)
+    all_paused = paused + released
+    return RecoveryReport(
+        runs_paused=len(all_paused), checkpoints_expired=len(expired), run_ids=all_paused
+    )
 
 
 def _iso(value: datetime | None) -> str | None:

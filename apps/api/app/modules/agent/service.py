@@ -1765,6 +1765,11 @@ async def _record_step_failure(
     limits = _limits_for(run)
     consecutive = await _consecutive_failures(db, run)
     if may_retry(limits, execution.attempt, consecutive):
+        # Back off before the next attempt. The budget itself already bounds the
+        # number of retries; the delay ensures a provider that just failed is not
+        # immediately re-hit three times in the same tick, which is how a single
+        # transient outage becomes three consecutive failures and a blocked run.
+        await asyncio.sleep(limits.backoff_seconds(execution.attempt))
         if task is not None:
             task.status = AcademicTaskStatus.PENDING.value
         await _append_event(

@@ -57,6 +57,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _zero_retry_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the suite fast: real exponential backoff would sleep seconds.
+
+    The default backoff of 1.0s turns every retry test into a multi-second sleep.
+    This fixture zeroes it for every test here; the one test that is actually
+    about backoff restores a small delay itself.
+    """
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(service, "settings", settings)
+    monkeypatch.setattr(settings, "agent_retry_backoff_seconds", 0.0)
+
+
 @pytest.fixture
 async def owner(db_session: AsyncSession) -> User:
     row = User(id=uuid4(), name="Student", email=f"{uuid4().hex}@example.com", password_hash="x")
@@ -547,6 +562,49 @@ async def test_a_rejected_action_costs_a_retry_not_the_run(
     ), "the attempt that was made should be recorded"
 
 
+async def test_a_retry_waits_out_the_backoff(
+    db_session: AsyncSession,
+    assignment: Assignment,
+    analysis: AssignmentAnalysis,
+    owner: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retried step must actually wait before attempt+1.
+
+    The whole point of the backoff is the wait: some provider outages are a
+    single failed call, and the delay is what stops one health blip from
+    becoming three consecutive failures and a blocked run.
+    """
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(service.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(service.settings, "agent_retry_backoff_seconds", 1.0)
+
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [_decision_json(confidence=0.01), *_work_then_finish("T1")]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.COMPLETED, "the retry must eventually succeed"
+    assert sleeps == [1.0], "attempt 1 must back off exactly backoff_seconds(1) before attempt 2"
+    attempts = list(
+        await db_session.scalars(
+            select(service.AgentTaskExecution).where(service.AgentTaskExecution.run_id == run.id)
+        )
+    )
+    assert any(a.attempt == 1 and a.status == "FAILED" for a in attempts), (
+        "the refused attempt must be recorded"
+    )
+    assert attempts[-1].status == "SUCCESS", "the retried work must complete"
+
+
 async def test_a_model_that_only_drafts_is_asked_instead_of_spending_the_budget(
     db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
 ) -> None:
@@ -800,6 +858,11 @@ async def test_expired_checkpoints_release_a_waiting_run(
 
     assert report.checkpoints_expired == 1
     assert checkpoint.status == AgentCheckpointStatus.EXPIRED.value
+    assert report.runs_paused == 1, "the run that only awaited this question must be released"
+    assert run.status == AgentRunStatus.PAUSED.value, (
+        "expiring the question must not leave the run WAITING_FOR_USER with nothing to wait on"
+    )
+    assert run.paused_reason, "a released run must say why it stopped waiting"
 
 
 # ---------------------------------------------------------------------------
