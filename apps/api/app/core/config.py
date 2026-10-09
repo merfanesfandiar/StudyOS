@@ -154,6 +154,10 @@ class Settings(BaseSettings):
     agent_decision_token_ratio: float = Field(default=0.4, ge=0.1, le=0.9)
     #: Maximum artifacts persisted per run. A runaway revision loop stops here.
     agent_max_artifacts: int = Field(default=60, ge=1, le=500)
+    #: Tool calls permitted inside one step. A ``read_context`` that triggers a
+    #: re-ask consumes from this budget, so a model that keeps asking for more
+    #: context instead of deciding is stopped rather than billed until the step.
+    agent_max_tool_calls_per_step: int = Field(default=4, ge=1, le=20)
     #: When true, ``AUTONOMOUS`` runs may proceed past a REVIEW checkpoint that
     #: the task's acceptance criteria do not depend on.
     agent_allow_autonomous_review: bool = False

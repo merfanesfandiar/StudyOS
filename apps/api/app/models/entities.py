@@ -16,6 +16,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -1718,7 +1719,9 @@ class AgentDecision(Base):
 
     __tablename__ = "agent_decisions"
     __table_args__ = (
-        UniqueConstraint("run_id", "iteration", name="uq_agent_decision_iteration"),
+        UniqueConstraint(
+            "run_id", "iteration", "slot", name="uq_agent_decision_iteration_slot"
+        ),
         Index("ix_agent_decisions_run_id", "run_id"),
         Index("ix_agent_decisions_action", "action"),
     )
@@ -1729,9 +1732,13 @@ class AgentDecision(Base):
     run_id: Mapped[UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
     )
-    #: The runtime loop iteration that produced this decision. One decision per
-    #: iteration is what makes the budget auditable.
+    #: The runtime loop iteration that produced this decision.
     iteration: Mapped[int] = mapped_column(Integer, nullable=False)
+    #: Position of the decision within one iteration. A step that spends tool
+    #: calls records one decision per call plus the final decision, each with a
+    #: distinct slot, so one iteration is auditable as a sequence rather than
+    #: being shrunk to a single row. Plain decisions use slot 0.
+    slot: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     action: Mapped[str] = mapped_column(String(30), nullable=False)
     #: Concise, structured rationale. The only explanation the runtime stores.
     reason: Mapped[str] = mapped_column(Text, nullable=False, default="")

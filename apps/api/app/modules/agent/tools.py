@@ -298,6 +298,20 @@ class ToolRegistry:
             raise ToolPermissionError(name, required)
         return tool
 
+    def require_granted(self, name: str, granted: frozenset[str]) -> AgentTool:
+        """Resolve a tool only if *every* permission it declares is granted.
+
+        The stronger form of :meth:`assert_permitted` for call sites that grant a
+        whole permission set at once (the runtime's default for a run). A tool
+        that needs ASK_USER cannot sneak in under a grant that only covers
+        READ_CONTEXT: every declared permission must be present.
+        """
+        tool = self.get(name)
+        missing = tuple(sorted(tool.permissions - granted))
+        if missing:
+            raise ToolPermissionError(name, ", ".join(missing))
+        return tool
+
     def describe(self) -> list[dict[str, Any]]:
         """Machine-readable catalogue for the prompt.
 
@@ -319,20 +333,38 @@ class ToolRegistry:
 DEFAULT_TOOLS: Final = ToolRegistry()
 
 
+#: Permissions a fresh run is granted by default. Deliberately excludes
+#: ``EXECUTE_UNTRUSTED``, which no run ever receives: a run granting a capability
+#: the tool registry itself labels forbidden would make the registry a decoration.
+DEFAULT_GRANTED_PERMISSIONS: Final[frozenset[str]] = frozenset(
+    {
+        ToolPermission.READ_CONTEXT,
+        ToolPermission.WRITE_ARTIFACT,
+        ToolPermission.ASK_USER,
+        ToolPermission.REQUEST_APPROVAL,
+    }
+)
+
+
 async def invoke_tool(
     name: str,
     arguments: Mapping[str, Any],
     context: ToolContext,
     *,
     registry: ToolRegistry | None = None,
+    granted: frozenset[str] | None = None,
 ) -> ToolResult:
     """Authorise and run a tool.
 
     The single entry point. Nothing else calls ``tool.invoke`` directly, so this
     is the one place where "was this permitted, and did we record it" is decided.
+    When ``granted`` is supplied, the tool must not declare a single permission
+    the caller does not hold — this is how the runtime turns its granted
+    permission set into an executable capability boundary.
     """
     reg = registry or DEFAULT_TOOLS
-    tool = reg.get(name)
+    granted_set = DEFAULT_GRANTED_PERMISSIONS if granted is None else granted
+    tool = reg.require_granted(name, granted_set)
     return await tool.invoke(arguments, context)
 
 

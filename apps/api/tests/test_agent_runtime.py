@@ -290,6 +290,19 @@ def _work_then_finish(task_key: str) -> list[str]:
     ]
 
 
+def _call_tool_json(tool: str, **arguments: object) -> str:
+    """One CALL_TOOL decision. ``arguments`` become the tool_arguments field."""
+    return json.dumps(
+        {
+            "action": "CALL_TOOL",
+            "reason": f"Calling {tool} is the next useful thing to do.",
+            "confidence": 0.9,
+            "tool": tool,
+            "tool_arguments": arguments,
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Creation is gated on an approved, current plan
 # ---------------------------------------------------------------------------
@@ -469,6 +482,224 @@ async def test_budget_is_spent_and_recorded(
     assert run.token_usage["prompt_tokens"] == calls * 100
     assert run.token_usage["total_tokens"] == calls * 150
     assert run.duration_ms is not None
+
+
+# ---------------------------------------------------------------------------
+# Tools are dispatched through CALL_TOOL, with permissions and a budget
+# ---------------------------------------------------------------------------
+
+
+async def test_a_read_context_call_feeds_its_result_back_into_the_next_decision(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """The model can ask for more of the already-assembled context between steps.
+
+    This is the property that makes CALL_TOOL worth having: a call is not a
+    side effect, it is a bounded look at material the runtime already held, and
+    the result is handed back to the provider for the next decision -- never
+    silently dropped.
+    """
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [
+            _call_tool_json("read_context", section="task_description"),
+            *_work_then_finish("T1"),
+        ]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.COMPLETED, outcome.detail
+    decisions = [r for r in provider.requests if "agent_input" in (r.metadata or {})]
+    assert len(decisions) == 3, "read_context, then draft, then complete"
+    next_decision = decisions[1].messages[-1].content
+    assert "tool read result" in next_decision, (
+        "the read_context payload must be fed into the very next decision"
+    )
+    assert "Work through T1." in next_decision, (
+        "the read section's actual text must reach the model, not just a label"
+    )
+
+    events = await db_session.execute(
+        service.AgentEvent.__table__.select().where(
+            service.AgentEvent.run_id == run.id,
+            service.AgentEvent.event_type == "TOOL_INVOKED",
+        )
+    )
+    assert len(events.fetchall()) == 1, "a successful call is recorded once"
+
+
+async def test_a_write_artifact_call_persists_the_draft_and_the_run_completes(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """A draft produced through CALL_TOOL goes through persistence like any other.
+
+    The tool returns the draft, and the runtime persists it with the same
+    revision/budget guards as the executor path -- one code path for artifacts no
+    matter who produced the body.
+    """
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [
+            _call_tool_json(
+                "write_artifact",
+                title="T1 draft",
+                artifact_type="SOLUTION",
+                content="Written by the tool, not by the model's excuse.",
+            ),
+            _decision_json(action="COMPLETE_TASK", task_key="T1"),
+        ]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.COMPLETED, outcome.detail
+    artifacts = list(await db_session.scalars(select(service.AgentArtifact)))
+    assert len(artifacts) == 1
+    assert artifacts[0].content == "Written by the tool, not by the model's excuse."
+    assert artifacts[0].title == "T1 draft"
+
+    decision_row = await db_session.scalar(
+        select(service.AgentDecision)
+        .where(service.AgentDecision.run_id == run.id)
+        .order_by(service.AgentDecision.iteration, service.AgentDecision.slot)
+    )
+    assert decision_row is not None
+    assert decision_row.action == "CALL_TOOL"
+    assert (decision_row.payload or {}).get("tool") == "write_artifact"
+
+
+async def test_a_request_checkpoint_call_parks_the_run_on_a_question(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """The terminal tool call hands control back to the student like ASK_USER."""
+    from app.models.entities import AgentCheckpoint
+
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [
+            _call_tool_json(
+                "request_checkpoint",
+                question="Which notation should I use?",
+                checkpoint_type="CLARIFICATION",
+                options=["Knopp", "Rudin"],
+            ),
+        ]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.WAITING_FOR_USER
+    checkpoints = list(
+        await db_session.scalars(
+            select(AgentCheckpoint).where(AgentCheckpoint.run_id == run.id)
+        )
+    )
+    assert len(checkpoints) == 1
+    assert checkpoints[0].question == "Which notation should I use?"
+    assert checkpoints[0].checkpoint_type == "CLARIFICATION"
+
+
+async def test_a_call_for_an_unregistered_tool_is_blocked(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """The semantic layer refuses tools that are not in the registry.
+
+    This is the layer that makes the tool list a closed set: a model that
+    invents an executable action must be blocked before anything runs.
+    """
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider([_call_tool_json("destroy_everything") for _ in range(6)])
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is not AgentRunStatus.COMPLETED
+    attempts = list(
+        await db_session.scalars(
+            select(service.AgentTaskExecution).where(
+                service.AgentTaskExecution.run_id == run.id
+            )
+        )
+    )
+    assert attempts, "the refused decision must be recorded, not swallowed"
+    assert all(a.error_code == "AGENT_TOOL_UNKNOWN" for a in attempts), (
+        "every attempt must name the rejected tool"
+    )
+    assert list(await db_session.scalars(select(service.AgentArtifact))) == [], (
+        "a blocked call must leave nothing for a student to trust"
+    )
+
+
+async def test_a_call_whose_permission_is_not_granted_is_blocked(
+    db_session: AsyncSession,
+    assignment: Assignment,
+    analysis: AssignmentAnalysis,
+    owner: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The permission layer refuses a tool the run's grants do not cover."""
+    granted = frozenset({"READ_CONTEXT"})
+    monkeypatch.setattr(service, "DEFAULT_GRANTED_PERMISSIONS", granted)
+
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [_call_tool_json("write_artifact", title="x", content="y") for _ in range(6)]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is not AgentRunStatus.COMPLETED
+    attempts = list(
+        await db_session.scalars(
+            select(service.AgentTaskExecution).where(
+                service.AgentTaskExecution.run_id == run.id
+            )
+        )
+    )
+    assert all(a.error_code == "AGENT_TOOL_PERMISSION_DENIED" for a in attempts)
+    assert list(await db_session.scalars(select(service.AgentArtifact))) == []
+
+
+async def test_a_step_cannot_spend_its_whole_budget_on_tool_calls(
+    db_session: AsyncSession,
+    assignment: Assignment,
+    analysis: AssignmentAnalysis,
+    owner: User,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reading context is useful, but a model that never decides must be stopped."""
+    monkeypatch.setattr(service.settings, "agent_max_tool_calls_per_step", 2)
+
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [_call_tool_json("read_context", section="task_description") for _ in range(6)]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is not AgentRunStatus.COMPLETED
+    attempts = list(
+        await db_session.scalars(
+            select(service.AgentTaskExecution).where(
+                service.AgentTaskExecution.run_id == run.id
+            )
+        )
+    )
+    assert attempts[0].error_code == "AGENT_TOOL_CALL_LIMIT"
+    assert attempts[0].error_message is not None
+    assert "at most 2 tool calls" in attempts[0].error_message
 
 
 # ---------------------------------------------------------------------------

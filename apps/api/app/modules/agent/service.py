@@ -122,7 +122,15 @@ from app.modules.agent.state_machine import (
     assert_transition,
     parse_status,
 )
-from app.modules.agent.tools import DEFAULT_TOOLS, ToolRegistry
+from app.modules.agent.tools import (
+    DEFAULT_GRANTED_PERMISSIONS,
+    DEFAULT_TOOLS,
+    ToolContext,
+    ToolNotRegisteredError,
+    ToolPermissionError,
+    ToolRegistry,
+    invoke_tool,
+)
 from app.modules.assignments.service import load_owned_assignment
 from app.modules.planning import service as planning_service
 from app.modules.planning.complexity import ComplexityScore
@@ -633,6 +641,7 @@ def _limits_for(run: AgentRun) -> AgentLimits:
         max_artifacts=settings.agent_max_artifacts,
         retry_backoff_seconds=settings.agent_retry_backoff_seconds,
         checkpoint_ttl_seconds=settings.agent_checkpoint_ttl_seconds,
+        max_tool_calls_per_step=settings.agent_max_tool_calls_per_step,
         decision_token_ratio=settings.agent_decision_token_ratio,
     )
 
@@ -1481,35 +1490,109 @@ async def _run_step(
         execution_id=execution.id,
     )
 
-    # ---- decide -------------------------------------------------------
-    decision_raw: str
-    if provider is None:
-        decision_raw = json.dumps(
-            {
-                "action": AgentAction.MARK_BLOCKED.value,
-                "task_key": node.key,
-                "reason": "No model provider is configured for this deployment.",
-                "confidence": 1.0,
-                "blocked_reason": "No provider is available.",
-            }
+    # ---- decide / dispatch, with a bounded tool-call loop ------------
+    # A single step may spend a few of its decisions on tool calls. Every call
+    # costs a provider round-trip and, on success, is either terminal (artifact
+    # persisted, checkpoint opened) or feeds its result back for one more
+    # decision. The budget is :attr:`~AgentLimits.max_tool_calls_per_step`, so a
+    # model that reads context repeatedly instead of deciding is stopped rather
+    # than billed until the step times out.
+    tool_results: list[str] = []
+    tool_calls = 0
+    while True:
+        decision_raw: str
+        if provider is None:
+            decision_raw = json.dumps(
+                {
+                    "action": AgentAction.MARK_BLOCKED.value,
+                    "task_key": node.key,
+                    "reason": "No model provider is configured for this deployment.",
+                    "confidence": 1.0,
+                    "blocked_reason": "No provider is available.",
+                }
+            )
+        else:
+            try:
+                request = build_decision_request(
+                    context,
+                    registry=tools,
+                    max_output_tokens=_decision_output_tokens(limits),
+                    tool_output=tool_results[-1] if tool_results else None,
+                )
+                _gate_provider_call(run, limits, provider, request)
+                response = await asyncio.wait_for(
+                    provider.complete(request),
+                    timeout=limits.step_timeout_seconds,
+                )
+                decision_raw = response.content
+                execution.model = response.model
+                execution.token_usage = response.usage.as_dict()
+                _charge_run(run, response)
+            except TimeoutError:
+                return await _record_step_failure(
+                    db,
+                    run,
+                    user,
+                    execution,
+                    task,
+                    node,
+                    code="AGENT_STEP_TIMEOUT",
+                    message="The model did not respond in time.",
+                    category=AgentFailureCategory.TRANSIENT_PROVIDER,
+                )
+            except (LLMUnavailableError, LLMError) as exc:
+                return await _record_step_failure(
+                    db,
+                    run,
+                    user,
+                    execution,
+                    task,
+                    node,
+                    code=getattr(exc, "code", "AGENT_PROVIDER_ERROR"),
+                    message=getattr(exc, "message", str(exc)),
+                    category=(
+                        AgentFailureCategory.TRANSIENT_PROVIDER
+                        if not isinstance(exc, LLMTimeoutError)
+                        else AgentFailureCategory.TRANSIENT_PROVIDER
+                    ),
+                )
+            except BudgetExceeded as exc:
+                return await _fail_run(
+                    db, run, user, code=exc.code, message=exc.message, category=exc.category
+                )
+
+        # ---- validate -------------------------------------------------
+        approval_keys = approval_required_keys(nodes)
+        decision_ctx = DecisionContext(
+            run_id=run.id,
+            mode=AgentRunMode(run.mode),
+            executable_task_keys=frozenset(select_next_task(nodes).runnable_keys),
+            tasks={
+                n.key: TaskView(
+                    key=n.key,
+                    status=n.status,
+                    position=n.position,
+                    depends_on=n.depends_on,
+                    acceptance_criteria=(),
+                )
+                for n in nodes
+            },
+            artifact_ids=frozenset(
+                str(row)
+                for row in await db.scalars(
+                    select(AgentArtifact.id).where(AgentArtifact.run_id == run.id)
+                )
+            ),
+            approval_required_keys=approval_keys,
+            available_tools=frozenset(tools.names()),
+            tool_permissions={name: tools.get(name).permissions for name in tools.names()},
+            granted_permissions=DEFAULT_GRANTED_PERMISSIONS,
         )
-    else:
         try:
-            request = build_decision_request(
-                context,
-                registry=tools,
-                max_output_tokens=_decision_output_tokens(limits),
-            )
-            _gate_provider_call(run, limits, provider, request)
-            response = await asyncio.wait_for(
-                provider.complete(request),
-                timeout=limits.step_timeout_seconds,
-            )
-            decision_raw = response.content
-            execution.model = response.model
-            execution.token_usage = response.usage.as_dict()
-            _charge_run(run, response)
-        except TimeoutError:
+            decision = parse_decision(decision_raw)
+            validate_semantics(decision, decision_ctx)
+            validate_permissions(decision, decision_ctx)
+        except DecisionRejected as rejection:
             return await _record_step_failure(
                 db,
                 run,
@@ -1517,120 +1600,275 @@ async def _run_step(
                 execution,
                 task,
                 node,
-                code="AGENT_STEP_TIMEOUT",
-                message="The model did not respond in time.",
-                category=AgentFailureCategory.TRANSIENT_PROVIDER,
-            )
-        except (LLMUnavailableError, LLMError) as exc:
-            return await _record_step_failure(
-                db,
-                run,
-                user,
-                execution,
-                task,
-                node,
-                code=getattr(exc, "code", "AGENT_PROVIDER_ERROR"),
-                message=getattr(exc, "message", str(exc)),
-                category=(
-                    AgentFailureCategory.TRANSIENT_PROVIDER
-                    if not isinstance(exc, LLMTimeoutError)
-                    else AgentFailureCategory.TRANSIENT_PROVIDER
-                ),
-            )
-        except BudgetExceeded as exc:
-            return await _fail_run(
-                db, run, user, code=exc.code, message=exc.message, category=exc.category
+                code=rejection.code,
+                message=rejection.message,
+                category=AgentFailureCategory.VALIDATION_ERROR,
+                validation_errors=rejection.errors,
+                detail=f"rejected at the {rejection.layer} layer",
             )
 
-    # ---- validate -----------------------------------------------------
-    approval_keys = approval_required_keys(nodes)
-    decision_ctx = DecisionContext(
-        run_id=run.id,
-        mode=AgentRunMode(run.mode),
-        executable_task_keys=frozenset(select_next_task(nodes).runnable_keys),
-        tasks={
-            n.key: TaskView(
-                key=n.key,
-                status=n.status,
-                position=n.position,
-                depends_on=n.depends_on,
-                acceptance_criteria=(),
-            )
-            for n in nodes
-        },
-        artifact_ids=frozenset(
-            str(row)
-            for row in await db.scalars(
-                select(AgentArtifact.id).where(AgentArtifact.run_id == run.id)
-            )
-        ),
-        approval_required_keys=approval_keys,
-    )
-    try:
-        decision = parse_decision(decision_raw)
-        validate_semantics(decision, decision_ctx)
-        validate_permissions(decision, decision_ctx)
-    except DecisionRejected as rejection:
-        return await _record_step_failure(
+        decision_row = AgentDecision(
+            run_id=run.id,
+            iteration=run.iteration_count,
+            # Within one iteration: the slot counts the tool calls already made,
+            # so a step that reads context twice records three rows (two calls
+            # and the final decision) rather than colliding on one slot.
+            slot=tool_calls,
+            action=decision.action.value,
+            reason=decision.reason,
+            expected_output=decision.expected_output,
+            confidence=decision.confidence,
+            model=execution.model,
+            model_tier=run.model_tier,
+            payload={
+                "task_key": decision.task_key,
+                "artifact_type": decision.artifact_type.value if decision.artifact_type else None,
+                "artifact_id": decision.artifact_id,
+                "question": decision.question,
+                "blocked_reason": decision.blocked_reason,
+                "tool": decision.tool,
+                "layer": "validated",
+            },
+        )
+        db.add(decision_row)
+        await db.flush()
+        await _append_event(
             db,
             run,
-            user,
-            execution,
-            task,
-            node,
-            code=rejection.code,
-            message=rejection.message,
-            category=AgentFailureCategory.VALIDATION_ERROR,
-            validation_errors=rejection.errors,
-            detail=f"rejected at the {rejection.layer} layer",
+            AgentEventType.DECISION_RECORDED,
+            f"Decided to {decision.action.value.lower().replace('_', ' ')}.",
+            metadata={"action": decision.action.value, "confidence": decision.confidence},
+            task_id=task.id if task else None,
+            execution_id=execution.id,
         )
 
-    decision_row = AgentDecision(
-        run_id=run.id,
-        iteration=run.iteration_count,
-        action=decision.action.value,
-        reason=decision.reason,
-        expected_output=decision.expected_output,
-        confidence=decision.confidence,
-        model=execution.model,
-        model_tier=run.model_tier,
-        payload={
-            "task_key": decision.task_key,
-            "artifact_type": decision.artifact_type.value if decision.artifact_type else None,
-            "artifact_id": decision.artifact_id,
-            "question": decision.question,
-            "blocked_reason": decision.blocked_reason,
-            "layer": "validated",
-        },
-    )
-    db.add(decision_row)
-    await db.flush()
-    await _append_event(
-        db,
-        run,
-        AgentEventType.DECISION_RECORDED,
-        f"Decided to {decision.action.value.lower().replace('_', ' ')}.",
-        metadata={"action": decision.action.value, "confidence": decision.confidence},
-        task_id=task.id if task else None,
-        execution_id=execution.id,
-    )
+        if decision.action != AgentAction.CALL_TOOL:
+            return await _apply_decision(
+                db,
+                run,
+                user,
+                plan,
+                task,
+                node,
+                execution,
+                decision,
+                decision_row,
+                context,
+                provider,
+                tools,
+                executors,
+                limits,
+            )
 
-    return await _apply_decision(
-        db,
-        run,
-        user,
-        plan,
-        task,
-        node,
-        execution,
-        decision,
-        decision_row,
-        context,
-        provider,
-        tools,
-        executors,
-        limits,
-    )
+        # ---- CALL_TOOL dispatch --------------------------------------
+        # Reached only through ``invoke_tool``: that one function is the only
+        # path from a decision to a tool, and it enforces the granted
+        # permission set before calling the tool's ``invoke``.
+        if tool_calls >= limits.max_tool_calls_per_step:
+            return await _record_step_failure(
+                db,
+                run,
+                user,
+                execution,
+                task,
+                node,
+                code="AGENT_TOOL_CALL_LIMIT",
+                message=(
+                    f"This step allows at most {limits.max_tool_calls_per_step} tool calls; "
+                    "the model kept calling tools instead of deciding."
+                ),
+                category=AgentFailureCategory.VALIDATION_ERROR,
+                detail="tool budget exhausted in one step",
+            )
+        tool_calls += 1
+
+        tool_ctx = ToolContext(
+            run_id=run.id,
+            task_id=task.id if task else None,
+            task_key=node.key,
+            context=context.text,
+            context_sections=context.sections,
+            prior_artifacts=tuple(
+                await db.scalars(
+                    select(AgentArtifact.title).where(AgentArtifact.run_id == run.id)
+                )
+            ),
+        )
+        try:
+            assert decision.tool is not None
+            result = await invoke_tool(
+                decision.tool,
+                dict(decision.tool_arguments or {}),
+                tool_ctx,
+                registry=tools,
+                granted=DEFAULT_GRANTED_PERMISSIONS,
+            )
+        except (ToolNotRegisteredError, ToolPermissionError) as exc:
+            await _append_event(
+                db,
+                run,
+                AgentEventType.TOOL_BLOCKED,
+                f"Blocked tool {decision.tool!r}: {exc.message[:200]}",
+                metadata={"tool": decision.tool, "code": exc.code},
+                task_id=task.id if task else None,
+                execution_id=execution.id,
+            )
+            decision_row.outcome = "TOOL_BLOCKED"
+            return await _record_step_failure(
+                db,
+                run,
+                user,
+                execution,
+                task,
+                node,
+                code=exc.code,
+                message=exc.message,
+                category=(
+                    AgentFailureCategory.VALIDATION_ERROR
+                    if isinstance(exc, ToolNotRegisteredError)
+                    else AgentFailureCategory.PERMISSION_DENIED
+                ),
+                detail="tool blocked at dispatch",
+            )
+        if not result.ok or decision.tool is None:
+            await _append_event(
+                db,
+                run,
+                AgentEventType.TOOL_BLOCKED,
+                f"Tool {decision.tool or '?'!r} refused: {(result.reason or '')[:200]}",
+                metadata={"tool": decision.tool, "reason": result.reason},
+                task_id=task.id if task else None,
+                execution_id=execution.id,
+            )
+            decision_row.outcome = "TOOL_BLOCKED"
+            return await _record_step_failure(
+                db,
+                run,
+                user,
+                execution,
+                task,
+                node,
+                code="AGENT_TOOL_REFUSED",
+                message=result.reason or result.summary,
+                category=AgentFailureCategory.VALIDATION_ERROR,
+                detail="tool refused the call",
+            )
+
+        decision_row.outcome = "TOOL_INVOKED"
+        await _append_event(
+            db,
+            run,
+            AgentEventType.TOOL_INVOKED,
+            f"Tool {decision.tool} {result.summary[:200]}",
+            metadata={"tool": decision.tool},
+            task_id=task.id if task else None,
+            execution_id=execution.id,
+        )
+
+        # Terminal dispatches: an artifact draft or a checkpoint end the step.
+        if decision.tool == "write_artifact":
+            existing = await _artifact_revisions(db, run, task)
+            if existing >= MAX_REVISIONS_PER_TASK:
+                await _close_execution(db, execution, AgentExecutionStatus.SUCCESS, result.summary)
+                decision_row.outcome = "REVISION_LIMIT_REACHED"
+                await _create_checkpoint(
+                    db,
+                    run,
+                    checkpoint_type=AgentCheckpointType.REVIEW,
+                    task=task,
+                    question=(
+                        f"I have drafted {node.key} {existing} times without finishing it. "
+                        "Would you like me to keep revising, move on, or stop?"
+                    ),
+                    context=(
+                        "Repeated drafting usually means the task is missing information "
+                        "rather than that another pass will fix it."
+                    ),
+                    options=["Keep revising", "Move on and leave the draft", "Stop this run"],
+                )
+                await db.flush()
+                return StepOutcome(
+                    kind="WAITING",
+                    run_status=AgentRunStatus.WAITING_FOR_USER,
+                    detail=f"{node.key} has been drafted {existing} times.",
+                    task_key=node.key,
+                    decision_action=decision.action,
+                )
+            try:
+                assert_artifact_budget(
+                    limits,
+                    await db.scalar(
+                        select(func.count())
+                        .select_from(AgentArtifact)
+                        .where(AgentArtifact.run_id == run.id)
+                    )
+                    or 0,
+                )
+            except BudgetExceeded as exc:
+                return await _fail_run(
+                    db, run, user, code=exc.code, message=exc.message, category=exc.category
+                )
+            artifact = await _persist_artifact(
+                db,
+                run,
+                task,
+                title=str(result.payload.get("title") or node.key),
+                artifact_type=AgentArtifactType(str(result.payload["artifact_type"])),
+                content=str(result.payload.get("content") or ""),
+                user=user,
+            )
+            await _close_execution(db, execution, AgentExecutionStatus.SUCCESS, result.summary)
+            execution.output = result.payload
+            decision_row.outcome = "TOOL_CREATED_ARTIFACT"
+            await db.flush()
+            return StepOutcome(
+                kind="ADVANCED",
+                run_status=AgentRunStatus.RUNNING,
+                detail=result.summary,
+                task_key=node.key,
+                artifact_id=artifact.id,
+                decision_action=decision.action,
+            )
+
+        if decision.tool == "request_checkpoint":
+            payload = result.payload
+            raw_type = str(
+                payload.get("checkpoint_type") or AgentCheckpointType.CLARIFICATION.value
+            )
+            checkpoint_type = AgentCheckpointType(raw_type)
+            execution_status = (
+                AgentExecutionStatus.NEEDS_APPROVAL
+                if checkpoint_type in {AgentCheckpointType.APPROVAL, AgentCheckpointType.REVIEW}
+                else AgentExecutionStatus.NEEDS_USER_INPUT
+            )
+            await _close_execution(db, execution, execution_status, decision.reason)
+            checkpoint = await _create_checkpoint(
+                db,
+                run,
+                question=str(payload.get("question") or decision.reason),
+                checkpoint_type=checkpoint_type,
+                task=task,
+                context=payload.get("context"),
+                options=payload.get("options"),
+            )
+            decision_row.outcome = "WAITING_FOR_USER"
+            await db.flush()
+            return StepOutcome(
+                kind="WAITING",
+                run_status=AgentRunStatus.WAITING_FOR_USER,
+                detail=decision.reason,
+                checkpoint_id=checkpoint.id,
+                decision_action=decision.action,
+                task_key=node.key,
+            )
+
+        # read_context: feed the result back and re-decide. The value is a
+        # bounded slice of a section the runtime already held, so this can never
+        # pull unbounded text into a prompt.
+        tool_results.append(
+            f"Tool result from read_context ({result.payload.get('section', '')}):\n"
+            f"{result.payload.get('text', '').strip()}"
+        )
 
 
 async def _build_context(
@@ -2494,7 +2732,7 @@ async def load_run_detail(run: AgentRun, db: AsyncSession) -> dict[str, Any]:
     ]
     decisions = [
         AgentDecisionResponse.model_validate(d)
-        for d in sorted(run.decisions, key=lambda d: d.iteration)
+        for d in sorted(run.decisions, key=lambda d: (d.iteration, d.slot))
     ]
 
     status = parse_status(run.status)

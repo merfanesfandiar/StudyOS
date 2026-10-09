@@ -40,7 +40,8 @@ how a validation system ends up with one layer.
 
 **1. Schema.** `parse_decision` parses the raw response into `AgentDecisionOutput`. Malformed JSON,
 unknown actions, wrong types, and missing required fields are rejected here. This is the layer that
-stops a model from inventing a field the runtime would then trust.
+stops a model from inventing a field the runtime would then trust. A `CALL_TOOL` decision with no
+`tool` is rejected here.
 
 **2. Semantics.** `validate_semantics` checks the decision makes sense in context:
 
@@ -49,13 +50,17 @@ stops a model from inventing a field the runtime would then trust.
 - `PAUSE_RUN` is refused in `AUTONOMOUS` mode — the mode exists to run to the next real wall, so a
   model pausing itself on a whim would defeat it.
 - Low-confidence decisions are refused for the actions where being wrong is expensive.
+- `CALL_TOOL` must name a tool that is actually registered. A tool the model invents is
+  `AGENT_TOOL_UNKNOWN` — nothing is dispatched, so "invent a tool" cannot become "invent an action".
 
 **3. Permission.** `validate_permissions` is the layer that exists because the first two can both
 pass and still be wrong. It checks the decision against what this run is allowed to do: the tool
-registry's permissions, the closed executor set, and the plan's own task list.
+registry's permissions, the closed executor set, and the plan's own task list. A `CALL_TOOL` whose
+tool declares any permission outside the run's granted set is `AGENT_TOOL_PERMISSION_DENIED`, and
+`invoke_tool` enforces the same granted set again at dispatch.
 
 All three raise `DecisionRejected`, which becomes a recorded `AgentExecution` with
-`failure_category = INVALID_OUTPUT` — not an exception that loses the run. A rejected decision is
+`failure_category = VALIDATION_ERROR` — not an exception that loses the run. A rejected decision is
 data.
 
 ## Injection

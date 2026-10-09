@@ -20,7 +20,7 @@ cannot drift from what the runtime can actually do.
 from __future__ import annotations
 
 from app.ai.provider import LLMMessage, LLMRequest
-from app.modules.agent.context import AgentContext
+from app.modules.agent.context import UNTRUSTED_CLOSE, UNTRUSTED_OPEN, AgentContext
 from app.modules.agent.decisions import AgentDecisionOutput
 from app.modules.agent.tools import ToolRegistry
 
@@ -37,7 +37,9 @@ Non-negotiable rules:
 commentary, no code fences.
 2. Your action must be exactly one of: EXECUTE_TASK, ASK_USER, REQUEST_APPROVAL, \
 CREATE_ARTIFACT, UPDATE_ARTIFACT, REVIEW_RESULT, RETRY_TASK, MARK_BLOCKED, \
-COMPLETE_TASK, PAUSE_RUN. There are no others. If nothing fits, use MARK_BLOCKED.
+COMPLETE_TASK, PAUSE_RUN, CALL_TOOL. There are no others. If nothing fits, use \
+MARK_BLOCKED. CALL_TOOL invokes one of the listed tools and must name exactly \
+that tool; the runtime decides whether the call is permitted.
 3. Explain yourself in one short sentence in "reason". Never output hidden \
 reasoning, scratch work, deliberation, or a chain of thought. The student sees \
 only your action and that one sentence.
@@ -61,8 +63,14 @@ def build_agent_messages(
     context: AgentContext,
     *,
     registry: ToolRegistry,
+    tool_output: str | None = None,
 ) -> tuple[LLMMessage, ...]:
-    """Build the messages for one decision step."""
+    """Build the messages for one decision step.
+
+    ``tool_output`` carries the result of a ``read_context`` call back into the
+    provider so the model can act on what it just read. It is appended as data
+    after the assembled context, exactly like any other untrusted material.
+    """
     catalogue = "\n".join(
         f"- {tool['name']}: {tool['description']}" for tool in registry.describe()
     )
@@ -78,6 +86,13 @@ def build_agent_messages(
         f"{context.text}\n\n"
         "Return one JSON object matching the response schema."
     )
+    if tool_output:
+        user = (
+            f"{user}\n\n"
+            f"{UNTRUSTED_OPEN} tool read result {UNTRUSTED_CLOSE}\n"
+            f"{tool_output}\n"
+            f"{UNTRUSTED_CLOSE} tool read result {UNTRUSTED_CLOSE}"
+        )
     return (
         LLMMessage(role="system", content=system),
         LLMMessage(role="user", content=user),
@@ -90,6 +105,7 @@ def build_decision_request(
     registry: ToolRegistry,
     max_output_tokens: int = 1_000,
     temperature: float = 0.0,
+    tool_output: str | None = None,
 ) -> LLMRequest:
     """Build the full provider request for one decision step.
 
@@ -98,7 +114,7 @@ def build_decision_request(
     product lives in planning, which is exploratory on purpose.
     """
     return LLMRequest(
-        messages=build_agent_messages(context, registry=registry),
+        messages=build_agent_messages(context, registry=registry, tool_output=tool_output),
         response_schema=AgentDecisionOutput.model_json_schema(),
         prompt_version=PROMPT_VERSION,
         temperature=temperature,

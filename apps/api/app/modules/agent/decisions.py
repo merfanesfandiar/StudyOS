@@ -76,6 +76,11 @@ class AgentDecisionOutput(BaseModel):
     #: Why a task is blocked. Required by MARK_BLOCKED, because a block the
     #: student cannot act on is not useful to them.
     blocked_reason: str | None = Field(default=None, max_length=500)
+    #: Which registered tool to invoke. Required by CALL_TOOL, and the *only*
+    #: path from a decision to a tool: ``tool_arguments`` are handed to the tool
+    #: itself, which validates them and refuses rather than raising.
+    tool: str | None = Field(default=None, max_length=64)
+    tool_arguments: dict[str, Any] | None = None
 
     @field_validator("confidence")
     @classmethod
@@ -118,6 +123,8 @@ class AgentDecisionOutput(BaseModel):
             needed.append("artifact_id")
         if self.action == AgentAction.MARK_BLOCKED and not self.blocked_reason:
             needed.append("blocked_reason")
+        if self.action == AgentAction.CALL_TOOL and not self.tool:
+            needed.append("tool")
         return needed
 
     def response_schema(self) -> dict[str, Any]:
@@ -179,6 +186,14 @@ class DecisionContext:
     #: Task keys whose acceptance criteria are not satisfied by their predecessors
     #: and which therefore require human approval before they are auto-approved.
     approval_required_keys: frozenset[str] = frozenset()
+    #: Names the model is allowed to propose for CALL_TOOL.
+    available_tools: frozenset[str] = frozenset()
+    #: One declared permission per tool, so the permission layer can decide
+    #: whether a call is allowed without importing the tool registry.
+    tool_permissions: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    #: Permissions granted to this run. A CALL_TOOL whose tool declares any
+    #: permission outside this set is refused at the permission layer.
+    granted_permissions: frozenset[str] = frozenset()
 
 
 def parse_decision(raw: str | bytes) -> AgentDecisionOutput:
@@ -297,6 +312,14 @@ def validate_semantics(decision: AgentDecisionOutput, ctx: DecisionContext) -> N
             "That artifact does not belong to this run.",
             [{"loc": ["artifact_id"], "msg": f"unknown artifact {decision.artifact_id}"}],
         )
+    if decision.action == AgentAction.CALL_TOOL:
+        if decision.tool not in ctx.available_tools:
+            raise DecisionRejected(
+                "semantic",
+                "AGENT_TOOL_UNKNOWN",
+                f"Tool {decision.tool!r} is not a registered agent tool.",
+                [{"loc": ["tool"], "msg": f"unknown tool {decision.tool}"}],
+            )
 
 
 def validate_permissions(decision: AgentDecisionOutput, ctx: DecisionContext) -> None:
@@ -354,6 +377,18 @@ def validate_permissions(decision: AgentDecisionOutput, ctx: DecisionContext) ->
             ),
             [{"loc": ["confidence"], "msg": "ask the student instead"}],
         )
+    if decision.action == AgentAction.CALL_TOOL and decision.tool is not None:
+        missing = (ctx.tool_permissions.get(decision.tool) or frozenset()) - ctx.granted_permissions
+        if missing:
+            raise DecisionRejected(
+                "permission",
+                "AGENT_TOOL_PERMISSION_DENIED",
+                (
+                    f"Calling {decision.tool!r} needs permissions the run does not grant: "
+                    f"{', '.join(sorted(missing))}."
+                ),
+                [{"loc": ["tool"], "msg": f"ungranted permissions {sorted(missing)}"}],
+            )
 
 
 def validate(
@@ -380,4 +415,5 @@ ACTION_OUTCOME: dict[AgentAction, AgentExecutionStatus] = {
     AgentAction.REQUEST_APPROVAL: AgentExecutionStatus.NEEDS_APPROVAL,
     AgentAction.MARK_BLOCKED: AgentExecutionStatus.BLOCKED,
     AgentAction.PAUSE_RUN: AgentExecutionStatus.SKIPPED,
+    AgentAction.CALL_TOOL: AgentExecutionStatus.SUCCESS,
 }

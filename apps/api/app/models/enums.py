@@ -597,6 +597,12 @@ class AgentAction(StrEnum):
     A model may not invent an action. Anything outside this vocabulary is
     rejected at the schema layer before it can reach the database, which is what
     keeps "the model decided something" from meaning "the model decided anything".
+
+    ``CALL_TOOL`` is the one action that hands control back to the runtime *before*
+    the step finishes: the model names a tool from the registry and the runtime
+    invokes it under ``ToolRegistry.assert_permitted``. Its result is either fed
+    back into a bounded re-ask or applied directly (draft persisted, checkpoint
+    opened).
     """
 
     EXECUTE_TASK = "EXECUTE_TASK"
@@ -609,6 +615,7 @@ class AgentAction(StrEnum):
     MARK_BLOCKED = "MARK_BLOCKED"
     COMPLETE_TASK = "COMPLETE_TASK"
     PAUSE_RUN = "PAUSE_RUN"
+    CALL_TOOL = "CALL_TOOL"
 
 
 class AgentExecutorKind(StrEnum):

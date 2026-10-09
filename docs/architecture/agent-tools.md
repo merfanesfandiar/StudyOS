@@ -26,8 +26,33 @@ a future tool needing it has to be *named* in a code review rather than discover
 existing permission quietly covered it. The cost is one unused constant; the benefit is that the
 dangerous capability has a name in review.
 
-`ToolRegistry.assert_permitted(name, required)` is checked before every invocation, so a tool cannot
-be called for a permission it did not declare.
+## Tools are called, not merely described
+
+The model reaches a tool through exactly one route: a `CALL_TOOL` decision naming one of the three
+tools above. Three layers gate it before anything is dispatched.
+
+1. **Schema.** The decision must name a `tool`. A `CALL_TOOL` with no tool is rejected as
+   incomplete before it is even compared to the world.
+2. **Semantics.** The tool must be in the registry. `get` is the boundary here: a name the model
+   invents is `AGENT_TOOL_UNKNOWN`, recorded and refused, with nothing dispatched.
+3. **Permission.** The tool's declared permissions must be a subset of the run's granted set. Every
+   tool declares its own `permissions`, and `DEFAULT_GRANTED_PERMISSIONS` — the set the runtime
+   passes to `invoke_tool` — is the boundary: `ASK_USER`, `WRITE_ARTIFACT`, `READ_CONTEXT` and
+   `REQUEST_APPROVAL`. `EXECUTE_UNTRUSTED` is not in it and cannot be reached by any registered
+   tool.
+
+`invoke_tool(name, arguments, context, granted=DEFAULT_GRANTED_PERMISSIONS)` is the single entry
+point. It calls `ToolRegistry.require_granted`, which refuses a call the moment *any* declared
+permission is missing from the granted set, and only then calls the tool's `invoke`. Nothing else
+in the runtime calls a tool directly, so the granted set is enforced at the one place where a tool
+could run.
+
+The per-step budget lives in the runtime, not the registry: `AgentLimits.max_tool_calls_per_step`
+(default 4, config `agent_max_tool_calls_per_step`) caps how many `CALL_TOOL` decisions one step may
+spend. A model that reads context repeatedly instead of deciding is stopped at that ceiling
+(`AGENT_TOOL_CALL_LIMIT`) rather than billed until the step times out. Each call within a step also
+occupies its own `slot` on the run's decision ledger, so the sequence stays auditable decision by
+decision.
 
 ## What is absent, and how you can tell
 

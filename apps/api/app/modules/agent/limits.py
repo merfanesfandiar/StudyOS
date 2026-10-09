@@ -69,6 +69,7 @@ class AgentLimits:
     max_artifacts: int
     retry_backoff_seconds: float
     checkpoint_ttl_seconds: float
+    max_tool_calls_per_step: int
     #: Fraction of the per-step token budget spent on deciding vs producing.
     decision_token_ratio: float
 
@@ -87,6 +88,7 @@ class AgentLimits:
             max_artifacts=settings.agent_max_artifacts,
             retry_backoff_seconds=settings.agent_retry_backoff_seconds,
             checkpoint_ttl_seconds=settings.agent_checkpoint_ttl_seconds,
+            max_tool_calls_per_step=settings.agent_max_tool_calls_per_step,
             decision_token_ratio=settings.agent_decision_token_ratio,
         )
 

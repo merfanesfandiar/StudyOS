@@ -121,6 +121,7 @@ def _limits(**overrides: object) -> AgentLimits:
         "max_artifacts": 20,
         "retry_backoff_seconds": 0.0,
         "checkpoint_ttl_seconds": 900.0,
+        "max_tool_calls_per_step": 4,
         "decision_token_ratio": 0.4,
     }
     base.update(overrides)
