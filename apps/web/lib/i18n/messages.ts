@@ -653,6 +653,10 @@ export const en = {
   "notFound.body": "The page you asked for is not here. It may have moved, or never existed.",
   "notFound.back": "Return to dashboard",
 
+  "error.title": "Something went wrong",
+  "error.body": "The page hit a problem. Trying the page again usually fixes it.",
+  "error.back": "Return to dashboard",
+
   "dashboard.workspaceSummary": "Workspace summary",
   "status.ready_for_analysis": "Ready for analysis",
   "dashboard.description": "See what needs attention and keep every brief moving forward.",
@@ -1639,6 +1643,10 @@ export const fa: Catalogue = {
   "notFound.title": "صفحه پیدا نشد",
   "notFound.body": "صفحه‌ای که خواستید اینجا نیست. شاید جابه‌جا شده یا هرگز وجود نداشته است.",
   "notFound.back": "بازگشت به داشبورد",
+
+  "error.title": "خطایی رخ داد",
+  "error.body": "صفحه با مشکلی مواجه شد. معمولاً تلاش دوباره آن را درست می‌کند.",
+  "error.back": "بازگشت به داشبورد",
 
   "dashboard.workspaceSummary": "خلاصهٔ فضای کاری",
   "status.ready_for_analysis": "آمادهٔ تحلیل",

@@ -360,6 +360,27 @@ describe("AgentPanel", () => {
     expect(within(panel as HTMLElement).getByText(/Second attempt/)).toBeInTheDocument();
   });
 
+  it("polls a running run so the progress moves without a click", async () => {
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "RUNNING" })] }),
+        [`GET ${BASE}/runs/r1`]: () => jsonResponse(detail({ status: "RUNNING", iteration_count: 1 })),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    // The panel asks on its own while the run is live: the activation poll
+    // re-reads the detail endpoint with no button pressed. The mount read alone
+    // would be one call; two means the poll already fired.
+    await waitFor(() => {
+      const detailCalls = fetchMock.mock.calls.filter(
+        ([input, init]) => String(input).endsWith("/runs/r1") && (init?.method ?? "GET") === "GET",
+      );
+      expect(detailCalls.length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.getByText("Progress")).toBeInTheDocument();
+  });
+
   it("reports a read failure instead of showing an empty workspace", async () => {
     route(
       baseHandlers({

@@ -43,6 +43,29 @@ The limiter is in-process and keyed by client address, which is correct for a
 single-node deployment. Behind a load balancer, move the same policy to the edge
 instead of trusting per-process counters.
 
+## Web security defaults
+
+`next.config.ts` ships security headers on every response:
+
+- A Content Security Policy — `default-src 'self'`, `base-uri 'self'`,
+  `form-action 'self'`, `object-src 'none'`, `frame-ancestors 'none'` — with
+  `connect-src 'self'` plus the build-time API origin. Script and style sources
+  are `'unsafe-inline'` on purpose: the theme/locale bootstrap runs as an inline
+  blocking script and Tailwind injects styles inline in development. A
+  nonce-based policy would be stricter but requires dynamic rendering for every
+  page; the trade-off is documented next to the constant. `'unsafe-eval'` is
+  added only when `NODE_ENV=development`.
+- `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
+  `X-Frame-Options: SAMEORIGIN`, a `Permissions-Policy` that disables
+  camera/microphone/geolocation, and HSTS (ignored over HTTP, active once served
+  over HTTPS). `upgrade-insecure-requests` is deliberately omitted so plain-HTTP
+  local builds keep working.
+
+The workspace also re-reads a live agent run on a 4s timer while it is running,
+so progress moves without a click, and both `(app)/error.tsx` and
+`global-error.tsx` turn a crash into a recoverable, translated screen instead of
+a blank one.
+
 ### Mock provider (CI default)
 
 When `LLM_PROVIDER=mock`, the full pipeline (parse → validate → persist) runs using the deterministic heuristics engine (`MockLLMProvider`). The mock provider runs without an API key and produces structured output that passes validation.

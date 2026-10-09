@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import {
   isAgentRunActive,
@@ -15,6 +15,18 @@ import {
 import { errorMessage } from "@/lib/error-message";
 import type { MessageKey } from "@/lib/i18n/messages";
 import type { Translate } from "@/lib/i18n/translate";
+
+/**
+ * How often a live run is re-read while the panel is open.
+ *
+ * The runtime does work on the server between the student's clicks — a run can
+ * sit in RUNNING for minutes across budget, tool calls and checkpoints — and the
+ * panel must reflect that work *as it happens*, not the next time the student
+ * touches a button. Four seconds is fast enough to feel live without turning a
+ * single open tab into a load test; the browser's own tab throttling handles the
+ * hidden case.
+ */
+const AGENT_POLL_INTERVAL_MS = 4_000;
 
 interface AgentState {
   assignmentId: string;
@@ -149,6 +161,43 @@ export function useAgent(assignmentId: string, t: Translate) {
       active = false;
     };
   }, [assignmentId, read, t]);
+
+  /**
+   * Re-read a live run on a timer.
+   *
+   * The panel is a window onto work happening elsewhere, so while a run is
+   * active (STARTING/RUNNING) the newest state is fetched continuously. Terminal
+   * and waiting states are the interesting ones for a different reason: they
+   * only change - start, finish, need an answer - when the student acts, and
+   * every action already re-reads. Polling them would be traffic for nothing.
+   *
+   * A poll is a best-effort refresh: if it races an action in flight it is
+   * simply ignored (the action's own response is newer anyway), and if it fails
+   * it stays silent rather than lighting up an error the student cannot fix.
+   */
+  const pollingStatus =
+    (state.assignmentId === assignmentId ? state.run?.status : null) ?? null;
+  const isActive = pollingStatus !== null && isAgentRunActive(pollingStatus);
+  const pollRef = useRef(false);
+  useEffect(() => {
+    if (!isActive) return;
+    let disposed = false;
+    const tick = () => {
+      if (pollRef.current || disposed) return;
+      pollRef.current = true;
+      void read(assignmentId)
+        .catch(() => undefined)
+        .finally(() => {
+          pollRef.current = false;
+        });
+    };
+    tick();
+    const timer = window.setInterval(tick, AGENT_POLL_INTERVAL_MS);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [assignmentId, isActive, read]);
 
   /** Every mutation returns the whole run, so the view follows the server. */
   const run = useCallback(
