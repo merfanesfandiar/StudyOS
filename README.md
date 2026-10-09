@@ -21,11 +21,13 @@ it tells you when a brief is specific enough to act on.
   download URLs.
 - A dashboard with upcoming deadlines, progress counts, and in-app notifications.
 - Responsive, accessible UI with keyboard-friendly forms, loading states, and inline validation feedback.
-- **Phase 3: Universal Academic Assignment Intelligence Layer** — LLM-backed, domain-agnostic
-  analysis pipeline (classification → analysis → human review) producing structured, validated,
-  reviewable analysis for all academic assignment types. Classification, findings, questions, and
-  review state; idempotent re-runs; staleness detection; human review with AI never mutating
-  authoritative data.
+- **Universal Academic Assignment Intelligence Layer** — a full analysis → planning → agent
+  runtime pipeline. A `READY_FOR_ANALYSIS` brief is classified and analyzed (structured, validated,
+  reviewable output with idempotent re-runs and staleness detection; AI never mutates authoritative
+  data). An accepted, fresh analysis is planned into a reviewed, weighted work plan that stops for
+  human approval; approved plans run through a professional agent runtime with checkpoint gates,
+  retries, a tool budget, and every artifact persisted through the storage layer. The whole loop
+  runs deterministically offline (mock provider) or against an OpenAI-compatible provider.
 
 ## Stack
 
@@ -133,7 +135,7 @@ apps/
   api/            FastAPI application, Alembic migrations, tests, seed script
   web/            Next.js application, Vitest unit tests, Playwright specs
 docs/
-  architecture/   Overview, data model, ADRs, future AI design
+  architecture/   Overview, data model, ADRs, AI design records
   api/            Endpoint reference
   development/    Local setup, testing, conventions
 infrastructure/   Dockerfiles and container entrypoints
@@ -164,34 +166,37 @@ Copy `.env.example` to `.env`. Every value has a working default for local devel
 
 - [Architecture overview and data model](docs/architecture/overview.md)
 - [Architecture decisions](docs/architecture/decisions/)
-- [Future AI layer design](docs/architecture/future-ai.md)
+- [AI architecture records](docs/architecture/future-ai.md)
 - [API reference](docs/api/reference.md)
 - [Development guide](docs/development/setup.md)
 
 ## Current phase
 
-The foundation and the structured specification are implemented. A student can register, sign in,
-create a course, create an assignment, build a specification out of requirements, dependencies,
-constraints, weighted criteria, deliverables, and documents, watch the readiness score respond to every
-edit, mark the assignment ready for analysis, and page through the version history and activity feed,
-with ownership enforced on the server for every resource.
+The foundation and the academic assignment intelligence layer are implemented end to end. A student
+can register, sign in, create a course, create an assignment, build a specification out of
+requirements, dependencies, constraints, weighted criteria, deliverables, and documents, watch the
+readiness score respond to every edit, mark the assignment ready for analysis, and page through the
+version history and activity feed, with ownership enforced on the server for every resource.
 
-Deliberately not implemented yet: LLM calls, agents, planning, code generation or execution, RAG
-and vector storage, mastery mode, presentation generation, payment, social features, and
-collaboration between students. See
-[docs/architecture/future-ai.md](docs/architecture/future-ai.md) for how that layer is meant to attach
-to the current domain.
+Readiness gates a `READY_FOR_ANALYSIS` assignment to the analyzer, which classifies it and produces
+a reviewable analysis (accept/reject, human corrections, clarification questions). Accepting the
+analysis lets the planner produce a reviewed plan; approving the plan starts the professional agent
+runtime, which executes tasks with checkpoints, retries, and an explicit tool budget, persisting
+every artifact through the storage layer. The whole loop runs on the deterministic mock provider by
+default — so it is testable offline — and an OpenAI-compatible provider is configured through
+`LLM_PROVIDER`/`LLM_API_KEY`.
+
+Deliberately not implemented yet: execution of arbitrary code, RAG and vector storage,
+verification-and-learning loops over produced artifacts, mastery mode, presentation generation,
+payment, social features, and collaboration between students. See
+[docs/architecture/future-ai.md](docs/architecture/future-ai.md) for the seams.
 
 ## Future roadmap
 
-- **Analysis and planning.** An analyzer agent reads a `READY_FOR_ANALYSIS` specification and produces
-  a plan that stops for human approval. Introduces `ai_runs`, an orchestrator state machine, and
-  approval notifications. The two analysis statuses are already reserved in the enum and are not
-  client-settable, so only a run can own that transition.
-- **Execution with checkpoints.** Executors run approved steps, pausing at checkpoints, with every
-  step recorded as an audit event and every artifact written through `StorageService`.
-- **Verification and learning.** Artifacts are evaluated against the existing
-  `EvaluationCriterion` weights, then surfaced for study and presentation preparation.
+- **Verification and learning.** A checker grades produced artifacts against the existing
+  `EvaluationCriterion` weights and re-planning closes the loop the weights were built for.
+- **Object storage.** Uploads move behind the `StorageService` seam to a remote object store once
+  the deployment is horizontally scaled.
 
-Collaboration, multiple workspaces per user, and object storage remain out of scope; the seams for
-each are recorded in the architecture decisions.
+Collaboration and multiple workspaces per user remain out of scope; the seams for each are recorded
+in the architecture decisions.

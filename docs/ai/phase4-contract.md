@@ -1,6 +1,6 @@
 # Phase 4 contract: PlanningContract
 
-The frozen, structured input the future Planning Engine consumes. Everything the
+The frozen, structured input the Planning Engine consumes. Everything the
 planner needs, already validated and with no raw LLM text to parse.
 
 ## Endpoint

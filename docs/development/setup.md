@@ -10,7 +10,7 @@ pip install aiosqlite httpx mypy pytest pytest-asyncio ruff
 python -m alembic upgrade head
 ```
 
-## LLM settings (Phase 3)
+## LLM settings
 
 All settings are in `app/core/config.py` and read from `.env`:
 
@@ -18,14 +18,17 @@ All settings are in `app/core/config.py` and read from `.env`:
 | --- | --- | --- |
 | `ANALYSIS_ENABLED` | `True` | Whether analysis endpoints serve. |
 | `LLM_PROVIDER` | `mock` | `mock` (deterministic heuristics, runs in CI) or `openai` (live LLM). |
-| `LLM_MODEL` | `gpt-4o-mini` | The model name used by `OpenAIProvider`. |
+| `LLM_MODEL` | `mock-academic-analyzer-v1` | The model used when `LLM_PROVIDER=openai`. |
 | `LLM_API_KEY` | `(empty)` | Required when `LLM_PROVIDER=openai`. |
-| `LLM_BASE_URL` | `(empty)` | Optional override for the OpenAI base URL. |
-| `LLM_TIMEOUT_SECONDS` | `30` | Timeout for provider calls. |
-| `LLM_MAX_OUTPUT_TOKENS` | `4096` | Max output tokens from the model. |
-| `ANALYSIS_MAX_INPUT_CHARS` | `32000` | Max character limit for the analysis input. |
+| `LLM_BASE_URL` | `https://api.openai.com/v1` | Optional override for the OpenAI base URL. |
+| `LLM_TIMEOUT_SECONDS` | `60` | Timeout for provider calls. |
+| `LLM_MAX_OUTPUT_TOKENS` | `4000` | Max output tokens from the model. |
+| `ANALYSIS_MAX_INPUT_CHARS` | `60000` | Max character limit for the analysis input. |
 | `ANALYSIS_INCLUDE_DOCUMENT_TEXT` | `False` | Whether to include document text in the prompt. Default False is the privacy default. |
-| `ANALYSIS_COST_PER_1K_TOKENS` | `0.02` | Cost rate for telemetry. |
+| `ANALYSIS_COST_PER_1K_TOKENS` | `0.0` | Cost rate for telemetry. |
+
+The planner and agent runtime carry their own settings (gates, model tiers, step and
+token budgets) in the same file; look for the `planning_` and `agent_` prefixes.
 
 ## Auth security defaults
 
@@ -80,7 +83,11 @@ When `LLM_PROVIDER=openai`, the provider uses the configured model and sends str
 
 ### Offline mode
 
-No external services are required for the analysis pipeline beyond the database: `MockLLMProvider` needs no API key, and `analysis_enabled` can be set to `False` to disable the endpoints entirely. The full CI suite (`pytest -q`) passes without any LLM credentials.
+No external services are required for the AI pipeline beyond the database: `MockLLMProvider`
+needs no API key, and `analysis_enabled` can be set to `False` to disable the analysis endpoints
+entirely. The planner and agent runtime share the same provider switch, so the full loop
+(analysis → planning → execution) is testable offline. The CI suite (`pytest -q`) passes without
+any LLM credentials.
 
 ## Migration
 
@@ -89,20 +96,21 @@ python -m alembic upgrade head
 python -m alembic downgrade base   # to reset
 ```
 
-The Phase 3 migrations create 4 tables (`assignment_analyses`, `analysis_runs`,
-`analysis_questions`, `analysis_classifications`) plus indexes and foreign keys
-(`0003_phase3_analysis.py`), then add a monotonic `revision` to each analysis so
-"the latest analysis" is well defined after a re-analysis (`0004_analysis_revision.py`).
+Migrations run once at deploy time, not on API boot: the compose `migrate` job
+applies them and the API service waits for it to complete successfully.
+`alembic current` then prints the applied head revision so the operator sees what
+ran. Table-by-table history — the Phase 3 analysis tables, the Phase 4 planning
+tables, and the Phase 5 agent/run tables and tool audit — is recorded in the
+`apps/api/alembic/versions` files.
 
 ## Quality gates
 
 Commands that must stay green. From `apps/api`:
 
 ```bash
-python -m pytest -q                       # 146 passed
+python -m pytest -q                       # 372 passed
 python -m ruff check app tests alembic    # clean
-python -m ruff format --check app tests   # 115 files already formatted
-python -m mypy app                        # 97 source files
+python -m mypy app                        # 123 source files
 python -m app.ai.evaluation.report        # golden gate, exit 0
 ```
 
@@ -111,7 +119,7 @@ From `apps/web`:
 ```bash
 npx tsc --noEmit
 npm run lint
-npm test                                 # 70 passed
+npm test                                 # 157 passed
 npm run build
 ```
 

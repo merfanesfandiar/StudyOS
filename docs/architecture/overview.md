@@ -12,7 +12,8 @@ apps/api/app
   db/           engine, session, declarative base
   models/       SQLAlchemy entities and enums
   schemas/      Pydantic request and response contracts
-  modules/      auth, courses, assignments, documents, dashboard, notifications
+  modules/      auth, courses, assignments, documents, dashboard, notifications,
+                analysis, planning, agent, health
   storage/      StorageService abstraction and local implementation
   services/     cross-module helpers (audit, file validation, events)
   scripts/      operational scripts such as the demo seed
@@ -210,27 +211,33 @@ browser ──> web (Next.js, port 3000) ──> api (FastAPI, port 8000) ──
                                               └──> upload volume
 ```
 
-Compose orders startup with health checks: the API waits for PostgreSQL, the web app waits for the
-API, and the API runs `alembic upgrade head` before serving. Data lives in two named volumes, so
-`docker compose down` preserves state and `docker compose down -v` resets it.
+Compose orders startup with health checks: a one-shot `migrate` job runs `alembic upgrade head`
+once and must complete successfully before the API starts; the API waits for PostgreSQL, the web
+app waits for the API, and the database port binds to loopback only. Data lives in a named volume
+and an upload volume, so `docker compose down` preserves state and `docker compose down -v` resets
+it. The API never migrates on boot and Postgres is not published to the LAN, which keeps a stray
+container or developer's laptop from drifting the schema or exposing the cluster.
 
-## Future phases
+## Implemented AI layer
 
-Phase 3 — the Universal Academic Assignment Intelligence Layer — is now complete
-and production-ready. The AI layer is fully operational: analysis runs, classifications,
-questions, review, and idempotent re-exports all work without LLM credentials in CI
-(via the `MockLLMProvider`). The seams for a Phase 4 Planning Engine are already in
-place: a stable `PlanningContract` DTO, frozen analysis snapshots, and staleness
-detection. No LangGraph, no microservices, no tool execution.
+Phases 3–5 are complete. The AI layer is fully operational and production-ready:
 
-The remaining work is frontend integration (analysis panels, question UI, review
-controls) and documentation — not AI capability.
+- **Analysis.** `READY_FOR_ANALYSIS` assignments are classified and analyzed; results are
+  reviewable (accept/reject, human corrections, clarification questions), versioned via a
+  monotonic `revision`, and re-analysis is idempotent.
+- **Planning.** An accepted, fresh analysis (staleness is a hard signal) produces a reviewed plan
+  as a stable `AcademicWorkPlan`; the plan stops for human approval before any execution.
+- **Execution.** The agent runtime executes approved tasks with checkpoint gates, retries, an
+  explicit tool budget, and every artifact written through `StorageService`. Tools are gated and
+  audited; per the `untrusted-model` decision the runtime trusts no model output.
+- No LangGraph, no microservices. The deterministic `MockLLMProvider` drives the whole loop in CI
+  without credentials; the golden evaluation gate replays hand-written transcripts independently.
 
-## Phase 3 seams for Phase 4
+The seams that once were "for Phase 4" are now exercised by real consumers:
 
 - `GET /api/v1/assignments/{id}/analysis/{analysisId}/planning-contract` returns a
-  `PlanningContract` that the future planner can consume without parsing raw model text.
-- `is_stale` is a hard signal: a stale analysis must not be planned against silently.
+  `PlanningContract` that the planner consumes without parsing raw model text.
+- `is_stale` is a hard signal: a stale analysis cannot be planned against silently.
 - `PlanningContractRequirement` and `PlanningContractDeliverable` carry provenance
   (`source_kind`, `source_reference`) so the planner knows what came from the brief vs.
   AI inference.

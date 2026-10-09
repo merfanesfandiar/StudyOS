@@ -1,6 +1,10 @@
 # Assignment Analyzer
 
-The universal academic assignment analyzer is the core of Phase 3. It produces a structured,
+> Design record. The analyzer, planner, and agent runtime are implemented (see
+> [overview.md](overview.md)); this file is kept as the rationale and seam map
+> for the AI layer and its future extensions.
+
+The universal academic assignment analyzer produces a structured,
 reviewable analysis for any assignment type — programming, essay, lab report, mathematical proof,
 literature review, data analysis, presentation, reading, language work, design, group project, etc.
 

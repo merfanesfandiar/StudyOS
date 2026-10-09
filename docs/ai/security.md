@@ -51,4 +51,9 @@
 
 ## Rate limiting
 
-Not implemented at this time; the service is stateless and can be scaled horizontally.
+The auth endpoints are rate-limited in-process: a sliding window of
+`AUTH_RATE_LIMIT_MAX` (default 10) requests per `AUTH_RATE_LIMIT_WINDOW_SECONDS`
+(60 s), keyed by client address, answering 429 with a cleared key after the
+window passes. It is a single-node guard, not a distributed one — behind a load
+balancer, move the same policy to the edge instead of trusting per-process
+counters. See `app/core/rate_limit.py` and the setup guide.
