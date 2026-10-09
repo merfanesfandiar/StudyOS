@@ -64,6 +64,8 @@ async def _run_recovery_sweep() -> None:
         logger.exception("agent_recovery_sweep failed; the app will still start")
 
 
+docs_available = settings.docs_enabled and not settings.is_production
+
 app = FastAPI(
     title="StudyOS API",
     version="0.1.0",
@@ -73,9 +75,9 @@ app = FastAPI(
         "for every academic assignment type, specialized analyzers, analysis runs, evidence "
         "tracking, stale-analysis detection and a stable Phase 4 planning contract."
     ),
-    docs_url="/docs",
-    redoc_url="/redoc",
-    openapi_url="/openapi.json",
+    docs_url="/docs" if docs_available else None,
+    redoc_url="/redoc" if docs_available else None,
+    openapi_url="/openapi.json" if docs_available else None,
     lifespan=lifespan,
 )
 app.add_middleware(
@@ -105,4 +107,7 @@ app.include_router(notifications_router)
 
 @app.get("/", include_in_schema=False)
 async def root() -> dict[str, str]:
-    return {"name": "StudyOS API", "docs": "/docs"}
+    payload: dict[str, str] = {"name": "StudyOS API"}
+    if docs_available:
+        payload["docs"] = "/docs"
+    return payload

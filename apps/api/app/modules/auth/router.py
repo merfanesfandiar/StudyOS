@@ -12,6 +12,7 @@ from app.db.session import get_db
 from app.models import User, Workspace, WorkspaceMember
 from app.models.enums import AuditEventType, WorkspaceRole
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserResponse
+from app.schemas.common import error_responses
 from app.services.events import record_audit
 
 router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
@@ -36,6 +37,7 @@ def set_session_cookie(response: Response, token: str, expires_in: int) -> None:
     status_code=status.HTTP_201_CREATED,
     summary="Register a new account",
     dependencies=[Depends(rate_limit("auth"))],
+    responses=error_responses(409, 422, 429),
 )
 async def register(
     payload: RegisterRequest,
@@ -88,6 +90,7 @@ async def register(
     response_model=TokenResponse,
     summary="Log in to an account",
     dependencies=[Depends(rate_limit("auth"))],
+    responses=error_responses(401, 422, 429),
 )
 async def login(
     payload: LoginRequest,

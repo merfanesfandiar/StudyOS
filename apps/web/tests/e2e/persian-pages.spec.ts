@@ -178,9 +178,9 @@ async function openPersian(
     // `null` is a real plan response meaning "no plan yet", not an empty page.
     // A page envelope here would be read as a plan and crash the panel.
     [`/assignments/${ASSIGNMENT_ID}/plans`]: ok(null),
-    "/courses": ok([]),
+    "/courses": ok(EMPTY_PAGE),
     "/assignments": ok(EMPTY_PAGE),
-    "/notifications": ok([]),
+    "/notifications": ok(EMPTY_PAGE),
     "/dashboard": ok({
       upcoming_assignments: [],
       recent_assignments: [],

@@ -23,8 +23,8 @@ export default function SettingsPage() {
     let active = true;
     api
       .notifications()
-      .then((items) => {
-        if (active) setNotifications(items);
+      .then((result) => {
+        if (active) setNotifications(result.items);
       })
       .catch((caught: unknown) => {
         if (active) setFailure(caught);

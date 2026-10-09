@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     upload_dir: Path = Path("./data/uploads")
     max_upload_size: int = Field(default=10 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     log_level: str = "INFO"
+    #: ``/docs``, ``/redoc`` and ``/openapi.json`` are development and
+    #: integration tooling, not a product surface. They are served on request in
+    #: any non-production environment and hard-disabled in production; setting
+    #: this to true overrides the development default but never re-enables them
+    #: in production (see ``app.main``).
+    docs_enabled: bool = True
 
     # -- Rate limiting ------------------------------------------------------
     #

@@ -1,6 +1,7 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,7 @@ from app.core.errors import AppError
 from app.db.session import get_db
 from app.models import Assignment, Course, User, Workspace
 from app.models.enums import AuditEventType
+from app.schemas.common import Page, PageParams, PageResponse, error_responses
 from app.schemas.courses import CourseCreate, CourseResponse, CourseUpdate
 from app.services.events import record_audit
 
@@ -29,19 +31,34 @@ def course_response(course: Course, assignment_count: int = 0) -> CourseResponse
     )
 
 
-@router.get("", response_model=list[CourseResponse], summary="List workspace courses")
+@router.get(
+    "",
+    response_model=PageResponse[CourseResponse],
+    summary="List workspace courses",
+    responses=error_responses(422),
+)
 async def list_courses(
+    params: Annotated[PageParams, Query()],
     workspace: Workspace = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db),
-) -> list[CourseResponse]:
+) -> PageResponse[CourseResponse]:
+    total = await db.scalar(
+        select(func.count(Course.id)).where(Course.workspace_id == workspace.id)
+    )
     result = await db.execute(
         select(Course, func.count(Assignment.id))
         .outerjoin(Assignment, Assignment.course_id == Course.id)
         .where(Course.workspace_id == workspace.id)
         .group_by(Course.id)
-        .order_by(Course.created_at.desc())
+        .order_by(Course.created_at.desc(), Course.code.asc())
+        .offset(params.offset)
+        .limit(params.limit)
     )
-    return [course_response(course, count) for course, count in result.all()]
+    pages = max(1, -(-(total or 0) // params.page_size))
+    return PageResponse(
+        items=[course_response(course, count) for course, count in result.all()],
+        page=Page(page=params.page, page_size=params.page_size, total=total or 0, pages=pages),
+    )
 
 
 @router.post(

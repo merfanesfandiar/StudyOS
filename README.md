@@ -156,6 +156,7 @@ Copy `.env.example` to `.env`. Every value has a working default for local devel
 | `COOKIE_NAME`                   | `studyos_session`                                  | Session cookie name                  |
 | `MAX_UPLOAD_SIZE`               | `10485760`                                         | Upload ceiling in bytes              |
 | `LOG_LEVEL`                     | `INFO`                                             | Log level                            |
+| `SERVER_DOCS_ENABLED`           | `true`                                             | Serve `/docs`; hard-off in production |
 | `SEED_DEMO_DATA`                | `false`                                            | Seed demo data on API start          |
 | `NEXT_PUBLIC_API_URL`           | `http://localhost:8000/api/v1`                     | API base URL baked into the frontend |
 

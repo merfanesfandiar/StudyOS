@@ -121,9 +121,9 @@ async function openShell(browser: Browser, theme: string, locale: string) {
   // its own English error page -- which then fails this suite for a reason that
   // has nothing to do with preferences.
   const shapes: Record<string, unknown> = {
-    "/courses": [],
+    "/courses": empty,
     "/assignments": empty,
-    "/notifications": [],
+    "/notifications": empty,
     "/dashboard": {
       upcoming_assignments: [],
       recent_assignments: [],

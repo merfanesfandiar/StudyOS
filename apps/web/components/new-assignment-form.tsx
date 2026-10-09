@@ -27,7 +27,8 @@ export function NewAssignmentForm({ initialCourseId }: { initialCourseId?: strin
     let active = true;
     api
       .courses()
-      .then((items) => {
+      .then((result) => {
+        const items = result.items;
         if (!active) return;
         setCourses(items);
         const selectedExists = items.some((course) => course.id === initialCourseId);

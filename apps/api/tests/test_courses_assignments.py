@@ -29,7 +29,8 @@ async def test_course_crud(client: AsyncClient) -> None:
 
     listed = await client.get("/api/v1/courses")
     assert listed.status_code == 200
-    assert len(listed.json()) == 1
+    assert listed.json()["page"]["total"] == 1
+    assert len(listed.json()["items"]) == 1
 
     updated = await client.patch(
         f"/api/v1/courses/{course['id']}",
@@ -163,7 +164,7 @@ async def test_marking_ready_creates_a_notification(client: AsyncClient) -> None
     assert ready.status_code == 200, ready.text
     assert ready.json()["status"] == "READY_FOR_ANALYSIS"
 
-    notifications = (await client.get("/api/v1/notifications")).json()
+    notifications = (await client.get("/api/v1/notifications")).json()["items"]
     titles = [item["title"] for item in notifications]
     assert "Assignment ready for analysis" in titles
 

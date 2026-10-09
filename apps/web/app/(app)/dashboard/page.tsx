@@ -19,10 +19,10 @@ export default function DashboardPage() {
   useEffect(() => {
     let active = true;
     Promise.all([api.dashboard(), api.notifications()])
-      .then(([dashboard, items]) => {
+      .then(([dashboard, result]) => {
         if (!active) return;
         setData(dashboard);
-        setNotifications(items);
+        setNotifications(result.items);
       })
       .catch((caught: unknown) => {
         if (active) setFailure(caught);

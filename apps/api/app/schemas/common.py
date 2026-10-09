@@ -1,3 +1,5 @@
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -25,6 +27,20 @@ class ErrorResponse(BaseModel):
     )
 
     error: ErrorBody
+
+
+def error_responses(*status_codes: int) -> dict[int | str, dict[str, Any]]:
+    """OpenAPI ``responses=`` entries that document the shared error body.
+
+    Every handler in ``app.core.errors`` serializes through ``ErrorResponse``,
+    so a client that generates from the schema can parse any error status it is
+    documented on. Referencing the model here is also what puts it in the
+    generated components; an undocumented operation still gets the body at
+    runtime, it just stops promising a shape in the schema.
+    """
+    return {
+        code: {"model": ErrorResponse, "description": "ErrorResponse"} for code in status_codes
+    }
 
 
 class MessageResponse(BaseModel):

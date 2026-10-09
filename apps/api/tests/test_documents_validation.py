@@ -33,7 +33,8 @@ async def test_document_upload_list_download_and_delete(client: AsyncClient) -> 
 
     listed = await client.get(f"/api/v1/assignments/{assignment['id']}/documents")
     assert listed.status_code == 200
-    assert len(listed.json()) == 1
+    assert listed.json()["page"]["total"] == 1
+    assert len(listed.json()["items"]) == 1
 
     downloaded = await client.get(f"/api/v1/documents/{document['id']}/download")
     assert downloaded.status_code == 200
@@ -82,7 +83,7 @@ async def test_documents_are_specification_changes(client: AsyncClient) -> None:
     assert (await client.delete(f"/api/v1/documents/{document_id}")).status_code == 204
     assert await stored_score() == empty_score
     listed = await client.get(f"/api/v1/assignments/{assignment_id}/documents")
-    assert listed.json() == []
+    assert listed.json()["items"] == []
 
     activity = (await client.get(f"/api/v1/assignments/{assignment_id}/activity")).json()
     summaries = [item["change_summary"] for item in activity["items"]]

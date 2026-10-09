@@ -1,8 +1,10 @@
+from typing import Annotated
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, File, UploadFile, status
+from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.responses import Response
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
@@ -13,6 +15,7 @@ from app.db.session import get_db
 from app.models import Document, User
 from app.models.enums import AuditEventType
 from app.modules.assignments.service import load_owned_assignment, record_specification_change
+from app.schemas.common import Page, PageParams, PageResponse, error_responses
 from app.schemas.documents import DocumentResponse
 from app.services.file_validation import validate_upload
 from app.storage import get_storage
@@ -34,16 +37,33 @@ def document_response(document: Document) -> DocumentResponse:
 
 @router.get(
     "/api/v1/assignments/{assignment_id}/documents",
-    response_model=list[DocumentResponse],
+    response_model=PageResponse[DocumentResponse],
     summary="List assignment documents",
+    responses=error_responses(404, 422),
 )
 async def list_documents(
     assignment_id: UUID,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> list[DocumentResponse]:
+    params: Annotated[PageParams, Query()] = PageParams(),
+) -> PageResponse[DocumentResponse]:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
-    return [document_response(document) for document in assignment.documents]
+    total = await db.scalar(
+        select(func.count(Document.id)).where(Document.assignment_id == assignment.id)
+    )
+    result = await db.scalars(
+        select(Document)
+        .where(Document.assignment_id == assignment.id)
+        .order_by(Document.created_at.desc(), Document.filename.asc())
+        .offset(params.offset)
+        .limit(params.limit)
+    )
+    documents = list(result)
+    pages = max(1, -(-(total or 0) // params.page_size))
+    return PageResponse(
+        items=[document_response(document) for document in documents],
+        page=Page(page=params.page, page_size=params.page_size, total=total or 0, pages=pages),
+    )
 
 
 @router.post(

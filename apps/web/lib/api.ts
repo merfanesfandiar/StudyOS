@@ -151,11 +151,11 @@ export const api = {
   logout: () => request<void>("/auth/logout", { method: "POST" }),
   me: () => request<User>("/auth/me"),
   dashboard: () => request<Dashboard>("/dashboard"),
-  notifications: () => request<Notification[]>("/notifications"),
+  notifications: () => request<PageResponse<Notification>>("/notifications"),
   markNotificationRead: (id: string) =>
     request<Notification>(`/notifications/${id}/read`, { method: "POST" }),
 
-  courses: () => request<Course[]>("/courses"),
+  courses: () => request<PageResponse<Course>>("/courses"),
   course: (id: string) => request<Course>(`/courses/${id}`),
   createCourse: (input: CourseInput) =>
     request<Course>("/courses", { method: "POST", ...json(input) }),
@@ -263,7 +263,7 @@ export const api = {
     request<void>(`/assignments/${id}/tags/${tagId}`, { method: "DELETE" }),
   workspaceTags: (workspaceId: string) => request<Tag[]>(`/workspaces/${workspaceId}/tags`),
 
-  documents: (id: string) => request<Document[]>(`/assignments/${id}/documents`),
+  documents: (id: string) => request<PageResponse<Document>>(`/assignments/${id}/documents`),
   deleteDocument: (id: string) => request<void>(`/documents/${id}`, { method: "DELETE" }),
   uploadDocument: (assignmentId: string, file: File) => {
     const form = new FormData();

@@ -47,9 +47,14 @@ afterEach(() => {
 
 describe("request plumbing", () => {
   it("sends credentialed, uncached requests to the configured base url", async () => {
-    fetchMock.mockResolvedValue(jsonResponse([course]));
+    fetchMock.mockResolvedValue(
+      jsonResponse({ items: [course], page: { page: 1, page_size: 20, total: 1, pages: 1 } }),
+    );
 
-    await expect(api.courses()).resolves.toEqual([course]);
+    await expect(api.courses()).resolves.toEqual({
+      items: [course],
+      page: { page: 1, page_size: 20, total: 1, pages: 1 },
+    });
 
     expect(lastUrl()).toBe(`${BASE_URL}/courses`);
     expect(lastInit().credentials).toBe("include");

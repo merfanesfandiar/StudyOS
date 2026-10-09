@@ -20,8 +20,8 @@ export default function CoursesPage() {
     let active = true;
     api
       .courses()
-      .then((items) => {
-        if (active) setCourses(items);
+      .then((result) => {
+        if (active) setCourses(result.items);
       })
       .catch((caught: unknown) => {
         if (active) setFailure(caught);

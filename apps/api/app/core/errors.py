@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.core.logging import logger
+from app.schemas.common import ErrorBody, ErrorResponse
 
 
 class AppError(Exception):
@@ -28,10 +29,15 @@ class AppError(Exception):
 
 
 def error_payload(code: str, message: str, details: Any | None = None) -> dict[str, Any]:
-    error: dict[str, Any] = {"code": code, "message": message}
-    if details is not None:
-        error["details"] = jsonable_encoder(details)
-    return {"error": error}
+    """Serialize one error body through the shared ``ErrorResponse`` schema.
+
+    Everything the exception handlers emit passes through this single model, so
+    the shape a generated client sees in the OpenAPI schema is exactly the shape
+    it gets at runtime, and a change to the schema changes every error at once.
+    """
+    return ErrorResponse(
+        error=ErrorBody(code=code, message=message, details=jsonable_encoder(details))
+    ).model_dump(mode="json")
 
 
 def _sanitized_validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:

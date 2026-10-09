@@ -47,7 +47,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
     api
       .courses()
       .then((result) => {
-        if (active) setCourses(result);
+        if (active) setCourses(result.items);
       })
       .catch(() => {
         // The course list only powers the edit form; the brief still renders.
