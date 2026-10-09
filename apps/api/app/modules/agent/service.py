@@ -1884,29 +1884,25 @@ async def _build_context(
     Pulls requirements, constraints and prior artifacts from the plan and this
     run so a task carries what it needs without re-reading the whole assignment.
     """
-    requirement_links = (
-        list(
+    if task is not None:
+        requirement_links = list(
             await db.scalars(
                 select(PlanTaskRequirement).where(
-                    PlanTaskRequirement.task_id == (task.id if task else None)
+                    PlanTaskRequirement.task_id == task.id
                 )
             )
         )
-        if task is not None
-        else []
-    )
-    dependencies = (
-        list(
+        dependencies = list(
             await db.scalars(
                 select(PlanTaskDependency).where(
                     PlanTaskDependency.plan_id == plan.id,
-                    PlanTaskDependency.successor_id == (task.id if task else None),
+                    PlanTaskDependency.successor_id == task.id,
                 )
             )
         )
-        if task is not None
-        else []
-    )
+    else:
+        requirement_links = []
+        dependencies = []
 
     predecessor_titles: dict[str, str] = {}
     if dependencies:

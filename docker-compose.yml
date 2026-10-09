@@ -8,8 +8,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-studyos}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-studyos}
       POSTGRES_DB: ${POSTGRES_DB:-studyos}
+    # Loopback only. The API and the migrate job reach db over the Compose
+    # network; the host mapping exists purely for local tooling (psql, alembic
+    # outside the stack) and must not listen on the public interfaces.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -18,6 +21,25 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+
+  # Deploy-time migration job. Migrations run once, as their own step, before
+  # any API replica starts; they are not run on every boot (that races across
+  # replicas). The entrypoint performs the `upgrade head`; `alembic current`
+  # afterwards prints the head revision for the deploy log and makes the job
+  # exit cleanly.
+  migrate:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://studyos:studyos@db:5432/studyos}
+      RUN_MIGRATIONS: "true"
+    command: ["alembic", "current"]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
 
   api:
     build:
@@ -37,7 +59,9 @@ services:
       UPLOAD_DIR: /app/data/uploads
       MAX_UPLOAD_SIZE: ${MAX_UPLOAD_SIZE:-10485760}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      RUN_MIGRATIONS: "true"
+      # Migrations are a deploy-time step owned by the `migrate` service; a
+      # replica must not race to migrate on boot.
+      RUN_MIGRATIONS: "false"
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
     ports:
       - "${API_PORT:-8000}:8000"
@@ -46,6 +70,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s

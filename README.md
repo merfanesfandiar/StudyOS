@@ -54,7 +54,9 @@ Then open:
 - API: <http://localhost:8000>
 - OpenAPI docs: <http://localhost:8000/docs>
 
-Migrations run automatically on API start. To load demo content after the stack is up:
+Migrations run once as their own deploy-time step. Compose starts the `migrate` job (which applies
+`alembic upgrade head` and then exits) before any API replica; the API itself never migrates on boot,
+so replicas cannot race each other on the schema. To load demo content after the stack is up:
 
 ```bash
 docker compose run --rm api python -m app.scripts.seed

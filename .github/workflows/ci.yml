@@ -99,6 +99,50 @@ jobs:
             | grep -q READY_FOR_ANALYSIS
           echo "Legacy ACTIVE row survived and mapped to READY_FOR_ANALYSIS"
 
+  api-postgres:
+    name: API (PostgreSQL)
+    # The `api` job runs the suite on in-memory SQLite and gates migrations
+    # against PostgreSQL. This job is the third leg: the suite itself runs
+    # against a real PostgreSQL, so the dialect every deployed environment
+    # uses is what the tests talk to.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: studyos
+          POSTGRES_PASSWORD: studyos
+          POSTGRES_DB: studyos
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U studyos -d studyos"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: apps/api/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install aiosqlite httpx mypy pytest pytest-asyncio ruff
+
+      - name: Test against PostgreSQL
+        env:
+          TEST_DATABASE_URL: postgresql+asyncpg://studyos:studyos@localhost:5432/studyos
+        run: pytest -q
+
   web:
     name: Web
     runs-on: ubuntu-latest
