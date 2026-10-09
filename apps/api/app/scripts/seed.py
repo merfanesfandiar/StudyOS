@@ -39,7 +39,7 @@ async def seed() -> None:
         user = User(
             name="Alex Student",
             email=DEMO_EMAIL,
-            password_hash=hash_password(DEMO_PASSWORD),
+            password_hash=await hash_password(DEMO_PASSWORD),
         )
         workspace = Workspace(name="Alex's workspace", owner=user)
         membership = WorkspaceMember(

@@ -27,6 +27,22 @@ All settings are in `app/core/config.py` and read from `.env`:
 | `ANALYSIS_INCLUDE_DOCUMENT_TEXT` | `False` | Whether to include document text in the prompt. Default False is the privacy default. |
 | `ANALYSIS_COST_PER_1K_TOKENS` | `0.02` | Cost rate for telemetry. |
 
+## Auth security defaults
+
+Passwords are hashed with Argon2 off the event loop (`hash_password` and
+`verify_password` run in a worker thread so a login does not stall the request
+queue), and validation error responses never echo request bodies back.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RATE_LIMIT_ENABLED` | `True` | Whether the application rate limiter answers. |
+| `AUTH_RATE_LIMIT_MAX` | `10` | Register/login requests per client address within one window. |
+| `AUTH_RATE_LIMIT_WINDOW_SECONDS` | `60` | Sliding window length. |
+
+The limiter is in-process and keyed by client address, which is correct for a
+single-node deployment. Behind a load balancer, move the same policy to the edge
+instead of trusting per-process counters.
+
 ### Mock provider (CI default)
 
 When `LLM_PROVIDER=mock`, the full pipeline (parse → validate → persist) runs using the deterministic heuristics engine (`MockLLMProvider`). The mock provider runs without an API key and produces structured output that passes validation.

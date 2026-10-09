@@ -34,6 +34,22 @@ def error_payload(code: str, message: str, details: Any | None = None) -> dict[s
     return {"error": error}
 
 
+def _sanitized_validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:
+    """Validation errors with any echoed request content removed.
+
+    Pydantic error dicts can carry ``input`` — the offending value — and ``ctx``
+    — context that in this framework is drawn from the request. ``input`` on a
+    password field echoes the password back to the client, and echoing it in an
+    error response is a log-and-leak the framework is happy to do. The location
+    and message are enough to fix the request.
+    """
+    sanitized: list[dict[str, Any]] = []
+    for error in exc.errors():
+        safe = {key: value for key, value in error.items() if key not in {"input", "ctx"}}
+        sanitized.append(safe)
+    return sanitized
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def handle_app_error(_: Request, exc: AppError) -> JSONResponse:
@@ -50,7 +66,7 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=error_payload(
                 "VALIDATION_ERROR",
                 "Request validation failed.",
-                exc.errors(),
+                _sanitized_validation_errors(exc),
             ),
         )
 

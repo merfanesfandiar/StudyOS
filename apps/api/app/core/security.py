@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -9,18 +10,25 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 
 settings = get_settings()
+#: Argon2 is deliberately expensive. A module-level hasher keeps its internal
+#: state (randomised salt, per-call cost parameters) in one place; every hash
+#: still runs in a worker thread so that the cost does not stall the event loop
+#: for the whole request queue while one login is being checked.
 password_hasher = PasswordHasher()
 
 
-def hash_password(password: str) -> str:
-    return password_hasher.hash(password)
+async def hash_password(password: str) -> str:
+    return await asyncio.to_thread(password_hasher.hash, password)
 
 
-def verify_password(password: str, password_hash: str) -> bool:
-    try:
-        return password_hasher.verify(password_hash, password)
-    except (VerifyMismatchError, InvalidHashError):
-        return False
+async def verify_password(password: str, password_hash: str) -> bool:
+    def _verify() -> bool:
+        try:
+            return password_hasher.verify(password_hash, password)
+        except (VerifyMismatchError, InvalidHashError):
+            return False
+
+    return await asyncio.to_thread(_verify)
 
 
 def create_access_token(user_id: UUID) -> tuple[str, int]:

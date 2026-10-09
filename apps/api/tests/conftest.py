@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
+from app.core.rate_limit import reset_rate_limits
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app
@@ -45,6 +46,7 @@ async def client(
     storage = LocalStorage(tmp_path / "uploads")
     monkeypatch.setattr(documents_module, "get_storage", lambda: storage)
     monkeypatch.setattr(assignments_module, "get_storage", lambda: storage)
+    reset_rate_limits()
 
     async def override_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session

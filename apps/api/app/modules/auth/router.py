@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.core.dependencies import get_current_user
 from app.core.errors import AppError
+from app.core.rate_limit import rate_limit
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.session import get_db
 from app.models import User, Workspace, WorkspaceMember
@@ -34,6 +35,7 @@ def set_session_cookie(response: Response, token: str, expires_in: int) -> None:
     response_model=TokenResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Register a new account",
+    dependencies=[Depends(rate_limit("auth"))],
 )
 async def register(
     payload: RegisterRequest,
@@ -48,7 +50,9 @@ async def register(
         )
 
     user = User(
-        name=payload.name, email=normalized_email, password_hash=hash_password(payload.password)
+        name=payload.name,
+        email=normalized_email,
+        password_hash=await hash_password(payload.password),
     )
     workspace = Workspace(name=f"{payload.name}'s workspace", owner=user)
     membership = WorkspaceMember(workspace=workspace, user=user, role=WorkspaceRole.OWNER.value)
@@ -79,14 +83,19 @@ async def register(
     )
 
 
-@router.post("/login", response_model=TokenResponse, summary="Log in to an account")
+@router.post(
+    "/login",
+    response_model=TokenResponse,
+    summary="Log in to an account",
+    dependencies=[Depends(rate_limit("auth"))],
+)
 async def login(
     payload: LoginRequest,
     response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     user = await db.scalar(select(User).where(func.lower(User.email) == payload.email.lower()))
-    if user is None or not verify_password(payload.password, user.password_hash):
+    if user is None or not await verify_password(payload.password, user.password_hash):
         raise AppError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
     token, expires_in = create_access_token(user.id)
     set_session_cookie(response, token, expires_in)

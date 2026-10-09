@@ -41,6 +41,19 @@ class Settings(BaseSettings):
     max_upload_size: int = Field(default=10 * 1024 * 1024, ge=1024, le=100 * 1024 * 1024)
     log_level: str = "INFO"
 
+    # -- Rate limiting ------------------------------------------------------
+    #
+    # Auth endpoints are the credential-guessing surface and the cheapest to
+    # hammer, so they are throttled in the application. The limiter is
+    # in-process, which is the right size for a single-node deployment; a
+    # horizontal deployment should move the same policy to the edge (or a
+    # shared store) instead of trusting per-process counters.
+    rate_limit_enabled: bool = True
+    #: How many auth requests (register + login, per client address) may arrive
+    #: inside one window before the limiter answers 429.
+    auth_rate_limit_max: int = Field(default=10, ge=1, le=1_000)
+    auth_rate_limit_window_seconds: float = Field(default=60.0, ge=1.0, le=3_600.0)
+
     # -- Connection pooling --------------------------------------------------
     #
     # These were previously left to SQLAlchemy's defaults, which size a pool
