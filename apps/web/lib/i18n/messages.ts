@@ -28,6 +28,7 @@ export const en = {
   "nav.signOut": "Sign out",
   "nav.openMenu": "Open menu",
   "nav.closeMenu": "Close menu",
+  "nav.breadcrumb": "Breadcrumb",
 
   "action.save": "Save",
   "action.cancel": "Cancel",
@@ -1140,6 +1141,7 @@ export const fa: Catalogue = {
   "nav.signOut": "خروج",
   "nav.openMenu": "باز کردن منو",
   "nav.closeMenu": "بستن منو",
+  "nav.breadcrumb": "مسیر ناوبری",
 
   "action.save": "ذخیره",
   "action.cancel": "انصراف",

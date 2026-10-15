@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import { AssignmentCard } from "./assignment-card";
 import { usePreferences } from "./preferences-provider";
-import { Alert, EmptyState, LoadingState, PageHeader, SubmitButton } from "./ui";
+import { Alert, Breadcrumbs, EmptyState, LoadingState, PageHeader, SubmitButton } from "./ui";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/error-message";
 import type { AssignmentListItem, Course } from "@/lib/types";
@@ -86,6 +86,9 @@ export function CourseDetail({ courseId }: { courseId: string }) {
 
   return (
     <div id="main-content">
+      <Breadcrumbs
+        items={[{ href: "/courses", label: t("courses.all") }, { label: `${course.code} · ${course.name}` }]}
+      />
       <PageHeader
         action={
           <div className="flex gap-2">
@@ -100,9 +103,6 @@ export function CourseDetail({ courseId }: { courseId: string }) {
         description={course.description || t("courses.addDescription")}
         title={`${course.code} · ${course.name}`}
       />
-      <Link className="mb-6 inline-block text-sm font-semibold text-[var(--color-accent-hover)]" href="/courses">
-        ← {t("courses.all")}
-      </Link>
       {error ? <div className="mb-5"><Alert>{error}</Alert></div> : null}
       {success ? <div className="mb-5"><Alert tone="success">{success}</Alert></div> : null}
       {editing ? (

@@ -14,7 +14,7 @@ import { DeliverablesSection, TaxonomySection } from "@/components/assignment/ta
 import { AnalysisPanel } from "@/components/assignment/analysis-panel";
 import { ExecutionPanel } from "@/components/assignment/execution-panel";
 import { PlanPanel } from "@/components/planning/plan-panel";
-import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
+import { Alert, Breadcrumbs, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/error-message";
 import type { MessageKey } from "@/lib/i18n/messages";
@@ -85,6 +85,12 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
 
   return (
     <div id="main-content">
+      <Breadcrumbs
+        items={[
+          { href: "/assignments", label: t("nav.assignments") },
+          { label: specification.assignment.title },
+        ]}
+      />
       <PageHeader
         action={
           <nav aria-label={t("assignment.sectionsLabel")} className="flex flex-wrap justify-end gap-1">

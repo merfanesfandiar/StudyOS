@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import type { AssignmentStatus, CheckStatus } from "@/lib/types";
 import { CHECK_LABELS, statusLabel } from "@/lib/format";
@@ -8,6 +9,30 @@ import { usePreferences } from "./preferences-provider";
 const subscribeToNothing = () => () => {};
 const clientHydrated = () => true;
 const serverHydrated = () => false;
+
+export function Breadcrumbs({ items }: { items: { href?: string; label: string }[] }) {
+  const { t } = usePreferences();
+  return (
+    <nav aria-label={t("nav.breadcrumb")} className="mb-3">
+      <ol className="flex flex-wrap items-center gap-1.5 text-xs font-medium text-[var(--color-ink-subtle)]">
+        {items.map((item, index) => (
+          <li className="flex items-center gap-1.5" key={`${item.href ?? "current"}-${item.label}`}>
+            {item.href ? (
+              <Link className="transition hover:text-[var(--color-ink)]" href={item.href}>
+                {item.label}
+              </Link>
+            ) : (
+              <span aria-current="page" className="text-[var(--color-ink-muted)]">
+                {item.label}
+              </span>
+            )}
+            {index < items.length - 1 ? <span aria-hidden="true">/</span> : null}
+          </li>
+        ))}
+      </ol>
+    </nav>
+  );
+}
 
 export function PageHeader({
   title,
