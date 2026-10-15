@@ -69,6 +69,37 @@
    */
   --radius-card: 0.875rem;
   --radius-control: 0.625rem;
+
+  /* Typography scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+  --text-3xl: 1.875rem;
+  --text-4xl: 2.25rem;
+  --text-5xl: 3rem;
+
+  --leading-tight: 1.15;
+  --leading-normal: 1.6;
+  --leading-relaxed: 1.75;
+
+  /* Motion */
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Z-index scale */
+  --z-base: 0;
+  --z-header: 30;
+  --z-skip: 50;
+  --z-modal: 60;
+  --z-popover: 70;
+  --z-toast: 80;
+
   --shadow-card: 0 1px 2px oklch(21% 0.02 260 / 0.06), 0 1px 3px oklch(21% 0.02 260 / 0.04);
   --shadow-raised: 0 4px 12px oklch(21% 0.02 260 / 0.08), 0 2px 4px oklch(21% 0.02 260 / 0.04);
 }

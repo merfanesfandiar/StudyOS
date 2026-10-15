@@ -13,7 +13,7 @@ export function SkipLink() {
   const { t } = usePreferences();
   return (
     <a
-      className="sr-only z-50 rounded-[var(--radius-control)] bg-[var(--color-accent)] px-4 py-2 font-semibold text-[var(--color-accent-ink)] focus:not-sr-only focus:fixed focus:start-4 focus:top-4"
+      className="sr-only z-[var(--z-skip)] rounded-[var(--radius-control)] bg-[var(--color-accent)] px-4 py-2 font-semibold text-[var(--color-accent-ink)] focus:not-sr-only focus:fixed focus:start-4 focus:top-4"
       href="#main-content"
     >
       {t("app.skipToContent")}

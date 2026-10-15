@@ -65,7 +65,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-[var(--color-canvas)] text-[var(--color-ink)]">
-      <header className="sticky top-0 z-30 border-b border-[var(--color-line)] bg-[var(--color-surface)]/95 backdrop-blur">
+      <header className="sticky top-0 z-[var(--z-header)] border-b border-[var(--color-line)] bg-[var(--color-surface)]/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
           <Link className="flex items-center gap-3" href="/dashboard">
             <span className="grid size-9 place-items-center rounded-[var(--radius-control)] bg-[var(--color-accent)] text-sm font-black text-[var(--color-accent-ink)]">
