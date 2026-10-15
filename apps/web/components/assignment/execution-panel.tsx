@@ -324,7 +324,7 @@ function BackendBadge({
   const tone =
     capabilities.enabled && capabilities.available
       ? "text-[var(--color-positive)] bg-[var(--color-positive-soft)]"
-      : "text-[var(--color-warning)] bg-[var(--color-warning-soft)]";
+      : "text-[var(--color-caution)] bg-[var(--color-caution-soft)]";
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-medium ${tone}`}>
       {t("execution.backend", { backend: capabilities.backend })}
@@ -337,8 +337,8 @@ function statusTone(status: ExecutionJobStatus): string {
   if (status === "FAILED" || status === "TIMED_OUT" || status === "RESOURCE_LIMIT_EXCEEDED" || status === "REJECTED") {
     return "text-[var(--color-critical)] bg-[var(--color-critical-soft)]";
   }
-  if (status === "CANCELLED") return "text-[var(--color-ink-muted)] bg-[var(--color-surface-muted)]";
-  return "text-[var(--color-ink-muted)] bg-[var(--color-surface-muted)]";
+  if (status === "CANCELLED") return "text-[var(--color-ink-muted)] bg-[var(--color-surface-sunken)]";
+  return "text-[var(--color-ink-muted)] bg-[var(--color-surface-sunken)]";
 }
 
 function StatusBadge({ status }: { status: ExecutionJobStatus }) {
@@ -519,7 +519,7 @@ function Artifacts({ artifacts }: { artifacts: ExecutionArtifact[] }) {
       <ul className="flex flex-wrap gap-2">
         {artifacts.map((artifact) => (
           <li
-            className="rounded-full bg-[var(--color-surface-muted)] px-2.5 py-1 font-mono text-xs text-[var(--color-ink-muted)]"
+            className="rounded-full bg-[var(--color-surface-sunken)] px-2.5 py-1 font-mono text-xs text-[var(--color-ink-muted)]"
             key={artifact.id}
           >
             {artifact.filename} · {formatNumber(artifact.size_bytes)}
@@ -544,7 +544,7 @@ function SandboxBoundary({
   const { t } = usePreferences();
   if (!capabilities) return null;
   return (
-    <details className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)]">
+    <details className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-sunken)]">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--color-ink)]">
         {t("execution.security")}
       </summary>

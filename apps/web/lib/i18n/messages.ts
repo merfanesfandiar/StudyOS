@@ -1106,6 +1106,19 @@ export const en = {
   "execution.loadFailed": "The execution workspace could not be loaded.",
   "execution.submitFailed": "The code could not be submitted.",
   "execution.cancelFailed": "The run could not be stopped.",
+
+  "agentUi.submit": "Submit",
+  "agentUi.approve": "Approve",
+  "agentUi.reject": "Reject",
+  "agentUi.other": "Other",
+  "agentUi.code": "Code",
+  "agentUi.references": "References",
+  "agentUi.coverage": "Coverage",
+  "agentUi.covered": "covered",
+  "agentUi.notCovered": "not covered",
+  "agentUi.progressOf": "{value} of {max}",
+  "agentUi.unsupported": "This part of the interface needs a newer version of the app (block: {type}).",
+  "agentUi.notice": "Some parts of the agent's interface could not be displayed.",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -2187,6 +2200,19 @@ export const fa: Catalogue = {
   "execution.loadFailed": "فضای کاری اجرا بارگذاری نشد.",
   "execution.submitFailed": "کد ارسال نشد.",
   "execution.cancelFailed": "اجرا متوقف نشد.",
+
+  "agentUi.submit": "ارسال",
+  "agentUi.approve": "تأیید",
+  "agentUi.reject": "رد",
+  "agentUi.other": "دیگر",
+  "agentUi.code": "کد",
+  "agentUi.references": "منابع",
+  "agentUi.coverage": "پوشش",
+  "agentUi.covered": "پوشش داده شده",
+  "agentUi.notCovered": "پوشش داده نشده",
+  "agentUi.progressOf": "{value} از {max}",
+  "agentUi.unsupported": "این بخش از رابط به نسخهٔ جدیدتری از برنامه نیاز دارد (بلوک: {type}).",
+  "agentUi.notice": "بخشی از رابط عامل نمایش داده نشد.",
 };
 
 export const catalogues: Record<Locale, Catalogue> = { en, fa };

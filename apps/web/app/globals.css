@@ -198,6 +198,24 @@ body {
     color 150ms ease;
 }
 
+/*
+ * Persian gets its own stack rather than sharing the Latin one.
+ *
+ * `Inter` has no Persian glyphs, so a Persian page today silently falls through
+ * to whatever the OS picks -- which is fine on macOS and inconsistent on
+ * Windows. Naming the Arabic-script faces first means a Persian reader gets a
+ * font designed for the script when one is installed, and the same robust
+ * fallback chain when none is. The stack is CSS-only because the app is
+ * self-hosted under a `font-src 'self'` policy: a webfont would have to be
+ * bundled, and selecting from installed fonts costs nothing.
+ */
+:root[lang^="fa"] body,
+:root[dir="rtl"] body {
+  font-family:
+    Vazirmatn, "Noto Naskh Arabic", "Noto Sans Arabic", Tahoma, ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", sans-serif;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

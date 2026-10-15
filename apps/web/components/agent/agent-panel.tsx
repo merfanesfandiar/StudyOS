@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Alert, EmptyState, LoadingState } from "@/components/ui";
+import { AgentUiView } from "@/components/agent/agent-ui";
 import { usePreferences } from "@/components/preferences-provider";
 import {
   isAgentRunFinished,
@@ -15,6 +16,7 @@ import {
   type AgentToolInvocation,
   type AgentToolInvocationStatus,
 } from "@/lib/agent-types";
+import { parseAgentUi } from "@/lib/agent-ui/validate";
 import { useAgent } from "@/lib/use-agent";
 
 /**
@@ -362,8 +364,8 @@ function RunStatusBadge({ status }: { status: AgentRunStatus | null }) {
       : status === "FAILED"
         ? "text-[var(--color-critical)] bg-[var(--color-critical-soft)]"
         : status === "WAITING_FOR_USER" || status === "BLOCKED"
-          ? "text-[var(--color-warning)] bg-[var(--color-warning-soft)]"
-          : "text-[var(--color-ink-muted)] bg-[var(--color-surface-muted)]";
+          ? "text-[var(--color-caution)] bg-[var(--color-caution-soft)]"
+          : "text-[var(--color-ink-muted)] bg-[var(--color-surface-sunken)]";
   return (
     <span className={`rounded-full px-3 py-1 text-xs font-medium ${tone}`}>
       {t(`status.agentRun.${status.toLowerCase()}` as Parameters<typeof t>[0])}
@@ -513,6 +515,11 @@ function CheckpointPrompt({
         </p>
       ) : null}
 
+      {/* A runtime that attaches a Dynamic Agent UI gets it rendered here, above
+          the plain form. The form below still owns the answer, so the structured
+          blocks are presentation the agent asked for, never a second submit path. */}
+      <DynamicAgentUi value={checkpoint.ui} />
+
       {options.length > 0 ? (
         <fieldset>
           <legend className="text-sm font-medium text-[var(--color-ink)]">
@@ -570,6 +577,26 @@ function CheckpointPrompt({
       </div>
     </form>
   );
+}
+
+/**
+ * The optional Dynamic Agent UI attached to a checkpoint or artifact.
+ *
+ * Rendered read-only here. The checkpoint's own form owns the answer, so a
+ * structured payload is presentation the runtime asked for alongside it, never a
+ * second submit path. Absent or unusable payloads render nothing, which leaves
+ * the plain path exactly as it was -- the common case, because the deterministic
+ * executor emits no `ui` envelope at all.
+ */
+function DynamicAgentUi({ value }: { value: unknown }) {
+  const { t } = usePreferences();
+  if (value === undefined || value === null) return null;
+  const result = parseAgentUi(value);
+  if (!result.ok) {
+    return <p className="text-xs text-[var(--color-ink-subtle)]">{t("agentUi.notice")}</p>;
+  }
+  if (result.envelope.blocks.length === 0) return null;
+  return <AgentUiView envelope={result.envelope} errors={result.errors} />;
 }
 
 function Controls({
@@ -735,14 +762,36 @@ function ArtifactList({ artifacts }: { artifacts: AgentArtifact[] }) {
             ) : null}
           </summary>
           {/* The draft is rendered as text, never as HTML. Model output is
-              untrusted by construction and this is where that would matter. */}
-          <pre className="overflow-x-auto whitespace-pre-wrap border-t border-[var(--color-line)] px-4 py-3 text-sm text-[var(--color-ink)]">
-            {artifact.content}
-          </pre>
+              untrusted by construction and this is where that would matter. A
+              draft that carries a validated Dynamic Agent UI renders as typed
+              blocks instead; anything else stays plain text. */}
+          {hasStructuredUi(artifact) ? (
+            <div className="border-t border-[var(--color-line)] px-4 py-3">
+              <DynamicAgentUi value={artifact.metadata_json?.ui} />
+            </div>
+          ) : (
+            <pre className="overflow-x-auto whitespace-pre-wrap border-t border-[var(--color-line)] px-4 py-3 text-sm text-[var(--color-ink)]">
+              {artifact.content}
+            </pre>
+          )}
         </details>
       ))}
     </div>
   );
+}
+
+/**
+ * Whether an artifact carries a Dynamic Agent UI this build can actually render.
+ *
+ * Checked before choosing a renderer so a malformed payload falls back to the
+ * artifact's own text rather than replacing it with an error notice: the content
+ * is the artifact, and no parsing failure should be able to hide it.
+ */
+function hasStructuredUi(artifact: AgentArtifact): boolean {
+  const value = artifact.metadata_json?.ui;
+  if (value === undefined || value === null) return false;
+  const result = parseAgentUi(value);
+  return result.ok && result.envelope.blocks.length > 0;
 }
 
 /**
@@ -796,7 +845,7 @@ function ToolStatusBadge({ status }: { status: AgentToolInvocationStatus }) {
       ? "text-[var(--color-positive)] bg-[var(--color-positive-soft)]"
       : status === "FAILED"
         ? "text-[var(--color-critical)] bg-[var(--color-critical-soft)]"
-        : "text-[var(--color-warning)] bg-[var(--color-warning-soft)]";
+        : "text-[var(--color-caution)] bg-[var(--color-caution-soft)]";
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>
       {t(`status.agentTool.${status.toLowerCase()}` as Parameters<typeof t>[0])}
@@ -818,7 +867,7 @@ function CapabilityBoundary({ capabilities }: { capabilities: AgentCapabilities 
   const { t } = usePreferences();
   if (!capabilities) return null;
   return (
-    <details className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-muted)]">
+    <details className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-sunken)]">
       <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-[var(--color-ink)]">
         {t("agent.security")}
       </summary>

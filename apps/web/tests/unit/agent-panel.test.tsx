@@ -568,3 +568,127 @@ describe("AgentPanel", () => {
     window.localStorage.removeItem("studyos.locale");
   });
 });
+
+describe("AgentPanel dynamic interface", () => {
+  it("renders the Dynamic Agent UI attached to a checkpoint", async () => {
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "WAITING_FOR_USER" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "WAITING_FOR_USER",
+              awaiting_checkpoint_id: "cp1",
+              can_resume: true,
+              checkpoints: [
+                checkpoint({
+                  ui: {
+                    version: 1,
+                    blocks: [
+                      { type: "text", text: "I compared both conventions." },
+                      {
+                        type: "table",
+                        columns: [{ key: "a", label: "Option" }],
+                        rows: [{ a: "Knopp" }],
+                      },
+                    ],
+                  },
+                }),
+              ],
+            }),
+          ),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    expect(await screen.findByText("I compared both conventions.")).toBeInTheDocument();
+    expect(screen.getByText("Option")).toBeInTheDocument();
+    // The plain form still owns the answer, so the structured blocks never
+    // become a second submit path.
+    expect(screen.getByRole("button", { name: "Send answer" })).toBeInTheDocument();
+  });
+
+  it("falls back to the draft's own text when its interface is unusable", async () => {
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "COMPLETED" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "COMPLETED",
+              artifacts: [
+                {
+                  id: "a1",
+                  run_id: "r1",
+                  task_id: "t1",
+                  title: "Introduction",
+                  artifact_type: "DRAFT",
+                  status: "DRAFT",
+                  ownership: "AGENT_OWNED",
+                  content: "Plain draft text.",
+                  metadata_json: {
+                    ui: { version: 99, blocks: [{ type: "text", text: "ignored" }] },
+                  },
+                  revision: 1,
+                  deliverable_key: null,
+                  worker_name: null,
+                  created_at: "2026-01-01T10:02:00Z",
+                  updated_at: "2026-01-01T10:02:00Z",
+                },
+              ],
+            }),
+          ),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Drafts" }));
+    expect(screen.getByText("Plain draft text.")).toBeInTheDocument();
+    // A version the app cannot render must not hide the artifact.
+    expect(screen.queryByText("ignored")).not.toBeInTheDocument();
+  });
+
+  it("renders a structured artifact interface in place of its raw text", async () => {
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "COMPLETED" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "COMPLETED",
+              artifacts: [
+                {
+                  id: "a1",
+                  run_id: "r1",
+                  task_id: "t1",
+                  title: "Comparison",
+                  artifact_type: "DRAFT",
+                  status: "DRAFT",
+                  ownership: "AGENT_OWNED",
+                  content: "raw fallback",
+                  metadata_json: {
+                    ui: {
+                      version: 1,
+                      blocks: [
+                        { type: "coverage", title: "Requirements", items: [{ label: "Tests", covered: true }] },
+                      ],
+                    },
+                  },
+                  revision: 1,
+                  deliverable_key: null,
+                  worker_name: null,
+                  created_at: "2026-01-01T10:02:00Z",
+                  updated_at: "2026-01-01T10:02:00Z",
+                },
+              ],
+            }),
+          ),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Drafts" }));
+    expect(screen.getByText("Requirements")).toBeInTheDocument();
+    expect(screen.queryByText("raw fallback")).not.toBeInTheDocument();
+  });
+});

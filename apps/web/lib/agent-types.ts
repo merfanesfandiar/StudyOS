@@ -243,6 +243,16 @@ export interface AgentCheckpoint {
   requested_at: string;
   resolved_at: string | null;
   expires_at: string | null;
+  /**
+   * The Dynamic Agent UI the runtime wants rendered for this checkpoint.
+   *
+   * Untyped on purpose: it is untrusted payload from the server that is parsed
+   * and validated by `lib/agent-ui/validate.ts` before anything renders. Typing
+   * it as the validated `AgentUiEnvelope` here would falsely imply the API has
+   * already checked it. Absent for the runtime's plain text questions, which is
+   * every checkpoint the deterministic executor produces today.
+   */
+  ui?: unknown;
 }
 
 export interface AgentEvent {
