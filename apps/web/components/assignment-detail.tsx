@@ -12,6 +12,7 @@ import { ResourcesSection } from "@/components/assignment/resources-section";
 import { SummarySection } from "@/components/assignment/summary-section";
 import { DeliverablesSection, TaxonomySection } from "@/components/assignment/taxonomy-section";
 import { AnalysisPanel } from "@/components/assignment/analysis-panel";
+import { ExecutionPanel } from "@/components/assignment/execution-panel";
 import { PlanPanel } from "@/components/planning/plan-panel";
 import { Alert, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -29,6 +30,7 @@ const SECTIONS: { href: string; key: MessageKey }[] = [
   { href: "#criteria", key: "assignment.sections.criteria" },
   { href: "#deliverables", key: "assignment.sections.deliverables" },
   { href: "#analysis", key: "assignment.sections.analysis" },
+  { href: "#execution", key: "assignment.sections.execution" },
   { href: "#stack", key: "assignment.sections.stack" },
   { href: "#resources", key: "assignment.sections.resources" },
   { href: "#summary", key: "assignment.sections.summary" },
@@ -139,6 +141,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           assignmentId={specification.assignment.id}
           refreshToken={specification.specification_version}
         />
+        <ExecutionPanel assignmentId={specification.assignment.id} />
         {/*
           The plan sits below the analysis on purpose. Planning reads a frozen
           analysis contract and never the raw brief, so showing it first would

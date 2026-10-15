@@ -10,6 +10,8 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import configure_logging
 from app.core.middleware import RequestLoggingMiddleware
 from app.modules.agent.router import router as agent_router
+from app.modules.agent.tools_router import router as agent_tools_router
+from app.modules.agent.tools_router import run_router as agent_run_tools_router
 from app.modules.analysis.router import router as analysis_router
 from app.modules.assignments import router as assignments_router
 from app.modules.assignments.content_router import router as assignment_content_router
@@ -20,6 +22,8 @@ from app.modules.auth import router as auth_router
 from app.modules.courses import router as courses_router
 from app.modules.dashboard import router as dashboard_router
 from app.modules.documents import router as documents_router
+from app.modules.execution.router import capabilities_router as execution_capabilities_router
+from app.modules.execution.router import router as execution_router
 from app.modules.health import router as health_router
 from app.modules.notifications import router as notifications_router
 from app.modules.planning.router import router as planning_router
@@ -100,6 +104,10 @@ app.include_router(specification_router)
 app.include_router(analysis_router)
 app.include_router(planning_router)
 app.include_router(agent_router)
+app.include_router(agent_tools_router)
+app.include_router(agent_run_tools_router)
+app.include_router(execution_router)
+app.include_router(execution_capabilities_router)
 app.include_router(documents_router)
 app.include_router(dashboard_router)
 app.include_router(notifications_router)

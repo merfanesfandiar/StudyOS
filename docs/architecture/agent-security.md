@@ -15,22 +15,46 @@ runs and visible errors.
 
 These are not disabled by default. They are not in the codebase:
 
-- **Shell or subprocess execution.** No `subprocess`, no `os.system`, no shell invocation anywhere in
-  the runtime.
-- **Outbound network access.** No HTTP client in the agent path. The only network egress is the
-  configured LLM provider.
-- **Filesystem writes.** `write_artifact` writes one row in the application's own database. It does
-  not touch the filesystem. Uploads go through the Phase 2 storage abstraction.
-- **Arbitrary code execution**, including model-authored code. `CODE` is an artifact type; running it
-  is not a capability.
+- **Shell or subprocess execution on the host.** No `subprocess`, no `os.system`, no shell invocation
+  runs a command the model chose on the host. The only process the runtime starts is the sandbox
+  backend (Phase 7) and it starts it with a fixed, code-built command line.
+- **Outbound network access.** No HTTP client in the agent path, and a sandbox runs with
+  `--network none`. The only network egress is the configured LLM provider.
+- **Filesystem writes outside the sandbox.** `write_artifact` writes one row in the application's own
+  database. An execution writes into an ephemeral, per-job directory that is deleted when the attempt
+  ends. Uploads go through the Phase 2 storage abstraction.
+- **Host filesystem code execution.** Model-authored code runs only inside the Phase 7 sandbox, never
+  on the host. The sandbox runs as an unprivileged user with a read-only root, dropped capabilities
+  and `no-new-privileges`, so "a code tool exists" does not become "code runs as the server". See
+  [`execution-isolation.md`](./execution-isolation.md) and the `HIGH` risk ceiling below.
 - **Credential access.** No runtime path reads a secret other than the provider's own API key, held
-  in settings.
+  in settings. A sandbox is handed no environment variables and no host mounts beyond its workspace.
 - **A browser or web-search tool.** No such tool is registered.
 - **Cross-assignment data.** Every read is filtered by the assignment resolved from ownership. There
   is no identifier the client can supply to widen the scope.
 
 The list is published as data by `GET /assignments/{id}/agent/capabilities` and rendered in the UI.
 See [`agent-tools.md`](./agent-tools.md).
+
+## The sandbox is the one exception, and it is bounded
+
+Phase 6's claim was "no code execution anywhere". Phase 7 narrows that claim rather than dropping it:
+the runtime may *submit* code, and the submission has a fixed shape.
+
+- A code tool names a **runtime** (`python`, `java`, `cpp`) and hands over **text**. It cannot name a
+  command, an image, a path, an environment variable or a resource limit — the schema has no such
+  field, and the `ExecutionGateway` it is handed fixes the workspace, backend, image and profile.
+- The permission is `EXECUTE_SANDBOXED`, deliberately distinct from `EXECUTE_UNTRUSTED` (host
+  execution), which remains in `FORBIDDEN_PERMISSIONS` and is held by no tool.
+- The risk ceiling is `HIGH` as of Phase 7 — exactly enough to dispatch the sandbox tools. `CRITICAL`
+  (host filesystem) is still refused, and raising the ceiling was a reviewed change in the phase that
+  shipped the sandbox, not a permission a tool can obtain by declaring it.
+- A request may only *shrink* a resource profile. The profile is a ceiling clamped again by the
+  operator's configured maxima, so neither an edit to a constant nor a client request can widen it.
+- Everything an execution does is recorded: a job, an attempt, its exit code, its failure class, its
+  bounded output and a dense event log. A failed program is classified (`USER_CODE_FAILED`,
+  `COMPILE_FAILED`, `TIMEOUT`, `RESOURCE_EXHAUSTED`), never silently retried as though it were a
+  transient fault.
 
 ## The three validation layers
 

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import sqlalchemy
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     DateTime,
@@ -30,6 +31,7 @@ from app.models.enums import (
     AcademicTaskPriority,
     AcademicTaskStatus,
     AcademicTaskType,
+    AgentArtifactOwnership,
     AgentArtifactStatus,
     AgentArtifactType,
     AgentCheckpointStatus,
@@ -38,6 +40,7 @@ from app.models.enums import (
     AgentExecutorKind,
     AgentRunMode,
     AgentRunStatus,
+    AgentToolInvocationStatus,
     AIMode,
     AnalysisReviewStatus,
     AnalysisRunStatus,
@@ -49,6 +52,11 @@ from app.models.enums import (
     DeliverableStatus,
     DeliverableType,
     EffortLevel,
+    ExecutionArtifactKind,
+    ExecutionAttemptStatus,
+    ExecutionCleanupStatus,
+    ExecutionJobStatus,
+    ExecutionType,
     GuidanceLevel,
     ModelTier,
     NotificationType,
@@ -1463,6 +1471,9 @@ class AgentRun(TimestampMixin, Base):
     decisions: Mapped[list[AgentDecision]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
+    tool_invocations: Mapped[list[AgentToolInvocation]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
 
 
 class AgentTaskExecution(Base):
@@ -1514,6 +1525,11 @@ class AgentTaskExecution(Base):
     executor: Mapped[str] = mapped_column(
         String(30), nullable=False, default=AgentExecutorKind.REASONING.value
     )
+    #: The specialized academic worker that served this attempt, e.g. ``MATHEMATICS``
+    #: for a proof task. ``None`` for rows written before Phase 6. Kept alongside
+    #: ``executor`` because the two answer different questions: the executor says
+    #: *how* the work was carried out, the worker says *which tool boundary* served it.
+    worker: Mapped[str | None] = mapped_column(String(30), nullable=True)
     model: Mapped[str | None] = mapped_column(String(160), nullable=True)
     model_tier: Mapped[str | None] = mapped_column(String(20), nullable=True)
     #: What the executor produced. ``None`` for a failure that produced nothing.
@@ -1540,6 +1556,70 @@ class AgentTaskExecution(Base):
 
     run: Mapped[AgentRun] = relationship(back_populates="executions")
     task: Mapped[PlanTask] = relationship(back_populates="agent_executions")
+
+
+class AgentToolInvocation(Base):
+    """One recorded tool call, whatever its outcome.
+
+    Every ``CALL_TOOL`` the runtime dispatches is recorded here, including calls
+    the runtime blocked. That is deliberate: the run's observability is what makes
+    "why did this step fail" answerable from the log alone, and a blocked call is
+    exactly the kind of event a review wants to count.
+
+    ``task_id`` uses ``SET NULL`` like the sibling agent tables: the invocation
+    history must outlive the task it was recorded for, and ``task_key`` keeps the
+    row attributable after a task deletion.
+    """
+
+    __tablename__ = "agent_tool_invocations"
+    __table_args__ = (
+        Index("ix_agent_tool_invocations_run_id", "run_id"),
+        Index("ix_agent_tool_invocations_run_status", "run_id", "status"),
+        Index("ix_agent_tool_invocations_run_tool", "run_id", "tool_name"),
+        Index("ix_agent_tool_invocations_tool", "tool_name"),
+        CheckConstraint(
+            "status IN ('SUCCESS', 'FAILED', 'BLOCKED')",
+            name="status_valid",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_agent_tool_invocation_task", ondelete="SET NULL"),
+        nullable=True,
+    )
+    #: Plan-local key copied at call time, so the row survives a task deletion and
+    #: reads as self-describing in the invocation log.
+    task_key: Mapped[str] = mapped_column(String(20), nullable=False)
+    #: Which specialized worker authorised this call. Mirrors
+    #: ``AgentTaskExecution.worker``; stored here too so the log does not need the
+    #: execution row to say who served the call.
+    worker_kind: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    #: The registered tool id as the decision named it, e.g. ``calculate``.
+    tool_name: Mapped[str] = mapped_column(String(60), nullable=False)
+    #: The runtime iteration that spent this call.
+    iteration: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentToolInvocationStatus.BLOCKED.value
+    )
+    args: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    #: A bounded snapshot of what the tool returned. String fields are truncated at
+    #: write time so the log stays small; the full artifact lives on the run.
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    run: Mapped[AgentRun] = relationship(back_populates="tool_invocations")
+    task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
 
 
 class AgentArtifact(TimestampMixin, Base):
@@ -1576,6 +1656,12 @@ class AgentArtifact(TimestampMixin, Base):
     )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=AgentArtifactStatus.DRAFT.value
+    )
+    #: Who the artifact belongs to. ``USER_OWNED`` marks student work the runtime
+    #: must never mutate in place: a change is written as a new revision instead,
+    #: so an agent can build on a student's draft without overwriting it.
+    ownership: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentArtifactOwnership.AGENT_OWNED.value
     )
     #: The body. For MARKDOWN this is the rendered source; for CODE it is text
     #: that is never run.
@@ -1756,3 +1842,272 @@ class AgentDecision(Base):
     )
 
     run: Mapped[AgentRun] = relationship(back_populates="decisions")
+
+
+class ExecutionJob(TimestampMixin, Base):
+    """One requested execution of untrusted academic work.
+
+    This is the durable record that ties a workload to the user, workspace,
+    assignment, agent run and task it was requested for, so authorization can be
+    checked against the whole chain and so the traceability required by Phase 10
+    verification exists before the run does.
+
+    Nothing here names a host command. ``execution_type`` selects an approved,
+    versioned runtime adapter, and ``options_json`` is validated against an
+    allowlist — a client cannot turn a job into an arbitrary host invocation.
+    """
+
+    __tablename__ = "execution_jobs"
+    __table_args__ = (
+        Index("ix_execution_jobs_workspace_id", "workspace_id"),
+        Index("ix_execution_jobs_assignment_id", "assignment_id"),
+        Index("ix_execution_jobs_agent_run_id", "agent_run_id"),
+        Index("ix_execution_jobs_status", "status"),
+        Index("ix_execution_jobs_status_queued_at", "status", "queued_at"),
+        Index("ix_execution_jobs_requested_by_id", "requested_by_id"),
+        #: Partial-unique like the agent run key: a missing key is allowed, but a
+        #: repeated one must collide so a retried request cannot start two jobs.
+        Index(
+            "ix_execution_jobs_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            sqlite_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+            postgresql_where=sqlalchemy.text("idempotency_key IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "status IN ('CREATED', 'VALIDATING', 'REJECTED', 'QUEUED', 'STARTING', "
+            "'RUNNING', 'COLLECTING_RESULTS', 'SUCCEEDED', 'FAILED', 'TIMED_OUT', "
+            "'CANCEL_REQUESTED', 'CANCELLED', 'RESOURCE_LIMIT_EXCEEDED', "
+            "'CLEANUP_PENDING')",
+            name="status_valid",
+        ),
+        CheckConstraint(
+            "cleanup_status IN ('PENDING', 'CLEANED', 'FAILED', 'SKIPPED')",
+            name="cleanup_status_valid",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    #: SET NULL on delete: removing an assignment must not erase the record that
+    #: untrusted code ran for it.
+    assignment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_execution_job_task", ondelete="SET NULL"),
+        nullable=True,
+    )
+    requested_by_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    execution_type: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=ExecutionType.OTHER.value
+    )
+    backend: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=ExecutionJobStatus.CREATED.value
+    )
+    resource_profile: Mapped[str] = mapped_column(String(40), nullable=False, default="")
+    #: The entrypoint file the adapter will run, validated to stay inside the
+    #: workspace. Nullable because a build/test job may have no single entrypoint.
+    entrypoint: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    options_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: References (as strings) to inputs: agent artifacts and/or assignment
+    #: documents. Resolved and authorized server-side, never trusted from the body.
+    input_artifact_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    output_artifact_ids: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    #: Snapshot of the enforced limits, so a later config change cannot rewrite
+    #: what a completed job was actually bounded by.
+    limits_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Compare-and-swap coordination, mirroring the agent runtime: a worker claims
+    #: a queued job by moving ``lock_version`` forward, so a redelivered message
+    #: cannot start two sandboxes.
+    lock_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    queued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: Storage keys for the full, bounded stdout/stderr. The bodies never sit in
+    #: the row; only a bounded excerpt below does.
+    stdout_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    stderr_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    result_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    failure_class: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    cleanup_status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ExecutionCleanupStatus.PENDING.value
+    )
+
+    workspace: Mapped[Workspace] = relationship()
+    assignment: Mapped[Assignment | None] = relationship()
+    agent_run: Mapped[AgentRun | None] = relationship(foreign_keys=[agent_run_id])
+    task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
+    requested_by: Mapped[User | None] = relationship(foreign_keys=[requested_by_id])
+    attempts: Mapped[list[ExecutionAttempt]] = relationship(
+        back_populates="job", cascade="all, delete-orphan", order_by="ExecutionAttempt.attempt"
+    )
+    artifacts: Mapped[list[ExecutionArtifact]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+    events: Mapped[list[ExecutionEvent]] = relationship(
+        back_populates="job", cascade="all, delete-orphan"
+    )
+
+
+class ExecutionAttempt(Base):
+    """One attempt at one execution job.
+
+    A retry writes a new row rather than mutating the previous one, matching the
+    agent runtime's attempt model: the evidence of *how* an attempt failed is what
+    makes the failure class and the retry policy meaningful.
+    """
+
+    __tablename__ = "execution_attempts"
+    __table_args__ = (
+        UniqueConstraint("job_id", "attempt", name="uq_execution_attempt"),
+        Index("ix_execution_attempts_job_id", "job_id"),
+        Index("ix_execution_attempts_status", "status"),
+        CheckConstraint(
+            "status IN ('SUCCEEDED', 'FAILED', 'TIMED_OUT', 'RESOURCE_LIMIT_EXCEEDED', "
+            "'CANCELLED', 'REJECTED')",
+            name="status_valid",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    job_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("execution_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    status: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=ExecutionAttemptStatus.FAILED.value
+    )
+    backend: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    #: Opaque identifier of the concrete sandbox (container id, run id). Never a
+    #: host path; used only for reconciliation.
+    sandbox_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    stdout_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    stderr_ref: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    stdout_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stderr_excerpt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    diagnostics: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    resource_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    failure_class: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    job: Mapped[ExecutionJob] = relationship(back_populates="attempts")
+
+
+class ExecutionArtifact(Base):
+    """A file an execution produced, backed by ``StorageService``.
+
+    Large outputs live in storage, never in the row: the database holds the key,
+    the size and the kind. ``agent_artifact_id`` links to the run-scoped
+    ``AgentArtifact`` when the execution belongs to an agent run, so the agent's
+    artifact and the execution's raw file are the same object seen two ways rather
+    than two copies that can drift.
+    """
+
+    __tablename__ = "execution_artifacts"
+    __table_args__ = (
+        Index("ix_execution_artifacts_job_id", "job_id"),
+        Index("ix_execution_artifacts_workspace_id", "workspace_id"),
+        Index("ix_execution_artifacts_attempt_id", "attempt_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("execution_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    attempt_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("execution_attempts.id", ondelete="SET NULL"), nullable=True
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    agent_artifact_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_artifacts.id", ondelete="SET NULL"), nullable=True
+    )
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    mime_type: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    kind: Mapped[str] = mapped_column(
+        String(30), nullable=False, default=ExecutionArtifactKind.OTHER.value
+    )
+    ownership: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentArtifactOwnership.AGENT_OWNED.value
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    job: Mapped[ExecutionJob] = relationship(back_populates="artifacts")
+    attempt: Mapped[ExecutionAttempt | None] = relationship()
+
+
+class ExecutionEvent(Base):
+    """Append-only security and operational telemetry for one job (§30).
+
+    Deliberately carries no source code and no secrets: ``summary`` is a sentence
+    for a person and ``metadata_json`` is bounded structured detail. Ordinary
+    compiler errors are ``EXECUTION_FAILED``; only a real policy breach is
+    ``POLICY_VIOLATION_DETECTED``.
+    """
+
+    __tablename__ = "execution_events"
+    __table_args__ = (
+        UniqueConstraint("job_id", "sequence", name="uq_execution_events_job_sequence"),
+        Index("ix_execution_events_job_id_created_at", "job_id", "created_at"),
+        Index("ix_execution_events_event_type", "event_type"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    job_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("execution_jobs.id", ondelete="CASCADE"), nullable=False
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    job: Mapped[ExecutionJob] = relationship(back_populates="events")

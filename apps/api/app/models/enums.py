@@ -723,6 +723,11 @@ class AgentEventType(StrEnum):
     RUN_COMPLETED = "RUN_COMPLETED"
     RUN_FAILED = "RUN_FAILED"
     RUN_RECOVERED = "RUN_RECOVERED"
+    WORKER_SELECTED = "WORKER_SELECTED"
+    TOOL_SELECTED = "TOOL_SELECTED"
+    TOOL_INVOCATION_STARTED = "TOOL_INVOCATION_STARTED"
+    TOOL_INVOCATION_COMPLETED = "TOOL_INVOCATION_COMPLETED"
+    TOOL_INVOCATION_FAILED = "TOOL_INVOCATION_FAILED"
     TOOL_INVOKED = "TOOL_INVOKED"
     TOOL_BLOCKED = "TOOL_BLOCKED"
 
@@ -740,8 +745,21 @@ class AgentFailureCategory(StrEnum):
     CONTEXT_ERROR = "CONTEXT_ERROR"
     DEPENDENCY_ERROR = "DEPENDENCY_ERROR"
     PERMISSION_DENIED = "PERMISSION_DENIED"
+    #: The caller was not authorised at all, as distinct from being authorised but
+    #: lacking a specific tool permission. Kept separate so the recovery policy can
+    #: tell "you may not do this here" from "you may not do this yet".
+    AUTHORIZATION_ERROR = "AUTHORIZATION_ERROR"
     USER_INPUT_REQUIRED = "USER_INPUT_REQUIRED"
     UNSUPPORTED_OPERATION = "UNSUPPORTED_OPERATION"
+    #: A tool or provider did not answer within its timeout. Retryable with backoff,
+    #: unlike a validation error, so it is its own category rather than a SYSTEM_ERROR.
+    TIMEOUT = "TIMEOUT"
+    #: A tool depended on something outside the run (a future provider) that failed.
+    EXTERNAL_SERVICE_ERROR = "EXTERNAL_SERVICE_ERROR"
+    #: A tool answered, but the result failed output validation or sanitisation.
+    INVALID_RESULT = "INVALID_RESULT"
+    #: A bounded resource (size, count, quota) was exhausted by a single call.
+    RESOURCE_LIMIT = "RESOURCE_LIMIT"
     SYSTEM_ERROR = "SYSTEM_ERROR"
     CANCELLED = "CANCELLED"
 
@@ -755,3 +773,329 @@ class AgentRunMode(StrEnum):
 
     SUPERVISED = "SUPERVISED"
     AUTONOMOUS = "AUTONOMOUS"
+
+
+class AgentToolCategory(StrEnum):
+    """What a tool is *for*. A grouping, never a permission grant.
+
+    The category answers "which kind of academic work is this", so the UI can
+    group the catalogue and a worker can be described as the sum of its
+    categories. Whether a tool may run is decided by ``ToolPermission`` and
+    ``AgentToolRisk``, not by this value: a tool in ``CODING`` is no more
+    permitted than one in ``MATHEMATICS``; both are static and both are bounded.
+
+    The vocabulary is deliberately academic and domain-neutral (``MATHEMATICS``,
+    ``RESEARCH``, ``WRITING``, ``PRESENTATION``) rather than engineering-flavoured,
+    so that a coding tool is one category among many and never the default shape
+    of a capability. Adding a category is additive; nothing persists this value.
+    """
+
+    CORE = "CORE"
+    DOCUMENT = "DOCUMENT"
+    RESEARCH = "RESEARCH"
+    MATHEMATICS = "MATHEMATICS"
+    DATA = "DATA"
+    WRITING = "WRITING"
+    ANALYSIS = "ANALYSIS"
+    COMPUTATION = "COMPUTATION"
+    SEARCH = "SEARCH"
+    PRESENTATION = "PRESENTATION"
+    CODING = "CODING"
+    FILE = "FILE"
+    SYSTEM = "SYSTEM"
+    OTHER = "OTHER"
+
+
+class AgentToolRisk(StrEnum):
+    """How dangerous a tool would be if its inputs were hostile.
+
+    Risk is *enforceable*, not decoration: the runtime carries a maximum risk it
+    will dispatch (:data:`~app.modules.agent.tools.MAX_TOOL_RISK`) and refuses any
+    tool above it, so a ``HIGH`` or ``CRITICAL`` entry added to the catalogue is
+    inert until a later phase deliberately raises the ceiling. That is what keeps
+    "we will add sandboxing later" from being a comment a future tool ignores.
+    """
+
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class AgentToolAvailability(StrEnum):
+    """Whether a tool may run in *this* deployment at all.
+
+    Independent of permissions and risk. A tool can be registered, permitted and
+    low-risk and still not be ``AVAILABLE``: ``REQUIRES_CONSENT`` means the
+    student must opt in (the backend capability for Phase 8's consent UI),
+    ``DISABLED`` means the operator turned it off, and ``UNSUPPORTED`` means the
+    capability is deliberately absent from this phase. The runtime dispatches only
+    ``AVAILABLE`` tools, so marking a tool anything else removes it from the model
+    without deleting it from the catalogue.
+    """
+
+    AVAILABLE = "AVAILABLE"
+    REQUIRES_CONSENT = "REQUIRES_CONSENT"
+    DISABLED = "DISABLED"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+class AgentArtifactOwnership(StrEnum):
+    """Who a stored artifact belongs to.
+
+    The distinction is a guard, not a label. An artifact the student authored or
+    uploaded is ``USER_OWNED`` and a tool may not silently replace it: the
+    runtime writes a new revision instead of mutating student work in place.
+    ``AGENT_OWNED`` is the default for anything the runtime drafted, and
+    ``SYSTEM_GENERATED`` covers runtime bookkeeping. ``IMPORTED`` marks material
+    brought in from outside the workspace.
+    """
+
+    USER_OWNED = "USER_OWNED"
+    AGENT_OWNED = "AGENT_OWNED"
+    SYSTEM_GENERATED = "SYSTEM_GENERATED"
+    IMPORTED = "IMPORTED"
+
+
+class AgentWorkerKind(StrEnum):
+    """The specialized academic worker serving a task.
+
+    A worker is the connection between the domain-agnostic task vocabulary and
+    a bounded set of tools: a task of type ``PROVE`` is served by the
+    ``MATHEMATICS`` worker, which may use the mathematics and core tools and
+    nothing else. ``REASONING`` is the fallback for any task type without a
+    dedicated worker, so a plan with an unfamiliar task still gets served by a
+    worker that is safe rather than by nothing.
+    """
+
+    REASONING = "REASONING"
+    MATHEMATICS = "MATHEMATICS"
+    DATA = "DATA"
+    WRITING = "WRITING"
+    RESEARCH = "RESEARCH"
+    CODE = "CODE"
+    PRESENTATION = "PRESENTATION"
+
+
+class AgentToolInvocationStatus(StrEnum):
+    """Outcome of one recorded tool call.
+
+    ``BLOCKED`` is recorded when the runtime refused the call (unregistered
+    tool, permission missing, tool refused the arguments) — the run's observability
+    keeps the attempt even though no work happened, so "why did this step fail"
+    is answerable from the invocation log alone.
+    """
+
+    SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+
+
+class AgentToolStatus(StrEnum):
+    """The structured status of a single tool result.
+
+    Richer than ``ok``/``not ok`` because the runtime reacts differently to each.
+    ``PARTIAL_SUCCESS`` advances with a warning. ``NEEDS_USER_INPUT`` is a request
+    for a human, not a failure. ``RATE_LIMITED`` and ``UNAVAILABLE`` are
+    retryable-later conditions the policy can back off from, and ``FAILED`` is
+    the honest end state. The status is what a tool *returns*; how the invocation
+    is recorded (``AgentToolInvocationStatus``) is derived from it.
+    """
+
+    SUCCESS = "SUCCESS"
+    PARTIAL_SUCCESS = "PARTIAL_SUCCESS"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
+    NEEDS_USER_INPUT = "NEEDS_USER_INPUT"
+    RATE_LIMITED = "RATE_LIMITED"
+    UNAVAILABLE = "UNAVAILABLE"
+
+    @property
+    def is_ok(self) -> bool:
+        """True only for the statuses that produced a usable result."""
+        return self in {AgentToolStatus.SUCCESS, AgentToolStatus.PARTIAL_SUCCESS}
+
+
+# ---------------------------------------------------------------------------
+# Phase 7: secure execution environment.
+#
+# The execution plane runs untrusted academic workloads (code, data analysis,
+# numerical experiments) in isolated environments. These enums are the durable
+# vocabulary the orchestrator, the sandbox backends and the API share, so a job's
+# lifecycle, its isolation backend and its failure class are one shape everywhere
+# rather than a string invented at each layer.
+# ---------------------------------------------------------------------------
+
+
+class ExecutionType(StrEnum):
+    """Which approved runtime a job asks for.
+
+    Deliberately not ``PYTHON``-only: the coding specialisation is one academic
+    capability among many. A ``DATA_ANALYSIS`` or ``NUMERICAL_COMPUTATION`` job
+    runs in the same isolated plane as a compiled one. The value selects an
+    ``ExecutionAdapter``; a client may never name a host executable directly.
+    """
+
+    PYTHON = "PYTHON"
+    JAVA = "JAVA"
+    CPP = "CPP"
+    DATA_ANALYSIS = "DATA_ANALYSIS"
+    NUMERICAL_COMPUTATION = "NUMERICAL_COMPUTATION"
+    TEST_EXECUTION = "TEST_EXECUTION"
+    BUILD = "BUILD"
+    STATIC_ANALYSIS = "STATIC_ANALYSIS"
+    OTHER = "OTHER"
+
+
+class ExecutionResourceProfile(StrEnum):
+    """A named, bounded resource policy. A profile is a ceiling, not an entitlement."""
+
+    LIGHT_COMPUTATION = "LIGHT_COMPUTATION"
+    STANDARD_CODE_EXECUTION = "STANDARD_CODE_EXECUTION"
+    DATA_ANALYSIS = "DATA_ANALYSIS"
+    TEST_EXECUTION = "TEST_EXECUTION"
+    BUILD_EXECUTION = "BUILD_EXECUTION"
+
+
+class ExecutionJobStatus(StrEnum):
+    """The lifecycle of one execution job.
+
+    Kept explicit and persisted rather than implied by timestamps, because the
+    distinctions the security model depends on — "queued" vs "running",
+    "succeeded" vs "cleaned up" — are exactly the ones a boolean would erase.
+    Terminal states are ``SUCCEEDED``, ``FAILED``, ``TIMED_OUT``, ``CANCELLED``,
+    ``RESOURCE_LIMIT_EXCEEDED`` and ``REJECTED``. ``CLEANUP_PENDING`` is *not*
+    terminal: a job can be complete while its environment is still being reclaimed.
+    """
+
+    CREATED = "CREATED"
+    VALIDATING = "VALIDATING"
+    REJECTED = "REJECTED"
+    QUEUED = "QUEUED"
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    COLLECTING_RESULTS = "COLLECTING_RESULTS"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    TIMED_OUT = "TIMED_OUT"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
+    CANCELLED = "CANCELLED"
+    RESOURCE_LIMIT_EXCEEDED = "RESOURCE_LIMIT_EXCEEDED"
+    CLEANUP_PENDING = "CLEANUP_PENDING"
+
+    @property
+    def is_terminal(self) -> bool:
+        return self in {
+            ExecutionJobStatus.SUCCEEDED,
+            ExecutionJobStatus.FAILED,
+            ExecutionJobStatus.TIMED_OUT,
+            ExecutionJobStatus.CANCELLED,
+            ExecutionJobStatus.RESOURCE_LIMIT_EXCEEDED,
+            ExecutionJobStatus.REJECTED,
+        }
+
+
+class ExecutionAttemptStatus(StrEnum):
+    """The outcome of one attempt at a job."""
+
+    STARTING = "STARTING"
+    RUNNING = "RUNNING"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    TIMED_OUT = "TIMED_OUT"
+    RESOURCE_LIMIT_EXCEEDED = "RESOURCE_LIMIT_EXCEEDED"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+
+
+class ExecutionCleanupStatus(StrEnum):
+    """Whether the environment was reclaimed, tracked apart from the job result.
+
+    A job that produced correct output but whose sandbox could not be destroyed
+    is not a success with a footnote; it is an operationally significant state.
+    Modelling cleanup separately is what stops "the process exited" from being
+    reported as "the environment is gone".
+    """
+
+    PENDING = "PENDING"
+    CLEANED = "CLEANED"
+    FAILED = "FAILED"
+    SKIPPED = "SKIPPED"
+
+
+class ExecutionBackendKind(StrEnum):
+    """The isolation mechanism a job was dispatched to.
+
+    ``DISABLED`` is the safe default: with no backend configured, jobs are
+    rejected rather than run on the host. ``DOCKER`` is the hardened rootless
+    container path. The value is recorded so an operator can tell which boundary a
+    given job actually ran behind.
+    """
+
+    DISABLED = "DISABLED"
+    DOCKER = "DOCKER"
+    MOCK = "MOCK"
+
+
+class ExecutionFailureClass(StrEnum):
+    """Why an execution failed, split by *where* the failure fell.
+
+    The distinction drives retry policy: an infrastructure failure may be retried,
+    user code may not be retried blindly (it may repeat side effects), and a
+    timeout or resource exhaustion is a policy outcome rather than a bug.
+    """
+
+    INVALID_REQUEST = "INVALID_REQUEST"
+    POLICY_REJECTED = "POLICY_REJECTED"
+    ENVIRONMENT_UNAVAILABLE = "ENVIRONMENT_UNAVAILABLE"
+    STARTUP_FAILED = "STARTUP_FAILED"
+    COMPILE_FAILED = "COMPILE_FAILED"
+    USER_CODE_FAILED = "USER_CODE_FAILED"
+    TIMEOUT = "TIMEOUT"
+    RESOURCE_EXHAUSTED = "RESOURCE_EXHAUSTED"
+    INFRASTRUCTURE = "INFRASTRUCTURE"
+    CANCELLED = "CANCELLED"
+
+
+class ExecutionArtifactKind(StrEnum):
+    """What a produced file is, so the UI can render it and retention can apply.
+
+    ``SOURCE`` is input the student or agent supplied; the rest are produced by
+    the run. ``RESULT`` is the primary structured output, ``CHART`` and
+    ``DATA_OUTPUT`` are the common academic products, and ``SUMMARY`` is the
+    runtime's own bounded narrative.
+    """
+
+    SOURCE = "SOURCE"
+    RESULT = "RESULT"
+    DATA_OUTPUT = "DATA_OUTPUT"
+    CHART = "CHART"
+    TEST_REPORT = "TEST_REPORT"
+    DIAGNOSTICS = "DIAGNOSTICS"
+    LOG = "LOG"
+    SUMMARY = "SUMMARY"
+    GENERATED_FILE = "GENERATED_FILE"
+    OTHER = "OTHER"
+
+
+class ExecutionEventType(StrEnum):
+    """Security-relevant execution telemetry (§30).
+
+    Stored on the append-only ``execution_events`` stream. These are operational
+    and security events, never raw source or secrets; a normal compiler error is
+    an ``EXECUTION_FAILED``, not a ``POLICY_VIOLATION_DETECTED``.
+    """
+
+    EXECUTION_REQUESTED = "EXECUTION_REQUESTED"
+    EXECUTION_REJECTED = "EXECUTION_REJECTED"
+    EXECUTION_QUEUED = "EXECUTION_QUEUED"
+    EXECUTION_STARTED = "EXECUTION_STARTED"
+    EXECUTION_TIMED_OUT = "EXECUTION_TIMED_OUT"
+    EXECUTION_RESOURCE_LIMIT_EXCEEDED = "EXECUTION_RESOURCE_LIMIT_EXCEEDED"
+    EXECUTION_CANCELLED = "EXECUTION_CANCELLED"
+    EXECUTION_COMPLETED = "EXECUTION_COMPLETED"
+    EXECUTION_FAILED = "EXECUTION_FAILED"
+    SANDBOX_CREATED = "SANDBOX_CREATED"
+    SANDBOX_DESTROYED = "SANDBOX_DESTROYED"
+    SANDBOX_CLEANUP_FAILED = "SANDBOX_CLEANUP_FAILED"
+    POLICY_VIOLATION_DETECTED = "POLICY_VIOLATION_DETECTED"

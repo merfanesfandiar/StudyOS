@@ -79,6 +79,44 @@ services:
       retries: 12
       start_period: 15s
 
+  # Drains the execution queue. It is a separate service for the same reason the
+  # sandbox is a separate backend: the process that reaches the isolation
+  # boundary is not the process that answers HTTP. It shares the upload volume
+  # because it reads a job's stored source and writes its artifacts through the
+  # same storage abstraction.
+  #
+  # EXECUTION_BACKEND defaults to `disabled`, under which every job is rejected.
+  # Enabling real execution (`docker`) means giving this process access to a
+  # Docker daemon — a deliberate, separate decision. Do NOT mount the host
+  # socket into the `api` service; if you enable execution, give the daemon
+  # access here and nowhere else, and prefer a rootless or remote endpoint via
+  # EXECUTION_DOCKER_HOST over the host socket.
+  execution-worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    restart: unless-stopped
+    init: true
+    command: ["python", "-m", "app.modules.execution.worker"]
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://studyos:studyos@db:5432/studyos}
+      UPLOAD_DIR: /app/data/uploads
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Migrations are owned by the `migrate` service; the worker must not race.
+      RUN_MIGRATIONS: "false"
+      EXECUTION_WORKER_ID: ${EXECUTION_WORKER_ID:-execution-worker}
+      EXECUTION_BACKEND: ${EXECUTION_BACKEND:-disabled}
+      EXECUTION_DOCKER_HOST: ${EXECUTION_DOCKER_HOST:-}
+      EXECUTION_ALLOWED_IMAGES: ${EXECUTION_ALLOWED_IMAGES:-}
+    volumes:
+      - upload_data:/app/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   web:
     build:
       context: .

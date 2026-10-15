@@ -177,9 +177,83 @@ class Settings(BaseSettings):
     #: re-ask consumes from this budget, so a model that keeps asking for more
     #: context instead of deciding is stopped rather than billed until the step.
     agent_max_tool_calls_per_step: int = Field(default=4, ge=1, le=20)
+    #: Tool calls permitted across a whole run. The per-step budget stops one
+    #: runaway loop; this bounds a run that looks reasonable each step but never
+    #: converges, counted from persisted rows so a resume cannot reset it.
+    agent_max_tool_calls_per_run: int = Field(default=60, ge=1, le=1000)
     #: When true, ``AUTONOMOUS`` runs may proceed past a REVIEW checkpoint that
     #: the task's acceptance criteria do not depend on.
     agent_allow_autonomous_review: bool = False
+
+    # ------------------------------------------------------------------
+    # Phase 7: the secure execution environment.
+    #
+    # Execution is the first capability that runs *untrusted code*. The defaults
+    # are therefore fail-closed: the backend is ``disabled`` until a deployment
+    # explicitly opts into ``docker``, and there is no configuration that turns
+    # the sandbox off while leaving execution on. What these settings bound is
+    # resources and blast radius — time, memory, CPU, process count, output size,
+    # attempts — so a malicious or runaway program is stopped by the host, not by
+    # its own good behaviour.
+    # ------------------------------------------------------------------
+    execution_enabled: bool = True
+    #: Which sandbox backend serves jobs. ``disabled`` rejects every job; ``mock``
+    #: runs a deterministic in-process fake for tests; ``docker`` runs a hardened,
+    #: network-less container. There is deliberately no host-exec option.
+    execution_backend: Literal["disabled", "docker", "mock"] = "disabled"
+    #: Wall-clock ceiling for one attempt. A program that hangs is killed here.
+    #: Per-type defaults live in the resource profiles, not here; these are the
+    #: deployment maxima every profile is clamped against.
+    execution_max_timeout_seconds: int = Field(default=300, ge=1, le=3600)
+    execution_max_memory_mb: int = Field(default=4096, ge=32, le=65536)
+    execution_max_cpus: float = Field(default=4.0, ge=0.1, le=64.0)
+    #: Process/thread ceiling, the classic fork-bomb guard.
+    execution_max_pids: int = Field(default=1024, ge=8, le=65536)
+    #: Maximum bytes captured per stream before truncation. The tail is kept, and
+    #: the truncation is reported, because "output was too large" is itself a
+    #: finding rather than something to hide.
+    execution_max_output_bytes: int = Field(default=1_000_000, ge=1024, le=100_000_000)
+    #: Maximum size of a single artifact an execution may emit.
+    execution_max_artifact_bytes: int = Field(default=25 * 1024 * 1024, ge=1024, le=2_000_000_000)
+    execution_max_artifacts: int = Field(default=50, ge=1, le=500)
+    #: Attempts per job, including the first.
+    execution_max_attempts: int = Field(default=2, ge=1, le=5)
+    #: How long a worker holds a lease before the job is eligible for recovery.
+    execution_lease_seconds: int = Field(default=120, ge=10, le=3600)
+    #: Worker identity used in leases and events; a hostname is a sane default.
+    execution_worker_id: str = Field(default="execution-worker")
+    #: Seconds a worker sleeps when the queue is empty.
+    execution_worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60.0)
+    #: Jobs one worker process handles at once. Kept at 1 by default: the safety
+    #: argument for concurrency is resource isolation, not throughput.
+    execution_worker_concurrency: int = Field(default=1, ge=1, le=8)
+    #: Rootless Docker socket/endpoint. Empty means the client library's default.
+    execution_docker_host: str = ""
+    #: Comma-separated allowlist of image references a job may run. Empty uses the
+    #: built-in per-adapter pinned images and refuses anything else.
+    execution_allowed_images: str = ""
+    #: When true, a completed job's workspace temp directory is removed before the
+    #: job is marked done. Disabling it is a debugging aid, never a deployment mode.
+    execution_cleanup_enabled: bool = True
+    #: Most non-terminal jobs one workspace may have at once. A quota is a blast
+    #: radius, not a billing device: a workspace that has queued this many jobs is
+    #: told to wait rather than allowed to fill the queue (and the sandbox host).
+    execution_max_active_jobs_per_workspace: int = Field(default=8, ge=1, le=500)
+    #: Most jobs one user may create in a rolling 24 hours. Bounds the cost a single
+    #: account can impose without a shared usage-ledger subsystem.
+    execution_max_jobs_per_user_per_day: int = Field(default=200, ge=1, le=100_000)
+    #: Expose the aggregate execution counters at ``/executions/metrics``. The
+    #: endpoint is authenticated and carries counts only — never source or secrets.
+    execution_metrics_enabled: bool = True
+    #: The external coding-agent seam. ``disabled`` (the default) answers
+    #: "unavailable"; ``mock`` is a deterministic in-process double for tests;
+    #: ``opencode`` names a real integration that is not bundled, so it too reports
+    #: unavailable rather than pretending. Nothing in the execution plane depends on
+    #: it, and there is no setting that lets it run code outside its own process.
+    execution_external_agent: Literal["disabled", "mock", "opencode"] = "disabled"
+    #: Endpoint of the external coding agent when a real one is configured. Empty is
+    #: a valid, honest configuration: the seam is simply not bound.
+    execution_external_agent_url: str = ""
 
     # ------------------------------------------------------------------
     # Model pricing.

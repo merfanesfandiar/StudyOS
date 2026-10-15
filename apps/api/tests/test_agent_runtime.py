@@ -144,12 +144,17 @@ async def _approved_plan(
     keys: tuple[str, ...] = ("T1", "T2"),
     chain: bool = True,
     version: int = 1,
+    type_: AcademicTaskType = AcademicTaskType.RESEARCH,
 ) -> AcademicWorkPlan:
     """An approved two-task plan, optionally a dependency chain.
 
     Built directly rather than through the planning service because the agent's
     contract starts at "a student already approved this". What produced the plan
     is the planning module's problem, and its tests already cover it.
+
+    ``type_`` controls the worker a task runs under, which is what the
+    worker-boundary tests need: a ``PROVE`` task is served by the mathematics
+    worker, a ``RESEARCH`` task by the research worker.
     """
     plan = AcademicWorkPlan(
         id=uuid4(),
@@ -176,7 +181,7 @@ async def _approved_plan(
             key=key,
             title=f"Task {key}",
             description=f"Work through {key}.",
-            type=AcademicTaskType.RESEARCH.value,
+            type=type_.value,
             status=AcademicTaskStatus.PENDING.value,
             priority="HIGH",
             position=position,
@@ -531,6 +536,43 @@ async def test_a_read_context_call_feeds_its_result_back_into_the_next_decision(
     assert len(events.fetchall()) == 1, "a successful call is recorded once"
 
 
+async def test_an_identical_tool_call_in_one_step_is_served_from_cache(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """Every tool here is deterministic, so a repeat cannot learn anything new.
+
+    Re-invoking would spend a second provider-visible result for no information
+    and is exactly how a model loops. The second call is answered from the first
+    result and marked ``cached`` in the activity stream so the saving is visible
+    rather than merely assumed.
+    """
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [
+            _call_tool_json("read_context", section="task_description"),
+            _call_tool_json("read_context", section="task_description"),
+            *_work_then_finish("T1"),
+        ]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.COMPLETED, outcome.detail
+    events = list(
+        await db_session.scalars(
+            select(service.AgentEvent)
+            .where(
+                service.AgentEvent.run_id == run.id,
+                service.AgentEvent.event_type == "TOOL_INVOKED",
+            )
+            .order_by(service.AgentEvent.sequence)
+        )
+    )
+    assert [bool(e.metadata_json.get("cached")) for e in events] == [False, True]
+
+
 async def test_a_write_artifact_call_persists_the_draft_and_the_run_completes(
     db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
 ) -> None:
@@ -638,6 +680,111 @@ async def test_a_call_for_an_unregistered_tool_is_blocked(
     )
 
 
+async def test_a_registered_tool_outside_the_active_worker_is_blocked(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """The worker boundary is enforced, not cosmetic.
+
+    ``calculate`` is a real, registered tool — but it belongs to the mathematics
+    worker, and this plan's tasks are ``RESEARCH``. Being registered is not
+    enough: the semantic layer refuses it because it is outside the active
+    worker's tool set. This is the property that makes the catalogue a set of
+    fences rather than a menu.
+    """
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider([_call_tool_json("calculate", expression="2+2") for _ in range(6)])
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is not AgentRunStatus.COMPLETED
+    attempts = list(
+        await db_session.scalars(
+            select(service.AgentTaskExecution).where(
+                service.AgentTaskExecution.run_id == run.id
+            )
+        )
+    )
+    assert all(a.error_code == "AGENT_TOOL_UNKNOWN" for a in attempts), (
+        "a tool outside the worker must be blocked exactly like an invented one"
+    )
+    assert list(await db_session.scalars(select(service.AgentArtifact))) == []
+
+    invocations = list(
+        await db_session.scalars(
+            select(service.AgentToolInvocation).where(
+                service.AgentToolInvocation.run_id == run.id
+            )
+        )
+    )
+    assert invocations, "a blocked call must still be recorded, not swallowed"
+    assert all(i.status == "BLOCKED" for i in invocations)
+    assert all(i.tool_name == "calculate" for i in invocations)
+    assert all(i.worker_kind == "RESEARCH" for i in invocations), (
+        "the log names the worker that refused the call"
+    )
+
+
+async def test_a_task_is_served_by_the_worker_bound_for_its_type(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """A PROVE task runs under the mathematics worker and may call its tools."""
+    await _approved_plan(
+        db_session,
+        assignment,
+        analysis,
+        keys=("T1",),
+        chain=False,
+        type_=AcademicTaskType.PROVE,
+    )
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [
+            _call_tool_json("calculate", expression="2+2"),
+            _decision_json(title="Limit proof draft"),
+            _decision_json(action="COMPLETE_TASK", task_key="T1"),
+        ]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.COMPLETED
+    decision_rows = list(
+        await db_session.scalars(
+            select(service.AgentDecision).where(service.AgentDecision.run_id == run.id)
+        )
+    )
+    assert any((d.payload or {}).get("tool") == "calculate" for d in decision_rows), (
+        "the mathematics worker must be able to run its own tools"
+    )
+
+    invocation = await db_session.scalar(
+        select(service.AgentToolInvocation).where(
+            service.AgentToolInvocation.run_id == run.id,
+            service.AgentToolInvocation.tool_name == "calculate",
+        )
+    )
+    assert invocation is not None
+    assert invocation.status == "SUCCESS"
+    assert invocation.worker_kind == "MATHEMATICS"
+    assert invocation.args == {"expression": "2+2"}
+
+    execution = await db_session.scalar(
+        select(service.AgentTaskExecution).where(service.AgentTaskExecution.run_id == run.id)
+    )
+    assert execution is not None and execution.worker == "MATHEMATICS", (
+        "the execution row names the boundary that served it"
+    )
+    artifact = await db_session.scalar(
+        select(service.AgentArtifact).where(service.AgentArtifact.run_id == run.id)
+    )
+    assert artifact is not None and artifact.worker_name == "MATHEMATICS", (
+        "the artifact is attributable to the worker that produced it"
+    )
+
+
 async def test_a_call_whose_permission_is_not_granted_is_blocked(
     db_session: AsyncSession,
     assignment: Assignment,
@@ -668,6 +815,65 @@ async def test_a_call_whose_permission_is_not_granted_is_blocked(
     )
     assert all(a.error_code == "AGENT_TOOL_PERMISSION_DENIED" for a in attempts)
     assert list(await db_session.scalars(select(service.AgentArtifact))) == []
+
+    invocations = list(
+        await db_session.scalars(
+            select(service.AgentToolInvocation).where(
+                service.AgentToolInvocation.run_id == run.id
+            )
+        )
+    )
+    assert invocations, "a call refused at dispatch must still be recorded"
+    assert all(i.status == "BLOCKED" for i in invocations)
+
+
+async def test_a_successful_tool_call_is_recorded_with_a_bounded_result(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """The invocation log is the observability the runtime promised, not a stub."""
+    await _approved_plan(
+        db_session,
+        assignment,
+        analysis,
+        keys=("T1",),
+        chain=False,
+        type_=AcademicTaskType.SOLVE,
+    )
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [
+            _call_tool_json("calculate", expression="6*7"),
+            _decision_json(title="Product draft"),
+            _decision_json(action="COMPLETE_TASK", task_key="T1"),
+        ]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+    assert outcome.run_status is AgentRunStatus.COMPLETED
+
+    invocation = await db_session.scalar(
+        select(service.AgentToolInvocation).where(
+            service.AgentToolInvocation.run_id == run.id,
+            service.AgentToolInvocation.tool_name == "calculate",
+        )
+    )
+    assert invocation is not None
+    assert invocation.status == "SUCCESS"
+    assert invocation.worker_kind == "MATHEMATICS"
+    assert invocation.args == {"expression": "6*7"}
+    assert invocation.result is not None, "a successful call records what it returned"
+    assert invocation.duration_ms is not None
+    assert invocation.task_key == "T1"
+
+    detail = await service.load_run_detail(
+        await service.load_run_with_details(run.assignment_id, run.id, owner.id, db_session),
+        db_session,
+    )
+    assert [i.tool_name for i in detail["tool_invocations"]] == ["calculate"]
+    assert detail["tool_invocations"][0].worker_kind == "MATHEMATICS"
+    assert detail["executions"][0].worker == "MATHEMATICS"
+    assert detail["artifacts"][0].worker_name == "MATHEMATICS"
 
 
 async def test_a_step_cannot_spend_its_whole_budget_on_tool_calls(
@@ -1121,6 +1327,84 @@ async def test_the_same_plan_and_provider_produce_the_same_decisions(
         runs.append((index, run.status))
 
     assert runs[0][1] == runs[1][1] == AgentRunStatus.COMPLETED.value
+
+
+# ---------------------------------------------------------------------------
+# Heterogeneous academic scenarios: one run per task domain
+# ---------------------------------------------------------------------------
+
+#: Each row is (task type, a tool that worker may call, valid arguments). The
+#: point is not the arithmetic; it is that every academic domain runs through the
+#: same runtime, with its own bounded tool set, and completes.
+_ACADEMIC_SCENARIOS: list[tuple[str, str, dict[str, object]]] = [
+    ("PROVE", "calculate", {"expression": "2 + 2 * 3"}),
+    ("RESEARCH", "extract_citations", {"text": "See (Smith, 2020) and (Doe, 2021)."}),
+    ("WRITE", "count_words", {"text": "one two three four"}),
+    ("ANALYZE_DATA", "compute_statistics", {"values": [1, 2, 3, 4]}),
+    ("IMPLEMENT", "count_code_lines", {"code": "x = 1\ny = 2\n"}),
+    ("EXPERIMENT", "profile_dataset", {"data": "a,b\n1,2\n3,4\n"}),
+    ("PRESENT", "build_slide_outline", {"text": "Intro. Method. Results."}),
+    ("ANALYZE", "read_context", {"section": "task_description"}),
+]
+
+
+@pytest.mark.parametrize(("task_type", "tool", "arguments"), _ACADEMIC_SCENARIOS)
+async def test_a_run_serves_each_academic_domain_with_its_own_tools(
+    db_session: AsyncSession,
+    assignment: Assignment,
+    analysis: AssignmentAnalysis,
+    owner: User,
+    task_type: str,
+    tool: str,
+    arguments: dict[str, object],
+) -> None:
+    """An assignment task of each academic type completes, using a worker tool.
+
+    The single domain tool is called before the draft, so the run exercises the
+    CALL_TOOL loop for that worker, not just the executor path. A scenario that
+    silently used the wrong worker's tool would be blocked and fail the run, so
+    this also pins the worker boundary per task type.
+    """
+    await _approved_plan(
+        db_session,
+        assignment,
+        analysis,
+        keys=("T1",),
+        chain=False,
+        type_=AcademicTaskType(task_type),
+    )
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    provider = ScriptedProvider(
+        [_call_tool_json(tool, **arguments), *_work_then_finish("T1")]
+    )
+
+    outcome = await service.execute_run(run, owner, db_session, provider=provider)
+    await db_session.commit()
+
+    assert outcome.run_status is AgentRunStatus.COMPLETED, outcome.detail
+    invocations = await service.run_tool_invocations(run, db_session)
+    assert [i.tool_name for i in invocations] == [tool], "the scenario called its own tool"
+    assert invocations[0].status == "SUCCESS"
+
+    # The observability stream names the worker, the selection, and the completion
+    # with a structured status — not merely the final result.
+    event_types = set(
+        await db_session.scalars(
+            select(service.AgentEvent.event_type).where(service.AgentEvent.run_id == run.id)
+        )
+    )
+    assert {"WORKER_SELECTED", "TOOL_SELECTED"} <= event_types
+    assert "TOOL_INVOCATION_STARTED" in event_types
+    completed = list(
+        await db_session.scalars(
+            select(service.AgentEvent).where(
+                service.AgentEvent.run_id == run.id,
+                service.AgentEvent.event_type == "TOOL_INVOCATION_COMPLETED",
+            )
+        )
+    )
+    assert len(completed) == 1
+    assert completed[0].metadata_json["status"] == "SUCCESS"
 
 
 def test_recovery_report_is_falsy_when_nothing_happened() -> None:

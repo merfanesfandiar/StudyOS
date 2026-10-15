@@ -45,6 +45,12 @@ import type {
   RecoveryReport,
 } from "./agent-types";
 import type {
+  ExecutionCapabilities,
+  ExecutionCreateInput,
+  ExecutionJob,
+  ExecutionJobDetail,
+} from "./execution-types";
+import type {
   ModelSelection,
   PlanGenerateInput,
   PlanRegenerateInput,
@@ -489,4 +495,35 @@ export const api = {
    */
   recoverAgentRuns: (assignmentId: string) =>
     request<RecoveryReport>(`/assignments/${assignmentId}/agent/recover`, { method: "POST" }),
+
+  // -- Phase 7: sandboxed execution -----------------------------------------
+  //
+  // A job is submitted for an assignment the caller owns. The capability read is
+  // deployment-global, not per assignment: it answers what this host can run, so
+  // the UI can offer only what exists instead of offering everything and failing.
+
+  /**
+   * What this deployment can execute, and the boundary it runs it behind.
+   *
+   * Includes `absent_capabilities` on purpose, so "can it reach the network?" is
+   * answered on screen rather than in documentation nobody opens.
+   */
+  executionCapabilities: () =>
+    request<ExecutionCapabilities>("/executions/capabilities"),
+
+  /** Submit code. `sync` runs it in this request; `queue` hands it to a worker. */
+  createExecution: (assignmentId: string, input: ExecutionCreateInput) =>
+    request<ExecutionJob>(`/assignments/${assignmentId}/executions`, {
+      method: "POST",
+      ...json(input),
+    }),
+  executionJobs: (assignmentId: string) =>
+    request<PageResponse<ExecutionJob>>(`/assignments/${assignmentId}/executions`),
+  executionJob: (assignmentId: string, jobId: string) =>
+    request<ExecutionJobDetail>(`/assignments/${assignmentId}/executions/${jobId}`),
+  cancelExecution: (assignmentId: string, jobId: string, reason?: string) =>
+    request<ExecutionJob>(`/assignments/${assignmentId}/executions/${jobId}/cancel`, {
+      method: "POST",
+      ...json({ reason: reason ?? null }),
+    }),
 };

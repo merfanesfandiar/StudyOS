@@ -41,6 +41,7 @@ from app.models.enums import (
 )
 from app.modules.agent import service
 from app.modules.agent.tools import DEFAULT_TOOLS
+from app.modules.agent.workers import DEFAULT_WORKER_REGISTRY
 from app.schemas.agent import (
     AgentCapabilitiesResponse,
     AgentCheckpointResolveRequest,
@@ -49,6 +50,8 @@ from app.schemas.agent import (
     AgentRunCreateRequest,
     AgentRunDetailResponse,
     AgentRunResponse,
+    AgentToolInvocationResponse,
+    AgentToolUsageResponse,
 )
 
 router = APIRouter(prefix="/api/v1/assignments", tags=["agent"])
@@ -112,6 +115,7 @@ async def agent_capabilities(
             }
             for name in DEFAULT_TOOLS.names()
         ],
+        workers=DEFAULT_WORKER_REGISTRY.describe(),
         executors=[kind.value for kind in AgentExecutorKind],
         modes=[mode.value for mode in AgentRunMode],
         actions=[action.value for action in AgentAction],
@@ -139,9 +143,12 @@ async def agent_capabilities(
 #: if the tool registry grows: adding a capability to the runtime is a change that
 #: has to be acknowledged here too.
 ABSENT_CAPABILITIES: list[str] = [
-    "execute_code",
+    # Phase 7 makes "run my code" available, but only inside the sandbox. The
+    # honest negative is therefore host execution, plus a shell that would let the
+    # model pick the command rather than the runtime.
+    "host_code_execution",
     "shell",
-    "filesystem_write",
+    "filesystem_write_outside_sandbox",
     "network_access",
     "browser",
     "outbound_web_search",
@@ -227,6 +234,47 @@ async def get_agent_run(
 ) -> AgentRunDetailResponse:
     await service.load_owned_run(assignment_id, run_id, user.id, db)
     return await _run_response(run_id, assignment_id, user, db)
+
+
+@router.get(
+    "/{assignment_id}/agent/runs/{run_id}/tool-invocations",
+    summary="Every tool call a run made or had blocked",
+    description=(
+        "The run's tool audit trail, oldest first.\n\n"
+        "Includes ``BLOCKED`` calls: a tool the model asked for but its worker did "
+        "not authorise is exactly the event a review wants to see, so it is "
+        "recorded rather than silently dropped."
+    ),
+)
+async def list_run_tool_invocations(
+    assignment_id: UUID,
+    run_id: UUID,
+    user: CurrentUser,
+    db: Db,
+) -> dict[str, list[AgentToolInvocationResponse]]:
+    run = await service.load_owned_run(assignment_id, run_id, user.id, db)
+    return {"items": await service.run_tool_invocations(run, db)}
+
+
+@router.get(
+    "/{assignment_id}/agent/runs/{run_id}/tools",
+    summary="Which tools carried a run, and how they went",
+    description=(
+        "Per-tool totals for the run: calls, successes, failures and blocked "
+        "attempts.\n\n"
+        "A blocked call is counted separately from a failure on purpose — the "
+        "boundary refusing a tool is the boundary working, not the tool failing."
+    ),
+)
+async def list_run_tools(
+    assignment_id: UUID,
+    run_id: UUID,
+    user: CurrentUser,
+    db: Db,
+) -> dict[str, list[AgentToolUsageResponse]]:
+    run = await service.load_owned_run(assignment_id, run_id, user.id, db)
+    usage = await service.run_tool_usage(run, db)
+    return {"items": [AgentToolUsageResponse.model_validate(item) for item in usage]}
 
 
 @router.post(

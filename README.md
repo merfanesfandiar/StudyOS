@@ -186,7 +186,13 @@ every artifact through the storage layer. The whole loop runs on the determinist
 default — so it is testable offline — and an OpenAI-compatible provider is configured through
 `LLM_PROVIDER`/`LLM_API_KEY`.
 
-Deliberately not implemented yet: execution of arbitrary code, RAG and vector storage,
+Code does run, but only through a sandbox: an assignment can submit source text to a pinned runtime,
+which an isolation backend executes with no network, a read-only root, dropped capabilities and
+clamped resources — and the default backend is `disabled`, which refuses rather than runs. The model
+never chooses a command, an image or a path. See
+[docs/architecture/execution-isolation.md](docs/architecture/execution-isolation.md).
+
+Deliberately not implemented yet: *unsandboxed* execution of arbitrary code, RAG and vector storage,
 verification-and-learning loops over produced artifacts, mastery mode, presentation generation,
 payment, social features, and collaboration between students. See
 [docs/architecture/future-ai.md](docs/architecture/future-ai.md) for the seams.

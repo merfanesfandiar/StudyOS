@@ -20,9 +20,11 @@ from uuid import UUID, uuid4
 import pytest
 from app.ai.provider import LLMProvider, LLMRequest, LLMResponse, LLMUsage
 from app.models.enums import (
+    AcademicTaskType,
     AgentRunStatus,
 )
 from app.modules.agent.state_machine import parse_status
+from app.modules.agent.tools import DEFAULT_TOOLS
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,14 +158,71 @@ async def test_capabilities_name_what_the_agent_cannot_do(client: AsyncClient) -
     assert response.status_code == 200, response.text
     body = response.json()
 
-    assert {t["name"] for t in body["tools"]} == {
+    assert {t["name"] for t in body["tools"]} == set(DEFAULT_TOOLS.names())
+    assert body["absent_capabilities"], "the negative list is the point of this endpoint"
+
+    # Phase 7 ships the sandbox, so "execute_code" is no longer claimed absent —
+    # host execution still is, and that is the claim that has to stay honest.
+    for forbidden in (
+        "host_code_execution",
+        "shell",
+        "network_access",
+        "filesystem_write_outside_sandbox",
+    ):
+        assert forbidden in body["absent_capabilities"]
+    assert "execute_code" not in body["absent_capabilities"]
+
+
+@pytest.mark.asyncio
+async def test_capabilities_name_the_worker_boundaries(client: AsyncClient) -> None:
+    """Every task type resolves to one worker, and a worker never invents tools."""
+    await register_user(client)
+    course = (await client.post("/api/v1/courses", json={"name": "C", "code": "X1B"})).json()
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={
+                "course_id": course["id"],
+                "title": "T",
+                "description": "D",
+                "deadline": (datetime.now(UTC) + timedelta(days=3)).isoformat(),
+            },
+        )
+    ).json()
+
+    response = await client.get(f"{BASE}/{assignment['id']}/agent/capabilities")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    registered = {t["name"] for t in body["tools"]}
+    workers = body["workers"]
+    assert workers, "the boundary layer is part of the honest answer"
+    assert len({w["id"] for w in workers}) == len(workers), "worker ids are unique"
+
+    task_to_worker: dict[str, str] = {}
+    for worker in workers:
+        assert {t for t in worker["tools"]} <= registered, (
+            f"worker {worker['id']} names a tool the runtime does not have"
+        )
+        for task_type in worker["academic_task_types"]:
+            assert task_type not in task_to_worker, (
+                f"task type {task_type} is bound to two workers"
+            )
+            task_to_worker[task_type] = worker["id"]
+
+    reasoning = next(w for w in workers if w["id"] == "REASONING")
+    assert set(reasoning["tools"]) == {
         "read_context",
+        "list_artifacts",
+        "read_artifact",
         "write_artifact",
         "request_checkpoint",
     }
-    assert body["absent_capabilities"], "the negative list is the point of this endpoint"
-    for forbidden in ("execute_code", "shell", "network_access", "filesystem_write"):
-        assert forbidden in body["absent_capabilities"]
+
+    covered = {t for w in workers for t in w["academic_task_types"]}
+    assert covered == {t.value for t in AcademicTaskType}, (
+        "every task vocabulary value is bound to exactly one worker"
+    )
 
 
 @pytest.mark.asyncio
@@ -300,10 +359,23 @@ async def test_full_run_from_creation_to_completion(client: AsyncClient, provide
             assert "Proceeding." not in artifact["content"], (
                 "the model's justification must never become the artifact body"
             )
+            assert artifact["ownership"] == "AGENT_OWNED", (
+                "the runtime may only ever write agent-owned artifacts"
+            )
 
     fetched = await client.get(f"{BASE}/{assignment_id}/agent/runs/{run['id']}")
     assert fetched.status_code == 200
-    assert fetched.json()["status"] == body["status"]
+    detail = fetched.json()
+    assert detail["status"] == body["status"]
+    assert "tool_invocations" in detail, "the invocation log is part of the run detail contract"
+    for execution in detail["executions"]:
+        assert execution["worker"] is not None, "every attempt names the worker that served it"
+    for artifact in detail["artifacts"]:
+        assert "worker_name" in artifact
+    assert detail["context_provenance"], (
+        "each step records what its context was drawn from, so the decision input is auditable"
+    )
+    assert all("task_key" in entry for entry in detail["context_provenance"])
 
 
 @pytest.mark.asyncio
@@ -742,3 +814,129 @@ async def test_recovery_of_your_own_assignment_does_work(
     recovered = await client.get(f"{BASE}/{assignment_id}/agent/runs/{run.id}")
     assert recovered.status_code == 200
     assert recovered.json()["status"] == AgentRunStatus.PAUSED.value
+
+
+# ---------------------------------------------------------------------------
+# Public tool catalogue and run-scoped tool views
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_catalogue_lists_every_registered_tool(client: AsyncClient) -> None:
+    await register_user(client)
+    response = await client.get("/api/v1/tools")
+    assert response.status_code == 200, response.text
+    tools = response.json()["tools"]
+    assert {tool["name"] for tool in tools} == set(DEFAULT_TOOLS.names())
+    calculate = next(tool for tool in tools if tool["name"] == "calculate")
+    assert calculate["risk_level"] == "LOW"
+    assert calculate["deterministic"] is True
+    assert calculate["arguments_schema"]["type"] == "object"
+    assert "MATHEMATICS" in calculate["workers"]
+
+
+@pytest.mark.asyncio
+async def test_one_tool_in_full_and_unknown_tool_is_not_found(client: AsyncClient) -> None:
+    await register_user(client)
+    found = await client.get("/api/v1/tools/profile_dataset")
+    assert found.status_code == 200, found.text
+    body = found.json()
+    assert body["category"] == "DATA"
+    assert body["workers"] == ["DATA"]
+    missing = await client.get("/api/v1/tools/not_a_tool")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "AGENT_TOOL_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_the_run_exposes_its_tool_invocations_and_usage(
+    client: AsyncClient, provider
+) -> None:
+    await register_user(client)
+    seeded = await _seeded_assignment(client, keys=("T1",))
+    assignment_id = seeded["assignment"]["id"]
+    plan_id = seeded["plan"]["id"]
+    await client.post(f"{BASE}/{assignment_id}/plans/{plan_id}/approve", json={})
+    run = (
+        await client.post(f"{BASE}/{assignment_id}/agent/runs", json={})
+    ).json()
+    await client.post(f"{BASE}/{assignment_id}/agent/runs/{run['id']}/start", json={})
+
+    invocations = await client.get(
+        f"{BASE}/{assignment_id}/agent/runs/{run['id']}/tool-invocations"
+    )
+    assert invocations.status_code == 200, invocations.text
+    assert isinstance(invocations.json()["items"], list)
+
+    usage = await client.get(f"{BASE}/{assignment_id}/agent/runs/{run['id']}/tools")
+    assert usage.status_code == 200, usage.text
+    for entry in usage.json()["items"]:
+        assert entry["call_count"] == (
+            entry["succeeded"] + entry["failed"] + entry["blocked"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_another_student_cannot_read_your_run_tools(client: AsyncClient) -> None:
+    await register_user(client, email="owner@example.com")
+    seeded = await _seeded_assignment(client, keys=("T1",))
+    assignment_id = seeded["assignment"]["id"]
+    await client.post(
+        f"{BASE}/{assignment_id}/plans/{seeded['plan']['id']}/approve", json={}
+    )
+    run = (await client.post(f"{BASE}/{assignment_id}/agent/runs", json={})).json()
+
+    await register_user(client, email="intruder@example.com")
+    response = await client.get(
+        f"{BASE}/{assignment_id}/agent/runs/{run['id']}/tool-invocations"
+    )
+    assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_the_run_tool_read_model_is_also_addressed_by_run_id(
+    client: AsyncClient, provider
+) -> None:
+    """The documented ``/api/v1/agent/runs/{runId}`` shape serves the same data.
+
+    A client that holds a run id and not an assignment id needs this path; it is
+    the same read model and the same ownership check, addressed differently.
+    """
+    await register_user(client)
+    seeded = await _seeded_assignment(client, keys=("T1",))
+    assignment_id = seeded["assignment"]["id"]
+    await client.post(
+        f"{BASE}/{assignment_id}/plans/{seeded['plan']['id']}/approve", json={}
+    )
+    run = (await client.post(f"{BASE}/{assignment_id}/agent/runs", json={})).json()
+    await client.post(f"{BASE}/{assignment_id}/agent/runs/{run['id']}/start", json={})
+
+    invocations = await client.get(f"/api/v1/agent/runs/{run['id']}/tool-invocations")
+    assert invocations.status_code == 200, invocations.text
+    assert isinstance(invocations.json()["items"], list)
+
+    usage = await client.get(f"/api/v1/agent/runs/{run['id']}/tools")
+    assert usage.status_code == 200, usage.text
+    assert isinstance(usage.json()["items"], list)
+
+    missing = await client.get(f"/api/v1/agent/runs/{uuid4()}/tools")
+    assert missing.status_code == 404
+    assert missing.json()["error"]["code"] == "AGENT_RUN_NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_tool_detail_carries_version_and_availability(client: AsyncClient) -> None:
+    await register_user(client)
+    body = (await client.get("/api/v1/tools/calculate")).json()
+    assert body["version"]
+    assert body["availability"] == "AVAILABLE"
+    assert body["output_schema"] is None
+
+    seeded = await _seeded_assignment(client, keys=("T1",))
+    workers = (
+        await client.get(f"{BASE}/{seeded['assignment']['id']}/agent/capabilities")
+    ).json()["workers"]
+    # The capabilities endpoint exposes the boundary's own vocabulary, not just
+    # the tools it names.
+    assert all(w["capabilities"] for w in workers)
+    assert all(w["supported_domains"] for w in workers)

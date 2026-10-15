@@ -28,11 +28,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Any, cast
+from typing import Any, Final, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, update
@@ -55,6 +56,7 @@ from app.models import (
     AgentEvent,
     AgentRun,
     AgentTaskExecution,
+    AgentToolInvocation,
     Assignment,
     PlanTask,
     PlanTaskDependency,
@@ -65,6 +67,7 @@ from app.models import (
 from app.models.enums import (
     AcademicTaskStatus,
     AgentAction,
+    AgentArtifactOwnership,
     AgentArtifactStatus,
     AgentArtifactType,
     AgentCheckpointStatus,
@@ -74,6 +77,8 @@ from app.models.enums import (
     AgentFailureCategory,
     AgentRunMode,
     AgentRunStatus,
+    AgentToolInvocationStatus,
+    AgentToolStatus,
     AuditEventType,
     ComplexityLevel,
 )
@@ -103,6 +108,7 @@ from app.modules.agent.limits import (
     assert_iteration_budget,
     assert_priced_model,
     assert_token_budget,
+    assert_tool_run_budget,
     estimate_step_cost,
     may_retry,
 )
@@ -129,12 +135,17 @@ from app.modules.agent.tools import (
     ToolNotRegisteredError,
     ToolPermissionError,
     ToolRegistry,
+    ToolResult,
     invoke_tool,
 )
+from app.modules.agent.workers import DEFAULT_WORKER_REGISTRY, WorkerRegistry
 from app.modules.assignments.service import load_owned_assignment
+from app.modules.execution.external_agent import build_external_agent
+from app.modules.execution.gateway import ExecutionGateway
 from app.modules.planning import service as planning_service
 from app.modules.planning.complexity import ComplexityScore
 from app.services.events import record_audit
+from app.storage import get_storage
 
 settings = get_settings()
 
@@ -229,6 +240,26 @@ async def latest_run(assignment_id: UUID, db: AsyncSession) -> AgentRun | None:
         .limit(1)
     )
     return cast("AgentRun | None", await db.scalar(stmt))
+
+
+async def load_owned_run_by_id(run_id: UUID, user_id: UUID, db: AsyncSession) -> AgentRun:
+    """Load a run the caller owns by run id alone, or 404.
+
+    The run-scoped form of :func:`load_owned_run`, for the documented
+    ``/api/v1/agent/runs/{runId}`` shape where the assignment is not in the path.
+    Ownership is still enforced through the run's assignment, so a run id
+    belonging to someone else is indistinguishable from one that does not exist.
+    """
+    stmt = (
+        select(AgentRun)
+        .join(Assignment, Assignment.id == AgentRun.assignment_id)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Assignment.workspace_id)
+        .where(AgentRun.id == run_id, WorkspaceMember.user_id == user_id)
+    )
+    run = await db.scalar(stmt)
+    if run is None:
+        raise AppError(404, "AGENT_RUN_NOT_FOUND", f"No agent run with id {run_id}.")
+    return run
 
 
 async def recent_runs(assignment_id: UUID, db: AsyncSession, *, limit: int = 20) -> list[AgentRun]:
@@ -642,6 +673,7 @@ def _limits_for(run: AgentRun) -> AgentLimits:
         retry_backoff_seconds=settings.agent_retry_backoff_seconds,
         checkpoint_ttl_seconds=settings.agent_checkpoint_ttl_seconds,
         max_tool_calls_per_step=settings.agent_max_tool_calls_per_step,
+        max_tool_calls_per_run=settings.agent_max_tool_calls_per_run,
         decision_token_ratio=settings.agent_decision_token_ratio,
     )
 
@@ -902,14 +934,28 @@ async def _persist_artifact(
     content: str,
     metadata: Mapping[str, Any] | None = None,
     deliverable_key: str | None = None,
+    worker_name: str | None = None,
     user: User | None = None,
+    ownership: AgentArtifactOwnership = AgentArtifactOwnership.AGENT_OWNED,
 ) -> AgentArtifact:
     """Persist an artifact, superseding any previous revision.
 
     Revisions accumulate rather than overwrite, because "what the run produced"
     and "what the student asked for instead" are different things and a plan that
     silently drops the first is not reviewable.
+
+    Ownership is enforced, not decorative. The runtime may only write
+    ``AGENT_OWNED`` work: a request to persist ``USER_OWNED`` output through this
+    path is a bug, because letting the agent label its own draft as the student's
+    would defeat the guard that stops a tool overwriting student work.
     """
+    if ownership is not AgentArtifactOwnership.AGENT_OWNED:
+        raise AppError(
+            500,
+            "AGENT_ARTIFACT_OWNERSHIP_INVALID",
+            "The runtime may only persist agent-owned artifacts.",
+            {"ownership": ownership.value},
+        )
     task_id = task.id if task else None
     revision = 1
     if task_id is not None:
@@ -934,11 +980,13 @@ async def _persist_artifact(
     artifact = AgentArtifact(
         run_id=run.id,
         task_id=task_id,
-        title=title[:240],
+        title=title,
         artifact_type=artifact_type.value,
         status=AgentArtifactStatus.DRAFT.value,
+        ownership=ownership.value,
         content=content,
         metadata_json=dict(metadata or {}),
+        worker_name=worker_name,
         revision=revision,
         deliverable_key=deliverable_key,
         created_by_id=user.id if user else run.triggered_by_id,
@@ -954,6 +1002,78 @@ async def _persist_artifact(
         task_id=task_id,
     )
     return artifact
+
+
+#: Cap on a stored string field in an invocation row. A tool result is a
+#: user-safe summary, not the artifact; the full body lives on the artifact.
+_INVOCATION_TEXT_LIMIT: Final = 500
+
+#: Cap on one artifact body handed to ``read_artifact``. The runtime decides what a
+#: tool may re-read; an unbounded body would let a run pull its whole history into
+#: a single step. The student still has the full artifact; this is the tool's view.
+_ARTIFACT_READ_LIMIT: Final = 8_000
+
+
+def _bounded_invocation_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Trim an invocation payload to something that stays small in the log.
+
+    Every value is kept JSON-serialisable: strings are truncated, lists are
+    capped and their string items truncated, and anything else is stringified.
+    The invocation log is observability, not storage — the artifact holds the
+    full body — so a bounded snapshot is exactly the right size.
+    """
+    bounded: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(value, str):
+            bounded[key] = value[:_INVOCATION_TEXT_LIMIT]
+        elif isinstance(value, bool | int | float) or value is None:
+            bounded[key] = value
+        elif isinstance(value, list):
+            bounded[key] = [
+                item[:_INVOCATION_TEXT_LIMIT] if isinstance(item, str) else item
+                for item in value[:50]
+            ]
+        else:
+            bounded[key] = str(value)[:_INVOCATION_TEXT_LIMIT]
+    return bounded
+
+
+def _record_tool_invocation(
+    db: AsyncSession,
+    *,
+    run: AgentRun,
+    task: PlanTask | None,
+    task_key: str,
+    worker_kind: str,
+    tool_name: str,
+    iteration: int,
+    status: AgentToolInvocationStatus,
+    args: Mapping[str, Any],
+    result: ToolResult | None = None,
+    error: str | None = None,
+    duration_ms: int | None = None,
+) -> AgentToolInvocation:
+    """Record one tool call, whatever its outcome.
+
+    Written for success, refusal and block alike. A blocked call is the most
+    interesting row in the table — it is the evidence that the worker boundary
+    did its job — so it is never silently dropped.
+    """
+    invocation = AgentToolInvocation(
+        run_id=run.id,
+        task_id=task.id if task else None,
+        task_key=task_key,
+        worker_kind=worker_kind,
+        tool_name=tool_name,
+        iteration=iteration,
+        status=status.value,
+        args=_bounded_invocation_payload(args),
+        result=_bounded_invocation_payload(result.payload) if result is not None else None,
+        error=error[:_INVOCATION_TEXT_LIMIT * 4] if error else None,
+        duration_ms=duration_ms,
+    )
+    db.add(invocation)
+    return invocation
 
 
 # ---------------------------------------------------------------------------
@@ -1221,6 +1341,7 @@ async def execute_run(
     provider: LLMProvider | None = None,
     tools: ToolRegistry | None = None,
     executors: ExecutorRegistry | None = None,
+    workers: WorkerRegistry | None = None,
     predictors: PredictorRegistry | None = None,
     max_steps: int | None = None,
 ) -> StepOutcome:
@@ -1244,6 +1365,7 @@ async def execute_run(
     """
     tool_registry = tools or DEFAULT_TOOLS
     executor_registry = executors or ExecutorRegistry()
+    worker_registry = workers or DEFAULT_WORKER_REGISTRY
     predictor_registry = predictors or PredictorRegistry()
 
     status = parse_status(run.status)
@@ -1382,6 +1504,7 @@ async def execute_run(
             active_provider,
             tool_registry,
             executor_registry,
+            worker_registry,
             limits,
         )
         if outcome.kind != "ADVANCED":
@@ -1434,9 +1557,25 @@ async def _run_step(
     provider: LLMProvider | None,
     tools: ToolRegistry,
     executors: ExecutorRegistry,
+    workers: WorkerRegistry,
     limits: AgentLimits,
 ) -> StepOutcome:
     """One iteration: select, build context, decide, act, record."""
+    worker = workers.worker_for_task(node.type)
+    #: Which bounded capability set this task runs under. Recorded before any model
+    #: call so "why could this step not use tool X" is answerable from the stream.
+    await _append_event(
+        db,
+        run,
+        AgentEventType.WORKER_SELECTED,
+        f"Worker {worker.kind.value} will serve {node.key}.",
+        metadata={
+            "task_key": node.key,
+            "worker": worker.kind.value,
+            "tool_count": len(worker.tool_ids),
+        },
+        task_id=task.id if task else None,
+    )
     await _append_event(
         db,
         run,
@@ -1460,6 +1599,11 @@ async def _run_step(
             "chars": context.total_chars,
             "truncated": context.truncated,
             "digest": context.digest(),
+            # Which sources fed this step and how much of each survived. Stored
+            # on the event so "why did the agent do that" is answerable after the
+            # fact without re-running the step.
+            "task_key": node.key,
+            "provenance": list(context.provenance),
         },
     )
 
@@ -1472,6 +1616,7 @@ async def _run_step(
         attempt=attempt,
         status=AgentExecutionStatus.FAILED.value,
         executor=executor_kind.value,
+        worker=worker.kind.value,
         started_at=datetime.now(UTC),
     )
     db.add(execution)
@@ -1485,7 +1630,12 @@ async def _run_step(
         run,
         AgentEventType.TASK_STARTED,
         f"Working on {node.key} (attempt {attempt}).",
-        metadata={"task_key": node.key, "attempt": attempt, "executor": executor_kind.value},
+        metadata={
+            "task_key": node.key,
+            "attempt": attempt,
+            "executor": executor_kind.value,
+            "worker": worker.kind.value,
+        },
         task_id=task.id if task else None,
         execution_id=execution.id,
     )
@@ -1499,6 +1649,21 @@ async def _run_step(
     # than billed until the step times out.
     tool_results: list[str] = []
     tool_calls = 0
+    #: Tool dispatches already recorded for this run, so the run-scoped ceiling
+    #: is enforced across steps and cannot be reset by a resume.
+    run_tool_calls = int(
+        await db.scalar(
+            select(func.count())
+            .select_from(AgentToolInvocation)
+            .where(AgentToolInvocation.run_id == run.id)
+        )
+        or 0
+    )
+    #: Same tool and same arguments answered from here for the rest of this step.
+    #: Every tool in the registry is deterministic, so a repeat cannot learn
+    #: anything new: serving it from cache spends no provider round-trip and
+    #: cannot be used to loop.
+    step_cache: dict[str, ToolResult] = {}
     while True:
         decision_raw: str
         if provider is None:
@@ -1516,6 +1681,7 @@ async def _run_step(
                 request = build_decision_request(
                     context,
                     registry=tools,
+                    tool_ids=frozenset(worker.tool_ids),
                     max_output_tokens=_decision_output_tokens(limits),
                     tool_output=tool_results[-1] if tool_results else None,
                 )
@@ -1584,15 +1750,49 @@ async def _run_step(
                 )
             ),
             approval_required_keys=approval_keys,
-            available_tools=frozenset(tools.names()),
-            tool_permissions={name: tools.get(name).permissions for name in tools.names()},
+            available_tools=frozenset(worker.tool_ids),
+            tool_permissions={
+                name: tools.get(name).permissions for name in worker.tool_ids
+            },
             granted_permissions=DEFAULT_GRANTED_PERMISSIONS,
         )
         try:
             decision = parse_decision(decision_raw)
+        except DecisionRejected as rejection:
+            return await _record_step_failure(
+                db,
+                run,
+                user,
+                execution,
+                task,
+                node,
+                code=rejection.code,
+                message=rejection.message,
+                category=AgentFailureCategory.VALIDATION_ERROR,
+                validation_errors=rejection.errors,
+                detail=f"rejected at the {rejection.layer} layer",
+            )
+        try:
             validate_semantics(decision, decision_ctx)
             validate_permissions(decision, decision_ctx)
         except DecisionRejected as rejection:
+            # A CALL_TOOL the runtime refused is the most interesting row in the
+            # invocation log: it is the evidence that the worker boundary held.
+            # Record it before the step fails, so "the model kept reaching for a
+            # tool this worker does not have" is countable from the log alone.
+            if decision.action == AgentAction.CALL_TOOL and decision.tool:
+                _record_tool_invocation(
+                    db,
+                    run=run,
+                    task=task,
+                    task_key=node.key,
+                    worker_kind=worker.kind.value,
+                    tool_name=decision.tool,
+                    iteration=run.iteration_count,
+                    status=AgentToolInvocationStatus.BLOCKED,
+                    args=dict(decision.tool_arguments or {}),
+                    error=rejection.message,
+                )
             return await _record_step_failure(
                 db,
                 run,
@@ -1657,6 +1857,7 @@ async def _run_step(
                 provider,
                 tools,
                 executors,
+                worker.kind.value,
                 limits,
             )
 
@@ -1664,6 +1865,17 @@ async def _run_step(
         # Reached only through ``invoke_tool``: that one function is the only
         # path from a decision to a tool, and it enforces the granted
         # permission set before calling the tool's ``invoke``.
+        # Run-scoped ceiling first: a model can stay inside the per-step budget
+        # every step and still spend a hundred calls over a run. Enforced from
+        # persisted rows so a resume cannot hand it a fresh allowance.
+        try:
+            assert_tool_run_budget(limits, run_tool_calls)
+        except BudgetExceeded as exc:
+            return await _fail_run(
+                db, run, user, code=exc.code, message=exc.message, category=exc.category
+            )
+        run_tool_calls += 1
+
         if tool_calls >= limits.max_tool_calls_per_step:
             return await _record_step_failure(
                 db,
@@ -1682,28 +1894,103 @@ async def _run_step(
             )
         tool_calls += 1
 
+        # A repeated call in the same step is answered from cache. Every tool in
+        # the registry is deterministic, so re-running identical arguments cannot
+        # produce new information and only risks a loop that bills the student
+        # twice for the same answer. The decision itself was still a paid
+        # round-trip, which is why the counters above still moved.
+        started = time.perf_counter()
+        cache_key = _tool_cache_key(decision.tool, decision.tool_arguments or {})
+        cached = cache_key in step_cache
+        # The sandbox gateway is bound to *this* run and assignment. A tool that
+        # submits code cannot name a different workspace, backend or limit: those
+        # are fixed here, in the runtime, where the request is not the model's.
+        execution_gateway = (
+            ExecutionGateway(
+                db=db,
+                settings=settings,
+                storage=get_storage(),
+                workspace_id=assignment.workspace_id,
+                requested_by_id=user.id,
+                assignment_id=assignment.id,
+                agent_run_id=run.id,
+                task_id=task.id if task else None,
+            )
+            if settings.execution_enabled
+            else None
+        )
         tool_ctx = ToolContext(
             run_id=run.id,
             task_id=task.id if task else None,
             task_key=node.key,
             context=context.text,
             context_sections=context.sections,
+            execution=execution_gateway,
+            external_agent=build_external_agent(settings),
             prior_artifacts=tuple(
                 await db.scalars(
-                    select(AgentArtifact.title).where(AgentArtifact.run_id == run.id)
+                    select(AgentArtifact.title)
+                    .where(AgentArtifact.run_id == run.id)
+                    .order_by(AgentArtifact.created_at)
                 )
             ),
+            artifact_texts={
+                title: content[:_ARTIFACT_READ_LIMIT]
+                for title, content in (
+                    await db.execute(
+                        select(AgentArtifact.title, AgentArtifact.content)
+                        .where(AgentArtifact.run_id == run.id)
+                        .order_by(AgentArtifact.created_at)
+                    )
+                ).all()
+            },
+        )
+        await _append_event(
+            db,
+            run,
+            AgentEventType.TOOL_SELECTED,
+            f"Selected tool {decision.tool}.",
+            metadata={
+                "tool": decision.tool,
+                "purpose": decision.tool_purpose,
+                "cached": cached,
+            },
+            task_id=task.id if task else None,
+            execution_id=execution.id,
+        )
+        await _append_event(
+            db,
+            run,
+            AgentEventType.TOOL_INVOCATION_STARTED,
+            f"Starting tool {decision.tool}.",
+            metadata={"tool": decision.tool},
+            task_id=task.id if task else None,
+            execution_id=execution.id,
         )
         try:
             assert decision.tool is not None
-            result = await invoke_tool(
-                decision.tool,
-                dict(decision.tool_arguments or {}),
-                tool_ctx,
-                registry=tools,
-                granted=DEFAULT_GRANTED_PERMISSIONS,
-            )
+            result = step_cache.get(cache_key)
+            if result is None:
+                result = await invoke_tool(
+                    decision.tool,
+                    dict(decision.tool_arguments or {}),
+                    tool_ctx,
+                    registry=tools,
+                    granted=DEFAULT_GRANTED_PERMISSIONS,
+                )
         except (ToolNotRegisteredError, ToolPermissionError) as exc:
+            _record_tool_invocation(
+                db,
+                run=run,
+                task=task,
+                task_key=node.key,
+                worker_kind=worker.kind.value,
+                tool_name=decision.tool or "?",
+                iteration=run.iteration_count,
+                status=AgentToolInvocationStatus.BLOCKED,
+                args=dict(decision.tool_arguments or {}),
+                error=exc.message,
+            )
             await _append_event(
                 db,
                 run,
@@ -1730,17 +2017,51 @@ async def _run_step(
                 ),
                 detail="tool blocked at dispatch",
             )
-        if not result.ok or decision.tool is None:
+        if result.structured_status.is_ok:
+            step_cache[cache_key] = result
+        if not result.structured_status.is_ok or decision.tool is None:
+            invocation_status = _INVOCATION_STATUS_BY_TOOL_STATUS[result.structured_status]
+            _record_tool_invocation(
+                db,
+                run=run,
+                task=task,
+                task_key=node.key,
+                worker_kind=worker.kind.value,
+                tool_name=decision.tool or "?",
+                iteration=run.iteration_count,
+                status=invocation_status,
+                args=dict(decision.tool_arguments or {}),
+                result=result,
+                error=result.reason or result.summary,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+            )
             await _append_event(
                 db,
                 run,
-                AgentEventType.TOOL_BLOCKED,
-                f"Tool {decision.tool or '?'!r} refused: {(result.reason or '')[:200]}",
-                metadata={"tool": decision.tool, "reason": result.reason},
+                AgentEventType.TOOL_INVOCATION_FAILED,
+                f"Tool {decision.tool or '?'} ended {result.structured_status.value}: "
+                f"{(result.reason or '')[:200]}",
+                metadata={
+                    "tool": decision.tool,
+                    "status": result.structured_status.value,
+                    "reason": result.reason,
+                },
                 task_id=task.id if task else None,
                 execution_id=execution.id,
             )
-            decision_row.outcome = "TOOL_BLOCKED"
+            if result.structured_status is AgentToolStatus.BLOCKED:
+                await _append_event(
+                    db,
+                    run,
+                    AgentEventType.TOOL_BLOCKED,
+                    f"Tool {decision.tool or '?'!r} refused: {(result.reason or '')[:200]}",
+                    metadata={"tool": decision.tool, "reason": result.reason},
+                    task_id=task.id if task else None,
+                    execution_id=execution.id,
+                )
+                decision_row.outcome = "TOOL_BLOCKED"
+            else:
+                decision_row.outcome = result.structured_status.value
             return await _record_step_failure(
                 db,
                 run,
@@ -1750,17 +2071,49 @@ async def _run_step(
                 node,
                 code="AGENT_TOOL_REFUSED",
                 message=result.reason or result.summary,
-                category=AgentFailureCategory.VALIDATION_ERROR,
-                detail="tool refused the call",
+                category=_FAILURE_CATEGORY_BY_TOOL_STATUS[result.structured_status],
+                detail=f"tool returned {result.structured_status.value}",
             )
 
+        _record_tool_invocation(
+            db,
+            run=run,
+            task=task,
+            task_key=node.key,
+            worker_kind=worker.kind.value,
+            tool_name=decision.tool,
+            iteration=run.iteration_count,
+            status=AgentToolInvocationStatus.SUCCESS,
+            args=dict(decision.tool_arguments or {}),
+            result=result,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+        )
         decision_row.outcome = "TOOL_INVOKED"
+        await _append_event(
+            db,
+            run,
+            AgentEventType.TOOL_INVOCATION_COMPLETED,
+            f"Tool {decision.tool} ended {result.structured_status.value}.",
+            metadata={
+                "tool": decision.tool,
+                "status": result.structured_status.value,
+                "cached": cached,
+                "warnings": list(result.warnings),
+            },
+            task_id=task.id if task else None,
+            execution_id=execution.id,
+        )
         await _append_event(
             db,
             run,
             AgentEventType.TOOL_INVOKED,
             f"Tool {decision.tool} {result.summary[:200]}",
-            metadata={"tool": decision.tool},
+            metadata={
+                "tool": decision.tool,
+                "cached": cached,
+                "status": result.structured_status.value,
+                "warnings": list(result.warnings),
+            },
             task_id=task.id if task else None,
             execution_id=execution.id,
         )
@@ -1815,6 +2168,7 @@ async def _run_step(
                 title=str(result.payload.get("title") or node.key),
                 artifact_type=AgentArtifactType(str(result.payload["artifact_type"])),
                 content=str(result.payload.get("content") or ""),
+                worker_name=worker.kind.value,
                 user=user,
             )
             await _close_execution(db, execution, AgentExecutionStatus.SUCCESS, result.summary)
@@ -1869,6 +2223,40 @@ async def _run_step(
             f"Tool result from read_context ({result.payload.get('section', '')}):\n"
             f"{result.payload.get('text', '').strip()}"
         )
+
+
+#: How a structured tool status becomes a recorded invocation status. Both
+#: ``SUCCESS`` and ``PARTIAL_SUCCESS`` count as a completed invocation; the
+#: warning that made it partial is carried on the event, not lost.
+_INVOCATION_STATUS_BY_TOOL_STATUS: Final[dict[AgentToolStatus, AgentToolInvocationStatus]] = {
+    AgentToolStatus.SUCCESS: AgentToolInvocationStatus.SUCCESS,
+    AgentToolStatus.PARTIAL_SUCCESS: AgentToolInvocationStatus.SUCCESS,
+    AgentToolStatus.BLOCKED: AgentToolInvocationStatus.BLOCKED,
+    AgentToolStatus.NEEDS_USER_INPUT: AgentToolInvocationStatus.BLOCKED,
+    AgentToolStatus.FAILED: AgentToolInvocationStatus.FAILED,
+    AgentToolStatus.RATE_LIMITED: AgentToolInvocationStatus.FAILED,
+    AgentToolStatus.UNAVAILABLE: AgentToolInvocationStatus.FAILED,
+}
+
+#: The failure category a non-ok tool status maps to, so the recovery policy can
+#: tell "ask the student" from "retry later" from "this will never work".
+_FAILURE_CATEGORY_BY_TOOL_STATUS: Final[dict[AgentToolStatus, AgentFailureCategory]] = {
+    AgentToolStatus.BLOCKED: AgentFailureCategory.VALIDATION_ERROR,
+    AgentToolStatus.NEEDS_USER_INPUT: AgentFailureCategory.USER_INPUT_REQUIRED,
+    AgentToolStatus.RATE_LIMITED: AgentFailureCategory.RATE_LIMITED,
+    AgentToolStatus.UNAVAILABLE: AgentFailureCategory.UNSUPPORTED_OPERATION,
+    AgentToolStatus.FAILED: AgentFailureCategory.INVALID_RESULT,
+}
+
+
+def _tool_cache_key(name: str | None, arguments: Mapping[str, Any]) -> str:
+    """Stable key for a tool call so an identical repeat is served once.
+
+    Canonical JSON with sorted keys, so ``{"a": 1, "b": 2}`` and ``{"b": 2, "a": 1}``
+    collide as intended. Values are stringified so a non-JSON argument yields a
+    stable key rather than raising.
+    """
+    return f"{name}\x00{json.dumps(dict(arguments), sort_keys=True, default=str)}"
 
 
 async def _build_context(
@@ -2075,6 +2463,7 @@ async def _apply_decision(
     provider: LLMProvider | None,
     tools: ToolRegistry,
     executors: ExecutorRegistry,
+    worker_name: str,
     limits: AgentLimits,
 ) -> StepOutcome:
     """Act on a validated decision."""
@@ -2212,6 +2601,7 @@ async def _apply_decision(
             context,
             provider,
             executors,
+            worker_name,
             limits,
             complete=False,
             title=decision.artifact_title,
@@ -2346,6 +2736,7 @@ async def _execute_and_finish(
     context: AgentContext,
     provider: LLMProvider | None,
     executors: ExecutorRegistry,
+    worker_name: str,
     limits: AgentLimits,
     *,
     complete: bool,
@@ -2482,6 +2873,7 @@ async def _execute_and_finish(
                 content=result.artifact.content,
                 metadata=result.artifact.metadata,
                 deliverable_key=result.artifact.deliverable_key,
+                worker_name=worker_name,
                 user=user,
             )
             artifact_id = artifact.id
@@ -2663,6 +3055,7 @@ async def load_run_detail(run: AgentRun, db: AsyncSession) -> dict[str, Any]:
         AgentEventResponse,
         AgentExecutionResponse,
         AgentTaskResponse,
+        AgentToolInvocationResponse,
     )
 
     tasks: list[AgentTaskResponse] = []
@@ -2730,10 +3123,25 @@ async def load_run_detail(run: AgentRun, db: AsyncSession) -> dict[str, Any]:
         AgentDecisionResponse.model_validate(d)
         for d in sorted(run.decisions, key=lambda d: (d.iteration, d.slot))
     ]
+    tool_invocations = [
+        AgentToolInvocationResponse.model_validate(i)
+        for i in sorted(run.tool_invocations, key=lambda i: (i.created_at, i.tool_name))
+    ]
 
     status = parse_status(run.status)
     pending = await pending_checkpoint(run, db)
     counts = progress(nodes) if nodes else None
+
+    # Context provenance, flattened from the CONTEXT_BUILT events. Kept on the
+    # event rather than on the run so the record stays append-only: each step's
+    # decision input is recorded as it happened, never rewritten afterwards.
+    context_provenance: list[dict[str, Any]] = []
+    for event in sorted(run.events, key=lambda e: e.sequence):
+        if event.event_type != AgentEventType.CONTEXT_BUILT.value:
+            continue
+        task_key = event.metadata_json.get("task_key")
+        for entry in event.metadata_json.get("provenance") or []:
+            context_provenance.append({**entry, "task_key": task_key})
 
     return {
         "id": run.id,
@@ -2770,8 +3178,62 @@ async def load_run_detail(run: AgentRun, db: AsyncSession) -> dict[str, Any]:
         "checkpoints": checkpoints,
         "events": events,
         "decisions": decisions,
-        "context_provenance": [],
+        "tool_invocations": tool_invocations,
+        "context_provenance": context_provenance,
     }
+
+
+async def run_tool_invocations(run: AgentRun, db: AsyncSession) -> list[Any]:
+    """Every tool call this run made, including the ones it blocked.
+
+    Returned as response models rather than handle-only rows so the endpoint's
+    declared contract is checked here. Ordering is stable (time, then name) so two
+    identical calls read the same way twice.
+    """
+    from app.schemas.agent import AgentToolInvocationResponse
+
+    rows = await db.scalars(
+        select(AgentToolInvocation)
+        .where(AgentToolInvocation.run_id == run.id)
+        .order_by(AgentToolInvocation.created_at, AgentToolInvocation.tool_name)
+    )
+    return [AgentToolInvocationResponse.model_validate(row) for row in rows]
+
+
+async def run_tool_usage(run: AgentRun, db: AsyncSession) -> list[dict[str, Any]]:
+    """Per-tool totals for this run: how often each tool was called and how it went.
+
+    The invocation log answers "what happened"; this answers "which tools carried
+    the run". Blocked calls are counted separately because a blocked tool is a
+    boundary doing its job, not a failure of the tool.
+    """
+    rows = await db.scalars(
+        select(AgentToolInvocation)
+        .where(AgentToolInvocation.run_id == run.id)
+        .order_by(AgentToolInvocation.created_at)
+    )
+    usage: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        entry = usage.setdefault(
+            row.tool_name,
+            {
+                "tool_name": row.tool_name,
+                "call_count": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "blocked": 0,
+                "last_used_at": row.created_at,
+            },
+        )
+        entry["call_count"] += 1
+        if row.status == AgentToolInvocationStatus.SUCCESS.value:
+            entry["succeeded"] += 1
+        elif row.status == AgentToolInvocationStatus.FAILED.value:
+            entry["failed"] += 1
+        else:
+            entry["blocked"] += 1
+        entry["last_used_at"] = row.created_at
+    return list(usage.values())
 
 
 RUN_LOADERS = (
@@ -2780,6 +3242,7 @@ RUN_LOADERS = (
     selectinload(AgentRun.checkpoints),
     selectinload(AgentRun.events),
     selectinload(AgentRun.decisions),
+    selectinload(AgentRun.tool_invocations),
 )
 
 
