@@ -56,10 +56,37 @@ export type AgentArtifactType =
 
 export type AgentArtifactStatus = "DRAFT" | "REVIEWED" | "SUBMITTED";
 
+/** Who an artifact belongs to. `USER_OWNED` is never overwritten by the runtime. */
+export type AgentArtifactOwnership =
+  | "USER_OWNED"
+  | "AGENT_OWNED"
+  | "SYSTEM_GENERATED"
+  | "IMPORTED";
+
 export type AgentExecutorKind =
   | "DETERMINISTIC"
   | "MODEL_WORKER"
   | "HUMAN_REVIEW";
+
+/**
+ * The specialized academic worker serving a task. Mirrors `AgentWorkerKind`.
+ *
+ * A worker is the connection between a task type and a bounded toolset:
+ * `PROVE` is served by `MATHEMATICS`, which may use the mathematics tools.
+ * `REASONING` is the fallback for an unmapped task type, so an unfamiliar task
+ * is served by a narrow boundary rather than by everything.
+ */
+export type AgentWorkerKind =
+  | "REASONING"
+  | "MATHEMATICS"
+  | "DATA"
+  | "WRITING"
+  | "RESEARCH"
+  | "CODE"
+  | "PRESENTATION";
+
+/** Outcome of one recorded tool call. Mirrors `AgentToolInvocationStatus`. */
+export type AgentToolInvocationStatus = "SUCCESS" | "FAILED" | "BLOCKED";
 
 export type AgentExecutionStatus =
   | "PENDING"
@@ -161,6 +188,8 @@ export interface AgentExecution {
   attempt: number;
   status: AgentExecutionStatus;
   executor: AgentExecutorKind;
+  /** The worker boundary that served this attempt, e.g. `MATHEMATICS`. */
+  worker: AgentWorkerKind | null;
   model: string | null;
   model_tier: string | null;
   summary: string | null;
@@ -184,11 +213,14 @@ export interface AgentArtifact {
   title: string;
   artifact_type: AgentArtifactType;
   status: AgentArtifactStatus;
+  ownership: AgentArtifactOwnership;
   content: string;
   metadata_json: Record<string, unknown> | null;
   /** 1 for the first draft. Every revision is kept. */
   revision: number;
   deliverable_key: string | null;
+  /** The worker that produced the artifact, so output is attributable. */
+  worker_name: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -224,6 +256,31 @@ export interface AgentEvent {
   created_at: string;
 }
 
+/**
+ * One tool call the run made, or had refused, on a worker.
+ *
+ * The log is the evidence for two questions the run alone cannot answer: which
+ * worker served a step, and how often a model reached for a tool its worker did
+ * not have. `BLOCKED` is a refusal — no work happened — and is kept precisely
+ * because a silent no-op would hide the pattern a review wants to count.
+ */
+export interface AgentToolInvocation {
+  id: string;
+  run_id: string;
+  task_id: string | null;
+  task_key: string;
+  worker_kind: AgentWorkerKind | null;
+  tool_name: string;
+  iteration: number | null;
+  status: AgentToolInvocationStatus;
+  args: Record<string, unknown>;
+  /** A bounded snapshot of what the tool returned, or null when refused. */
+  result: Record<string, unknown> | null;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+}
+
 export interface AgentDecision {
   id: string;
   iteration: number;
@@ -247,6 +304,14 @@ export interface AgentRunDetail extends AgentRun {
   events: AgentEvent[];
   decisions: AgentDecision[];
   /**
+   * Every tool call the run made or had refused, newest last.
+   *
+   * Distinct from the decisions above: a decision says what the model asked
+   * for, and this records what the runtime actually dispatched or refused on a
+   * worker's behalf.
+   */
+  tool_invocations: AgentToolInvocation[];
+  /**
    * What the context builder included, and what it dropped.
    *
    * The answer to "why couldn't the agent see my document?" lives here rather
@@ -261,8 +326,27 @@ export interface AgentTool {
   permissions: string[];
 }
 
+/**
+ * One tool boundary in the runtime. Mirrors `AgentWorkerResponse`.
+ *
+ * Published as data so the UI can name the boundary, not just the tools: each
+ * task type is bound to exactly one worker, and a worker never lists a tool the
+ * runtime does not have.
+ */
+export interface AgentWorker {
+  id: string;
+  name: string;
+  description: string;
+  /** The plan's task types this worker serves. */
+  academic_task_types: string[];
+  /** The tool names this worker may call. Everything else is refused. */
+  tools: string[];
+  output_artifact_types: string[];
+}
+
 export interface AgentCapabilities {
   tools: AgentTool[];
+  workers: AgentWorker[];
   executors: string[];
   modes: AgentRunMode[];
   actions: AgentAction[];

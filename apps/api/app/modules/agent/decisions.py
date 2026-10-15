@@ -81,6 +81,10 @@ class AgentDecisionOutput(BaseModel):
     #: itself, which validates them and refuses rather than raising.
     tool: str | None = Field(default=None, max_length=64)
     tool_arguments: dict[str, Any] | None = None
+    #: The single sentence of *why* a CALL_TOOL is being made. Optional: a missing
+    #: purpose must not void an otherwise-good call, but when present it is exactly
+    #: what an audit reads first. Capped short so it stays a purpose, not a plan.
+    tool_purpose: str | None = Field(default=None, max_length=300)
 
     @field_validator("confidence")
     @classmethod

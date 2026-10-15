@@ -35,6 +35,16 @@ const CAPABILITIES: AgentCapabilities = {
     { name: "read_context", description: "Read assembled context.", permissions: ["read"] },
     { name: "write_artifact", description: "Write a draft.", permissions: ["write"] },
   ],
+  workers: [
+    {
+      id: "MATHEMATICS",
+      name: "mathematics",
+      description: "Analyses numbers: statistics and fits.",
+      academic_task_types: ["SOLVE", "PROVE"],
+      tools: ["calculate", "read_context"],
+      output_artifact_types: ["SOLUTION"],
+    },
+  ],
   executors: ["DETERMINISTIC"],
   modes: ["SUPERVISED", "AUTONOMOUS"],
   actions: ["CREATE_ARTIFACT", "COMPLETE_TASK"],
@@ -104,6 +114,7 @@ function detail(overrides: Partial<AgentRunDetail> = {}): AgentRunDetail {
     checkpoints: [],
     events: [],
     decisions: [],
+    tool_invocations: [],
     context_provenance: [],
     ...overrides,
   };
@@ -184,6 +195,72 @@ describe("AgentPanel", () => {
     fireEvent.click(screen.getByText("What this agent cannot do"));
     expect(screen.getByText("execute_code")).toBeInTheDocument();
     expect(screen.getByText("network_access")).toBeInTheDocument();
+  });
+
+  it("names the worker boundaries it publishes", async () => {
+    route(baseHandlers());
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    await screen.findByRole("button", { name: "Create run" });
+    fireEvent.click(screen.getByText("What this agent cannot do"));
+    // The boundary is the worker and its toolset, not just a flat tool list.
+    expect(screen.getByText("Task workers")).toBeInTheDocument();
+    expect(screen.getByText("MATHEMATICS")).toBeInTheDocument();
+    expect(screen.getByText(/calculate/)).toBeInTheDocument();
+  });
+
+  it("shows refused tool calls rather than hiding them", async () => {
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "COMPLETED" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "COMPLETED",
+              tool_invocations: [
+                {
+                  id: "i1",
+                  run_id: "r1",
+                  task_id: "t1",
+                  task_key: "T1",
+                  worker_kind: "MATHEMATICS",
+                  tool_name: "calculate",
+                  iteration: 1,
+                  status: "SUCCESS",
+                  args: { expression: "2+2" },
+                  result: { value: 4 },
+                  error: null,
+                  duration_ms: 3,
+                  created_at: "2026-01-01T10:04:00Z",
+                },
+                {
+                  id: "i2",
+                  run_id: "r1",
+                  task_id: "t1",
+                  task_key: "T1",
+                  worker_kind: "MATHEMATICS",
+                  tool_name: "solve_linear_system",
+                  iteration: 2,
+                  status: "BLOCKED",
+                  args: {},
+                  result: null,
+                  error: "That tool is not allowed for this task.",
+                  duration_ms: null,
+                  created_at: "2026-01-01T10:05:00Z",
+                },
+              ],
+            }),
+          ),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    fireEvent.click(await screen.findByRole("tab", { name: "Activity" }));
+    expect(screen.getByText("Tool calls")).toBeInTheDocument();
+    expect(screen.getByText("calculate")).toBeInTheDocument();
+    // The refusal is kept on the log, with the server's reason.
+    expect(screen.getByText("Refused")).toBeInTheDocument();
+    expect(screen.getByText("That tool is not allowed for this task.")).toBeInTheDocument();
   });
 
   it("does not create a run until asked", async () => {
@@ -326,10 +403,12 @@ describe("AgentPanel", () => {
                   title: "Introduction",
                   artifact_type: "DRAFT",
                   status: "DRAFT",
+                  ownership: "AGENT_OWNED",
                   content: "Second attempt, better opening.",
                   metadata_json: null,
                   revision: 2,
                   deliverable_key: null,
+                  worker_name: "MATHEMATICS",
                   created_at: "2026-01-01T10:05:00Z",
                   updated_at: "2026-01-01T10:05:00Z",
                 },
@@ -340,10 +419,12 @@ describe("AgentPanel", () => {
                   title: "Introduction",
                   artifact_type: "DRAFT",
                   status: "DRAFT",
+                  ownership: "AGENT_OWNED",
                   content: "First attempt.",
                   metadata_json: null,
                   revision: 1,
                   deliverable_key: null,
+                  worker_name: null,
                   created_at: "2026-01-01T10:02:00Z",
                   updated_at: "2026-01-01T10:02:00Z",
                 },

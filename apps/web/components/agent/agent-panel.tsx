@@ -12,6 +12,8 @@ import {
   type AgentRunMode,
   type AgentRunStatus,
   type AgentTask,
+  type AgentToolInvocation,
+  type AgentToolInvocationStatus,
 } from "@/lib/agent-types";
 import { useAgent } from "@/lib/use-agent";
 
@@ -241,23 +243,26 @@ export function AgentPanel({
           ) : null}
           {tab === "drafts" ? <ArtifactList artifacts={run.artifacts} /> : null}
           {tab === "activity" ? (
-            <ol className="space-y-2">
-              {run.events.length === 0 ? (
-                <li className="text-sm text-[var(--color-ink-muted)]">{t("agent.noActivity")}</li>
-              ) : (
-                orderedEvents(run).map((event) => (
-                  <li className="flex gap-3 text-sm" key={event.id}>
-                    <span className="shrink-0 font-mono text-xs text-[var(--color-ink-subtle)]">
-                      {formatNumber(event.sequence)}
-                    </span>
-                    <span className="text-[var(--color-ink)]">{event.summary}</span>
-                    <span className="ms-auto shrink-0 text-xs text-[var(--color-ink-subtle)]">
-                      {formatDate(event.created_at, "datetime")}
-                    </span>
-                  </li>
-                ))
-              )}
-            </ol>
+            <div className="space-y-6">
+              <ol className="space-y-2">
+                {run.events.length === 0 ? (
+                  <li className="text-sm text-[var(--color-ink-muted)]">{t("agent.noActivity")}</li>
+                ) : (
+                  orderedEvents(run).map((event) => (
+                    <li className="flex gap-3 text-sm" key={event.id}>
+                      <span className="shrink-0 font-mono text-xs text-[var(--color-ink-subtle)]">
+                        {formatNumber(event.sequence)}
+                      </span>
+                      <span className="text-[var(--color-ink)]">{event.summary}</span>
+                      <span className="ms-auto shrink-0 text-xs text-[var(--color-ink-subtle)]">
+                        {formatDate(event.created_at, "datetime")}
+                      </span>
+                    </li>
+                  ))
+                )}
+              </ol>
+              <ToolCalls invocations={run.tool_invocations} />
+            </div>
           ) : null}
           {tab === "context" ? (
             <div className="space-y-2 text-sm">
@@ -326,6 +331,20 @@ function orderedEvents(run: AgentRunDetail): AgentRunDetail["events"] {
     .map((event, index) => ({ event, index }))
     .sort((a, b) => a.event.sequence - b.event.sequence || a.index - b.index)
     .map((entry) => entry.event);
+}
+
+/** Oldest first, like the events above, so the two read as one timeline. */
+function orderedInvocations(
+  invocations: AgentToolInvocation[],
+): AgentToolInvocation[] {
+  return invocations
+    .map((invocation, index) => ({ invocation, index }))
+    .sort(
+      (a, b) =>
+        Date.parse(a.invocation.created_at) - Date.parse(b.invocation.created_at) ||
+        a.index - b.index,
+    )
+    .map((entry) => entry.invocation);
 }
 
 /**
@@ -709,6 +728,11 @@ function ArtifactList({ artifacts }: { artifacts: AgentArtifact[] }) {
                 ? t("agent.revision", { revision: artifact.revision })
                 : t(`status.agentArtifact.${artifact.status.toLowerCase()}` as Parameters<typeof t>[0])}
             </span>
+            {artifact.worker_name ? (
+              <span className="ms-2 text-xs font-normal text-[var(--color-ink-subtle)]">
+                {t("agent.draftedBy", { worker: artifact.worker_name })}
+              </span>
+            ) : null}
           </summary>
           {/* The draft is rendered as text, never as HTML. Model output is
               untrusted by construction and this is where that would matter. */}
@@ -718,6 +742,65 @@ function ArtifactList({ artifacts }: { artifacts: AgentArtifact[] }) {
         </details>
       ))}
     </div>
+  );
+}
+
+/**
+ * The tool-invocation log.
+ *
+ * Rendered under the activity trail because it is the same story told a level
+ * lower: not "what the run did" but "what it reached for, and whether the worker
+ * allowed it". A refused call stays on the list rather than disappearing, which
+ * is the whole point — a run that quietly dropped its refused calls would look
+ * tidier and say less.
+ */
+function ToolCalls({ invocations }: { invocations: AgentToolInvocation[] }) {
+  const { t, formatDate } = usePreferences();
+  const calls = orderedInvocations(invocations);
+  return (
+    <div className="space-y-2">
+      <h3 className="text-sm font-medium text-[var(--color-ink)]">{t("agent.toolCalls")}</h3>
+      <p className="text-xs text-[var(--color-ink-muted)]">{t("agent.toolCallsHelp")}</p>
+      {calls.length === 0 ? (
+        <p className="text-sm text-[var(--color-ink-subtle)]">{t("agent.noToolCalls")}</p>
+      ) : (
+        <ul className="space-y-2">
+          {calls.map((call) => (
+            <li
+              className="flex flex-wrap items-center gap-2 rounded-lg border border-[var(--color-line)] px-3 py-2 text-sm"
+              key={call.id}
+            >
+              <span className="font-mono text-xs text-[var(--color-ink)]">{call.tool_name}</span>
+              {call.worker_kind ? (
+                <span className="text-xs text-[var(--color-ink-muted)]">{call.worker_kind}</span>
+              ) : null}
+              <ToolStatusBadge status={call.status} />
+              {call.error ? (
+                <span className="w-full text-xs text-[var(--color-ink-muted)]">{call.error}</span>
+              ) : null}
+              <span className="ms-auto shrink-0 text-xs text-[var(--color-ink-subtle)]">
+                {formatDate(call.created_at, "datetime")}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function ToolStatusBadge({ status }: { status: AgentToolInvocationStatus }) {
+  const { t } = usePreferences();
+  const tone =
+    status === "SUCCESS"
+      ? "text-[var(--color-positive)] bg-[var(--color-positive-soft)]"
+      : status === "FAILED"
+        ? "text-[var(--color-critical)] bg-[var(--color-critical-soft)]"
+        : "text-[var(--color-warning)] bg-[var(--color-warning-soft)]";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${tone}`}>
+      {t(`status.agentTool.${status.toLowerCase()}` as Parameters<typeof t>[0])}
+    </span>
   );
 }
 
@@ -756,6 +839,32 @@ function CapabilityBoundary({ capabilities }: { capabilities: AgentCapabilities 
         <p className="text-xs text-[var(--color-ink-subtle)]">
           {(capabilities.tools ?? []).map((tool) => tool.name).join(" · ")}
         </p>
+        {/* The boundary is not just the tool list but the worker that fields it:
+            which tools belong together, and which task type reaches them. */}
+        {(capabilities.workers ?? []).length > 0 ? (
+          <div className="space-y-2 pt-1">
+            <p className="text-sm font-medium text-[var(--color-ink)]">{t("agent.workers")}</p>
+            <p className="text-xs text-[var(--color-ink-muted)]">{t("agent.workersHelp")}</p>
+            <ul className="space-y-2">
+              {(capabilities.workers ?? []).map((worker) => (
+                <li
+                  className="rounded-lg border border-[var(--color-line)] px-3 py-2"
+                  key={worker.id}
+                >
+                  <span className="block text-xs font-medium text-[var(--color-ink)]">
+                    {worker.id}
+                  </span>
+                  <span className="block text-xs text-[var(--color-ink-muted)]">
+                    {worker.description}
+                  </span>
+                  <span className="mt-1 block font-mono text-xs text-[var(--color-ink-subtle)]">
+                    {t("agent.workerTools")}: {worker.tools.join(" · ")}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
     </details>
   );

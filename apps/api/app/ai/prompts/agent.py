@@ -63,16 +63,23 @@ def build_agent_messages(
     context: AgentContext,
     *,
     registry: ToolRegistry,
+    tool_ids: frozenset[str] | None = None,
     tool_output: str | None = None,
 ) -> tuple[LLMMessage, ...]:
     """Build the messages for one decision step.
+
+    ``tool_ids`` narrows the catalogue to the active worker's tool set, so a
+    ``MATHEMATICS`` step is only ever told about the mathematics tools and the
+    model is never even handed the names of the ones it may not call. ``None``
+    means the full, closed catalogue (the view the capabilities endpoint serves).
 
     ``tool_output`` carries the result of a ``read_context`` call back into the
     provider so the model can act on what it just read. It is appended as data
     after the assembled context, exactly like any other untrusted material.
     """
     catalogue = "\n".join(
-        f"- {tool['name']}: {tool['description']}" for tool in registry.describe()
+        f"- {tool['name']}: {tool['description']}"
+        for tool in registry.describe(tool_ids=tool_ids)
     )
     tools_block = (
         "\nThe following tools are available to you. This list is complete; there "
@@ -103,18 +110,28 @@ def build_decision_request(
     context: AgentContext,
     *,
     registry: ToolRegistry,
+    tool_ids: frozenset[str] | None = None,
     max_output_tokens: int = 1_000,
     temperature: float = 0.0,
     tool_output: str | None = None,
 ) -> LLMRequest:
     """Build the full provider request for one decision step.
 
+    ``tool_ids`` narrows the prompt to the active worker's tool set, mirroring
+    the decision layer's ``available_tools``: the model can only plan a call it
+    is told exists, and the layer can only allow a call it was told to allow.
+
     ``temperature`` defaults to 0.0. An agent making a decision that mutates a
     student's record should be reproducible; the variation that exists in this
     product lives in planning, which is exploratory on purpose.
     """
     return LLMRequest(
-        messages=build_agent_messages(context, registry=registry, tool_output=tool_output),
+        messages=build_agent_messages(
+            context,
+            registry=registry,
+            tool_ids=tool_ids,
+            tool_output=tool_output,
+        ),
         response_schema=AgentDecisionOutput.model_json_schema(),
         prompt_version=PROMPT_VERSION,
         temperature=temperature,

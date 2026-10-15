@@ -70,6 +70,12 @@ class AgentLimits:
     retry_backoff_seconds: float
     checkpoint_ttl_seconds: float
     max_tool_calls_per_step: int
+    #: Ceiling on tool dispatches across the whole run, not just one step. The
+    #: per-step limit bounds a single confused loop; this bounds a run that
+    #: behaves plausibly step to step but never converges, which the per-step
+    #: budget cannot see. Counted from the persisted invocation rows so the
+    #: ceiling survives a restart.
+    max_tool_calls_per_run: int
     #: Fraction of the per-step token budget spent on deciding vs producing.
     decision_token_ratio: float
 
@@ -89,6 +95,7 @@ class AgentLimits:
             retry_backoff_seconds=settings.agent_retry_backoff_seconds,
             checkpoint_ttl_seconds=settings.agent_checkpoint_ttl_seconds,
             max_tool_calls_per_step=settings.agent_max_tool_calls_per_step,
+            max_tool_calls_per_run=settings.agent_max_tool_calls_per_run,
             decision_token_ratio=settings.agent_decision_token_ratio,
         )
 
@@ -216,6 +223,24 @@ def assert_priced_model(pricing: ModelPricing | None, model: str) -> None:
             "LLM_UNPRICED_MODEL_POLICY=record."
         ),
     )
+
+
+def assert_tool_run_budget(limits: AgentLimits, run_tool_calls: int) -> None:
+    """Refuse a tool dispatch once the run has spent its whole tool allowance.
+
+    A run-scoped count rather than a per-step one: a model that calls two tools
+    every step looks disciplined within each step yet can still spend a hundred
+    calls over a run. Counted from persisted rows so a resume cannot reset it.
+    """
+    if limits.max_tool_calls_per_run > 0 and run_tool_calls >= limits.max_tool_calls_per_run:
+        raise BudgetExceeded(
+            "AGENT_TOOL_RUN_LIMIT",
+            (
+                f"This run reached its limit of {limits.max_tool_calls_per_run} tool calls. "
+                "Resume with a larger budget or finish the remaining tasks by hand."
+            ),
+            category=AgentFailureCategory.VALIDATION_ERROR,
+        )
 
 
 def assert_artifact_budget(limits: AgentLimits, artifact_count: int) -> None:

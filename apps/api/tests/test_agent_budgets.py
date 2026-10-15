@@ -63,6 +63,7 @@ from app.modules.agent.limits import (
     assert_input_token_budget,
     assert_priced_model,
     assert_token_budget,
+    assert_tool_run_budget,
     estimate_step_cost,
 )
 from app.modules.agent.service import (
@@ -122,7 +123,8 @@ def _limits(**overrides: object) -> AgentLimits:
         "retry_backoff_seconds": 0.0,
         "checkpoint_ttl_seconds": 900.0,
         "max_tool_calls_per_step": 4,
-        "decision_token_ratio": 0.4,
+        "max_tool_calls_per_run": 60,
+        "decision_token_ratio": 0.5,
     }
     base.update(overrides)
     return AgentLimits(**base)  # type: ignore[arg-type]
@@ -323,6 +325,23 @@ def test_a_tiny_ratio_still_leaves_room_to_answer() -> None:
     limits = _limits(max_output_tokens_per_step=400, decision_token_ratio=0.1)
 
     assert _decision_output_tokens(limits) == 256
+
+
+def test_the_run_tool_ceiling_is_checked_across_a_whole_run() -> None:
+    """A per-step limit cannot see a run that is modest every step but endless."""
+    limits = _limits(max_tool_calls_per_run=3)
+
+    assert_tool_run_budget(limits, 2)  # still inside the ceiling
+
+    with pytest.raises(BudgetExceeded) as caught:
+        assert_tool_run_budget(limits, 3)
+
+    assert caught.value.code == "AGENT_TOOL_RUN_LIMIT"
+
+
+def test_a_zero_run_tool_ceiling_means_unbounded() -> None:
+    """Zero disables the ceiling, matching the cost budgets' convention."""
+    assert_tool_run_budget(_limits(max_tool_calls_per_run=0), 10_000)
 
 
 def test_the_shared_estimator_measures_the_actual_prompt() -> None:

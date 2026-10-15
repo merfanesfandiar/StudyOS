@@ -24,6 +24,7 @@ from pydantic import Field
 from app.models.enums import (
     AcademicTaskStatus,
     AgentAction,
+    AgentArtifactOwnership,
     AgentArtifactStatus,
     AgentArtifactType,
     AgentCheckpointStatus,
@@ -34,6 +35,8 @@ from app.models.enums import (
     AgentFailureCategory,
     AgentRunMode,
     AgentRunStatus,
+    AgentToolInvocationStatus,
+    AgentWorkerKind,
 )
 from app.schemas.common import APIModel
 
@@ -168,6 +171,8 @@ class AgentExecutionResponse(APIModel):
     attempt: int
     status: AgentExecutionStatus
     executor: AgentExecutorKind
+    #: The worker boundary that served this attempt, e.g. ``MATHEMATICS``.
+    worker: AgentWorkerKind | None = None
     model: str | None = None
     model_tier: str | None = None
     summary: str | None = None
@@ -191,10 +196,16 @@ class AgentArtifactResponse(APIModel):
     title: str
     artifact_type: AgentArtifactType
     status: AgentArtifactStatus
+    #: Who owns this draft. ``USER_OWNED`` means the runtime must not overwrite
+    #: it; a revision is written instead. The UI uses this to avoid offering an
+    #: "edit" action the runtime would refuse.
+    ownership: AgentArtifactOwnership = AgentArtifactOwnership.AGENT_OWNED
     content: str
     metadata_json: dict[str, Any] | None = None
     revision: int
     deliverable_key: str | None = None
+    #: The worker that produced the artifact, so a review can attribute output.
+    worker_name: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -246,6 +257,29 @@ class AgentDecisionResponse(APIModel):
     executed_at: datetime
 
 
+class AgentToolInvocationResponse(APIModel):
+    """One call the runtime made, or refused to make, on a tool.
+
+    The log is the evidence for two questions that are otherwise unanswerable
+    from the run alone: which worker served a step, and how often a model reached
+    for a tool its worker did not have. ``BLOCKED`` is a refusal, not an error.
+    """
+
+    id: UUID
+    run_id: UUID
+    task_id: UUID | None = None
+    task_key: str
+    worker_kind: AgentWorkerKind | None = None
+    tool_name: str
+    iteration: int | None = None
+    status: AgentToolInvocationStatus
+    args: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    duration_ms: int | None = None
+    created_at: datetime
+
+
 class AgentRunDetailResponse(AgentRunResponse):
     """Run plus the things the workspace needs in one round trip."""
 
@@ -255,6 +289,8 @@ class AgentRunDetailResponse(AgentRunResponse):
     checkpoints: list[AgentCheckpointResponse] = Field(default_factory=list)
     events: list[AgentEventResponse] = Field(default_factory=list)
     decisions: list[AgentDecisionResponse] = Field(default_factory=list)
+    #: Every tool call the run made or had refused, newest last.
+    tool_invocations: list[AgentToolInvocationResponse] = Field(default_factory=list)
     #: What the context builder used, and what it had to leave out. The answer to
     #: "why didn't the agent see my document?" lives here.
     context_provenance: list[dict[str, Any]] = Field(default_factory=list)
@@ -268,6 +304,73 @@ class AgentToolResponse(APIModel):
     permissions: list[str]
 
 
+class AgentToolDetailResponse(APIModel):
+    """One tool in full: metadata, safety shape and argument schema.
+
+    The capabilities response answers "what can this runtime do"; this answers
+    "what exactly is this tool", which is what a security review, the workspace
+    and an integrator each need. ``workers`` is the reverse mapping — which tool
+    boundaries may call it — so a tool's reach is readable without cross-checking
+    every worker.
+    """
+
+    id: str
+    name: str
+    category: str
+    description: str
+    version: str = "1.0.0"
+    permissions: list[str]
+    risk_level: str
+    availability: str = "AVAILABLE"
+    deterministic: bool
+    side_effect_free: bool
+    arguments_schema: dict[str, Any]
+    output_schema: dict[str, Any] | None = None
+    workers: list[str]
+
+
+class AgentToolCatalogueResponse(APIModel):
+    """The closed catalogue of every tool the runtime has."""
+
+    tools: list[AgentToolDetailResponse]
+
+
+class AgentToolUsageResponse(APIModel):
+    """How often one tool carried a run, and how its calls turned out."""
+
+    tool_name: str
+    call_count: int
+    succeeded: int
+    failed: int
+    blocked: int
+    last_used_at: datetime | None = None
+
+
+class AgentWorkerResponse(APIModel):
+    """One tool boundary in the runtime.
+
+    A worker is the closed toolset a particular kind of task may use, so the
+    capabilities response names the boundary layer itself, not just the tools.
+    Two claims here are load-bearing and the tests pin both: each task type is
+    bound to exactly one worker, and a worker never names a tool that is not in
+    the runtime's ``tools`` list.
+    """
+
+    id: str
+    name: str
+    description: str
+    #: The plan's task types this worker serves. Anything unmapped falls through
+    #: to ``reasoning``, so an unfamiliar task type is served by the narrowest
+    #: boundary rather than by everything.
+    academic_task_types: list[str]
+    tools: list[str]
+    #: The verbs the worker is for, independent of the tools it uses.
+    capabilities: list[str] = []
+    #: Academic domains the worker is competent in. A routing hint, not a grant.
+    supported_domains: list[str] = []
+    output_artifact_types: list[str]
+
+
 class AgentCapabilitiesResponse(APIModel):
     """What this runtime can do, and — more importantly — what it cannot.
 
@@ -278,6 +381,7 @@ class AgentCapabilitiesResponse(APIModel):
     """
 
     tools: list[AgentToolResponse]
+    workers: list[AgentWorkerResponse]
     executors: list[str]
     modes: list[AgentRunMode]
     actions: list[AgentAction]
@@ -294,11 +398,13 @@ AgentRunResponse.model_rebuild()
 def build_agent_capabilities(
     *,
     tools: list[AgentToolResponse],
+    workers: list[AgentWorkerResponse],
     executors: list[str],
     limits: dict[str, Any],
 ) -> AgentCapabilitiesResponse:
     return AgentCapabilitiesResponse(
         tools=tools,
+        workers=workers,
         executors=executors,
         modes=[AgentRunMode.SUPERVISED, AgentRunMode.AUTONOMOUS],
         actions=list(AgentAction),
