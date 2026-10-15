@@ -142,37 +142,6 @@ export function EmptyState({
   );
 }
 
-export function Modal({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-}) {
-  if (!open) return null;
-  return (
-    <div aria-modal="true" className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center p-4" role="dialog">
-      <div className="absolute inset-0 bg-[var(--color-ink)]/20" onClick={onClose} />
-      <div className="relative z-[var(--z-modal)] w-full max-w-md rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-raised)]">
-        <div className="flex items-center justify-between border-b border-[var(--color-line)] p-4">
-          <h2 className="text-base font-semibold text-[var(--color-ink)]">{title}</h2>
-          <button aria-label="Close" className="btn-ghost !min-h-8 !px-2" onClick={onClose} type="button">
-            ×
-          </button>
-        </div>
-        <div className="p-4 text-[var(--color-ink)]">{children}</div>
-        {footer ? <div className="border-t border-[var(--color-line)] p-4">{footer}</div> : null}
-      </div>
-    </div>
-  );
-}
-
 export function Skeleton({ className = "h-4 w-full" }: { className?: string }) {
   return <div className={`animate-pulse rounded-[var(--radius-control)] bg-[var(--color-surface-sunken)] ${className}`} />;
 }

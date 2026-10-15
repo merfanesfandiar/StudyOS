@@ -8,12 +8,61 @@ import { usePreferences } from "./preferences-provider";
 import { LanguageToggle, ThemeToggle } from "./preferences-controls";
 import type { MessageKey } from "@/lib/i18n/messages";
 
-const navigation: { href: string; label: MessageKey }[] = [
-  { href: "/dashboard", label: "nav.dashboard" },
-  { href: "/courses", label: "nav.courses" },
-  { href: "/assignments", label: "nav.assignments" },
-  { href: "/settings", label: "nav.settings" },
+const navigation: { href: string; label: MessageKey; icon: React.ReactNode }[] = [
+  { href: "/dashboard", label: "nav.dashboard", icon: <DashboardIcon /> },
+  { href: "/courses", label: "nav.courses", icon: <CoursesIcon /> },
+  { href: "/assignments", label: "nav.assignments", icon: <AssignmentsIcon /> },
+  { href: "/settings", label: "nav.settings", icon: <SettingsIcon /> },
 ];
+
+const iconProps = {
+  "aria-hidden": true,
+  className: "size-4.5 shrink-0",
+  fill: "none",
+  stroke: "currentColor",
+  strokeLinecap: "round" as const,
+  strokeLinejoin: "round" as const,
+  strokeWidth: 1.75,
+  viewBox: "0 0 24 24",
+};
+
+function DashboardIcon() {
+  return (
+    <svg {...iconProps}>
+      <rect height="7" rx="1.5" width="7" x="3" y="3" />
+      <rect height="7" rx="1.5" width="7" x="14" y="3" />
+      <rect height="7" rx="1.5" width="7" x="3" y="14" />
+      <rect height="7" rx="1.5" width="7" x="14" y="14" />
+    </svg>
+  );
+}
+
+function CoursesIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H19v15H6.5A2.5 2.5 0 0 0 4 20.5z" />
+      <path d="M4 20.5A2.5 2.5 0 0 1 6.5 18H19v3H6.5" />
+    </svg>
+  );
+}
+
+function AssignmentsIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M8 4h8a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2z" />
+      <path d="M9 3h6v3H9zM9 11h6M9 15h4" />
+    </svg>
+  );
+}
+
+function SettingsIcon() {
+  return (
+    <svg {...iconProps}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 12" />
+    </svg>
+  );
+}
 
 export function ProtectedShell({ children }: { children: React.ReactNode }) {
   const { status } = useAuth();
@@ -80,7 +129,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
               return (
                 <Link
                   aria-current={active ? "page" : undefined}
-                  className={`rounded-[var(--radius-control)] px-3 py-2 text-sm font-medium transition ${
+                  className={`flex items-center gap-2.5 rounded-[var(--radius-control)] px-3 py-2 text-sm font-medium transition ${
                     active
                       ? "bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
                       : "text-[var(--color-ink-muted)] hover:bg-[var(--color-surface-sunken)] hover:text-[var(--color-ink)]"
@@ -88,6 +137,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
                   href={item.href}
                   key={item.href}
                 >
+                  {item.icon}
                   {t(item.label)}
                 </Link>
               );

@@ -77,6 +77,8 @@ export const en = {
   "common.retry": "Try again",
 
   "dashboard.title": "Dashboard",
+  "dashboard.focus": "Focus",
+  "dashboard.focusLabel": "Up next",
   "dashboard.welcome": "Welcome back, {name}",
   "dashboard.courses": "Courses",
   "dashboard.assignments": "Assignments",
@@ -1187,6 +1189,8 @@ export const fa: Catalogue = {
   "common.retry": "تلاش دوباره",
 
   "dashboard.title": "داشبورد",
+  "dashboard.focus": "تمرکز",
+  "dashboard.focusLabel": "بعدی",
   "dashboard.welcome": "خوش آمدید، {name}",
   "dashboard.courses": "دوره‌ها",
   "dashboard.assignments": "تکالیف",

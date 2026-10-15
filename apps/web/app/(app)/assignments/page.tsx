@@ -131,7 +131,7 @@ export default function AssignmentsPage() {
             <button
               className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${
                 status === item.value
-                  ? "bg-[var(--color-accent)] text-white"
+                  ? "bg-[var(--color-accent)] text-[var(--color-accent-ink)]"
                   : "bg-[var(--color-surface-sunken)] text-[var(--color-ink-muted)] hover:bg-[var(--color-line)]"
               }`}
               key={item.value}
