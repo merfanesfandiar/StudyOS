@@ -127,12 +127,17 @@ export const SPECIFICATION: AssignmentSpecification = {
       updated_at: NOW,
     },
   ],
+  // Deliberately not "Java": the English catalogue now translates a technology
+  // type named "Java" (`execution.type.java` -> "جاوا"), so a fixture that used
+  // it as *data* tripped the Persian scan -- which reads a Latin catalogue word
+  // on a `fa` page as an untranslated string. Any technology name that is not
+  // also a catalogue value keeps that scan pointed at real leaks.
   technologies: [
     {
       id: ID.technology,
       workspace_id: ID.course,
-      name: "Java",
-      version: "21",
+      name: "Kotlin",
+      version: "1.9",
       category: "LANGUAGE",
       created_at: NOW,
     },
@@ -200,7 +205,7 @@ export const SPECIFICATION: AssignmentSpecification = {
     criteria_balanced: false,
     deliverables_total: 1,
     deliverables_completed: 0,
-    technologies: ["Java"],
+    technologies: ["Kotlin"],
     tags: ["معماری", "آزمون"],
     resources_total: 1,
     readiness: "INCOMPLETE",
