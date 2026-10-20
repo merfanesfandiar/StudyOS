@@ -643,11 +643,8 @@ export const en = {
   "common.email": "Email",
   "common.overall": "Overall",
 
-  "auth.tagline": "Academic clarity, from brief to plan.",
-  "auth.eyebrow": "Academic clarity",
   "auth.headline": "Turn briefs into a plan you can execute.",
   "auth.pitch": "Keep courses, assignment briefs, requirements, documents, and grading criteria organized in one focused workspace.",
-  "auth.taglineShort": "Your workspace, your workflow.",
   "auth.createTitle": "Create your account",
   "auth.welcomeTitle": "Welcome back",
   "auth.createBody": "Start a private workspace for your courses and assignments.",
@@ -1747,11 +1744,8 @@ export const fa: Catalogue = {
   "common.email": "ایمیل",
   "common.overall": "کلی",
 
-  "auth.tagline": "وضوح آکادمیک، از صورت مسئله تا برنامه.",
-  "auth.eyebrow": "وضوح آکادمیک",
   "auth.headline": "صورت مسئله را به برنامه‌ای که می‌توانید اجرا کنید تبدیل کنید.",
   "auth.pitch": "دروس، صورت مسئله‌ها، الزامات، اسناد و معیارهای نمره‌دهی را در یک فضای کاری منظم نگه دارید.",
-  "auth.taglineShort": "فضای کاری شما، روش کار شما.",
   "auth.createTitle": "حساب خود را بسازید",
   "auth.welcomeTitle": "خوش آمدید",
   "auth.createBody": "فضای کاری خصوصی خود را برای دروس و تکالیف شروع کنید.",
