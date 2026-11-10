@@ -29,6 +29,7 @@ from app.ai.provider import LLMProvider, LLMRequest, LLMResponse, LLMUsage
 from app.core.errors import AppError
 from app.models import (
     AcademicWorkPlan,
+    AgentCheckpoint,
     AgentRun,
     Assignment,
     AssignmentAnalysis,
@@ -43,12 +44,15 @@ from app.models.enums import (
     AcademicTaskStatus,
     AcademicTaskType,
     AgentCheckpointStatus,
+    AgentCheckpointType,
     AgentRunMode,
     AgentRunStatus,
     AuditEventType,
     PlanStatus,
 )
 from app.modules.agent import recovery, service
+from app.modules.agent.selection import TaskNode
+from app.modules.agent.state_machine import parse_status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1075,6 +1079,189 @@ async def test_a_model_that_only_drafts_is_asked_instead_of_spending_the_budget(
     assert run.iteration_count < run.max_iterations, (
         "the guard must fire long before the whole step budget is gone"
     )
+
+
+# ---------------------------------------------------------------------------
+# A REVIEW checkpoint acts on the option the student chose
+# ---------------------------------------------------------------------------
+
+
+async def _review_checkpoint(
+    db: AsyncSession, run: AgentRun, task: PlanTask
+) -> AgentCheckpoint:
+    """Create the revision-limit question the runtime would actually ask."""
+    return await service._create_checkpoint(
+        db,
+        run,
+        checkpoint_type=AgentCheckpointType.REVIEW,
+        task=task,
+        question=(
+            f"I have drafted {task.key} 3 times without finishing it. "
+            "Would you like me to keep revising, move on, or stop?"
+        ),
+        context=(
+            "Repeated drafting usually means the task is missing information "
+            "rather than that another pass will fix it."
+        ),
+        options=["Keep revising", "Move on and leave the draft", "Stop this run"],
+    )
+
+
+async def _review_fixture(
+    db: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> tuple[AgentRun, PlanTask]:
+    plan = await _approved_plan(db, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db, mode=AgentRunMode.SUPERVISED)
+    await service.start_run(run, owner, db)
+    task = await db.scalar(select(PlanTask).where(PlanTask.plan_id == plan.id))
+    assert task is not None
+    return run, task
+
+
+async def test_choosing_stop_on_a_review_checkpoint_cancels_the_run(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """\"Stop this run\" must end the run, not resume it for the student to stop.
+
+    The option only means something if choosing it is enough. Previously every
+    REVIEW answer took the same "resume" branch, so the run restarted and the
+    student had to stop a run they had just asked to stop.
+    """
+    run, task = await _review_fixture(db_session, assignment, analysis, owner)
+    checkpoint = await _review_checkpoint(db_session, run, task)
+
+    await service.resolve_checkpoint(
+        checkpoint, run, owner, db_session, selected_option="Stop this run", approved=False
+    )
+    await db_session.commit()
+
+    assert parse_status(run.status) is AgentRunStatus.CANCELLED
+    assert checkpoint.status == AgentCheckpointStatus.RESOLVED.value
+
+
+async def test_choosing_move_on_completes_the_task_and_resumes(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """Leaving a draft behind is a real decision, so the task must close.
+
+    If "move on" only resumed the run, the selector would pick the same
+    unfinished task again and the student would be asked the identical question.
+    """
+    run, task = await _review_fixture(db_session, assignment, analysis, owner)
+    checkpoint = await _review_checkpoint(db_session, run, task)
+
+    await service.resolve_checkpoint(
+        checkpoint,
+        run,
+        owner,
+        db_session,
+        selected_option="Move on and leave the draft",
+        approved=True,
+    )
+    await db_session.commit()
+
+    await db_session.refresh(task)
+    assert task.status == AcademicTaskStatus.COMPLETED.value
+    assert parse_status(run.status) is AgentRunStatus.RUNNING
+
+
+async def test_choosing_keep_revising_extends_the_draft_allowance(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """\"Keep revising\" buys exactly one more draft, and it is auditable.
+
+    Without the extension the resolved checkpoint changed nothing, the next draft
+    hit the same cap and the student was asked the same question again.
+    """
+    run, task = await _review_fixture(db_session, assignment, analysis, owner)
+    before = await service._revision_limit(db_session, run, task)
+    checkpoint = await _review_checkpoint(db_session, run, task)
+
+    await service.resolve_checkpoint(
+        checkpoint, run, owner, db_session, selected_option="Keep revising", approved=True
+    )
+    await db_session.commit()
+
+    after = await service._revision_limit(db_session, run, task)
+    assert after == before + 1
+    assert parse_status(run.status) is AgentRunStatus.RUNNING
+
+
+# ---------------------------------------------------------------------------
+# An answer is an input to the next step, not a dead-end record
+# ---------------------------------------------------------------------------
+
+
+async def test_a_students_answer_reaches_the_next_step_context(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """Resolving a checkpoint must feed the answer back into the prompt.
+
+    The checkpoint stored the answer but the runtime used to drop it on resume,
+    so a clarification changed nothing and the model could ask it again.
+    """
+    plan = await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    task = await db_session.scalar(select(PlanTask).where(PlanTask.plan_id == plan.id))
+    assert task is not None
+
+    now = datetime.now(UTC)
+    db_session.add(
+        AgentCheckpoint(
+            run_id=run.id,
+            task_id=task.id,
+            checkpoint_type=AgentCheckpointType.CLARIFICATION.value,
+            status=AgentCheckpointStatus.RESOLVED.value,
+            question="Which notation should I use?",
+            response="Knopp",
+            requested_at=now - timedelta(minutes=2),
+            resolved_at=now - timedelta(minutes=1),
+        )
+    )
+    await db_session.flush()
+
+    node = TaskNode(
+        key=task.key,
+        status=task.status,
+        priority=task.priority,
+        position=task.position,
+        type=task.type,
+    )
+    context = await service._build_context(db_session, run, plan, assignment, task, node)
+
+    answers = context.sections.get("student_answers", "")
+    assert "Which notation should I use?" in answers
+    assert "Knopp" in answers
+    assert "Knopp" in context.text
+
+
+async def test_a_permission_retry_stays_pending_rather_than_becoming_a_refusal(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """\"Try that step again\" requests another option; it does not reject the call.
+
+    Mapping retry to ``rejected`` made the retry button permanently block the
+    exact invocation it was meant to reconsider.
+    """
+    await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
+    run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
+    binding = "run_tests\x00{}"
+    db_session.add(
+        AgentCheckpoint(
+            run_id=run.id,
+            checkpoint_type=AgentCheckpointType.PERMISSION.value,
+            status=AgentCheckpointStatus.RESOLVED.value,
+            question="Run this?",
+            context=binding,
+            response="retry",
+            requested_at=datetime.now(UTC),
+            resolved_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+    state = await service._tool_approval_state(db_session, run.id, binding)
+    assert state == "pending"
 
 
 # ---------------------------------------------------------------------------

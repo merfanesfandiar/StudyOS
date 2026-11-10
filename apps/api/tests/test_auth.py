@@ -10,6 +10,9 @@ async def test_register_login_and_me(client: AsyncClient) -> None:
     registered = await register_user(client)
     assert registered["user"]["email"] == "student@example.com"
     assert "password_hash" not in registered["user"]
+    assert "access_token" not in registered, (
+        "the session belongs in the HttpOnly cookie, not in a body JavaScript can read"
+    )
 
     logout = await client.post("/api/v1/auth/logout")
     assert logout.status_code == 204
@@ -19,9 +22,34 @@ async def test_register_login_and_me(client: AsyncClient) -> None:
         json={"email": "STUDENT@example.com", "password": "StrongPass123"},
     )
     assert login.status_code == 200
+    assert "access_token" not in login.json()
+    assert login.headers["cache-control"] == "no-store"
     me = await client.get("/api/v1/auth/me")
     assert me.status_code == 200
     assert me.json()["email"] == "student@example.com"
+
+
+@pytest.mark.asyncio
+async def test_logout_revokes_a_token_that_was_already_copied(client: AsyncClient) -> None:
+    """Deleting the cookie is not revocation when the token is stateless.
+
+    A token captured before logout must stop authenticating even if the caller
+    keeps sending it in the Authorization header.
+    """
+    from app.core.config import get_settings as settings_fn
+
+    await register_user(client)
+    stolen = client.cookies.get(settings_fn().cookie_name)
+    assert stolen
+
+    logout = await client.post("/api/v1/auth/logout")
+    assert logout.status_code == 204
+
+    replay = await client.get(
+        "/api/v1/auth/me", headers={"Authorization": f"Bearer {stolen}"}
+    )
+    assert replay.status_code == 401
+    assert replay.json()["error"]["code"] == "INVALID_TOKEN"
 
 
 @pytest.mark.asyncio

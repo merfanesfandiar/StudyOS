@@ -85,9 +85,16 @@ async def dashboard(
         )
     )
     completion_percentage = round((completed / assignments_count) * 100) if assignments_count else 0
-    average_readiness_score = (
-        round(sum(item.readiness_score for item in items) / len(items)) if items else 0
+    # Aggregate in SQL over the whole workspace, not over the 500-row window the
+    # page can render. The window is a rendering bound; using it for an average
+    # silently turned "your average readiness" into "the average of the newest
+    # 500 assignments" once a workspace grew past the cap.
+    readiness_average = await db.scalar(
+        select(func.avg(Assignment.readiness_score)).where(
+            Assignment.workspace_id == workspace.id
+        )
     )
+    average_readiness_score = round(float(readiness_average or 0))
     return DashboardResponse(
         upcoming_assignments=upcoming,
         recent_assignments=items[:5],

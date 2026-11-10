@@ -1269,7 +1269,15 @@ async def resolve_checkpoint(
         )
 
     checkpoint.status = AgentCheckpointStatus.RESOLVED.value
-    checkpoint.response = response or selected_option or ("approved" if approved else "rejected")
+    # A permission retry is not a rejection: "try that step again" means ask the
+    # runtime to look for another route, so the gate must produce a fresh
+    # question instead of reading the old answer as refused.
+    if approved is False and retry:
+        checkpoint.response = "retry"
+    else:
+        checkpoint.response = response or selected_option or (
+            "approved" if approved else "rejected"
+        )
     checkpoint.resolved_at = datetime.now(UTC)
     checkpoint.resolved_by_id = user.id
     await db.flush()
@@ -1283,6 +1291,7 @@ async def resolve_checkpoint(
             "checkpoint_id": str(checkpoint.id),
             "approved": approved,
             "retry": retry,
+            "selected_option": selected_option,
         },
         task_id=checkpoint.task_id,
     )
@@ -1293,8 +1302,52 @@ async def resolve_checkpoint(
         AuditEventType.AGENT_CHECKPOINT_RESOLVED,
         entity_type="agent_checkpoint",
         entity_id=checkpoint.id,
-        metadata={"approved": approved, "retry": retry},
+        metadata={
+            "approved": approved,
+            "retry": retry,
+            "selected_option": selected_option,
+        },
     )
+
+    # A REVIEW checkpoint offers real choices, so the resume path has to act on
+    # the one chosen instead of always taking the same branch. "Stop" is terminal
+    # (not a resumed run the student then has to stop again) and "move on" is the
+    # only way to leave a draft behind without pretending another revision will
+    # finish it. "Keep revising" needs no branch here: the resolved checkpoint
+    # raises the revision allowance consulted below.
+    choice = (selected_option or "").strip().lower()
+    if (
+        checkpoint.checkpoint_type == AgentCheckpointType.REVIEW.value
+        and choice == "stop this run"
+    ):
+        await cancel_run(run, user, db, reason="You chose to stop this run.")
+        await db.flush()
+        return checkpoint
+    if (
+        checkpoint.checkpoint_type == AgentCheckpointType.REVIEW.value
+        and choice.startswith("move on")
+        and checkpoint.task_id is not None
+    ):
+        task = await db.get(PlanTask, checkpoint.task_id)
+        if task is not None and task.status != AcademicTaskStatus.COMPLETED.value:
+            task.status = AcademicTaskStatus.COMPLETED.value
+            await _append_event(
+                db,
+                run,
+                AgentEventType.TASK_COMPLETED,
+                f"Completed {task.key} with the student's draft left as-is.",
+                metadata={"task_key": task.key, "student_choice": selected_option},
+                task_id=task.id,
+            )
+            await _audit_run(
+                db,
+                run,
+                user,
+                AuditEventType.AGENT_TASK_COMPLETED,
+                entity_type="plan_task",
+                entity_id=task.id,
+                metadata={"task_key": task.key, "student_choice": selected_option},
+            )
 
     # Answering the question is what unblocks the run. Without this the run stays
     # WAITING_FOR_USER forever: the question is resolved, but nothing is left
@@ -1306,7 +1359,11 @@ async def resolve_checkpoint(
             run,
             AgentEventType.RUN_RESUMED,
             "You answered the question, so the run is continuing.",
-            metadata={"checkpoint_id": str(checkpoint.id), "retry": retry},
+            metadata={
+                "checkpoint_id": str(checkpoint.id),
+                "retry": retry,
+                "selected_option": selected_option,
+            },
         )
         await _audit_run(
             db,
@@ -2327,7 +2384,7 @@ async def _run_step(
         # Terminal dispatches: an artifact draft or a checkpoint end the step.
         if decision.tool == "write_artifact":
             existing = await _artifact_revisions(db, run, task)
-            if existing >= MAX_REVISIONS_PER_TASK:
+            if existing >= await _revision_limit(db, run, task):
                 await _close_execution(db, execution, AgentExecutionStatus.SUCCESS, result.summary)
                 decision_row.outcome = "REVISION_LIMIT_REACHED"
                 await _create_checkpoint(
@@ -2514,6 +2571,35 @@ async def _build_context(
         if task is None or a.task_id is None or a.task_id == task.id
     ]
 
+    # Answers the student has already given are part of the step's context. The
+    # checkpoint stored them, but the runtime used to drop them on resume, so a
+    # clarification or an offered option changed nothing and the model could ask
+    # the same question again. Keep only a short, task-scoped tail: old answers
+    # are history, the most recent decisions are the ones that bind this step.
+    answer_scope = (
+        AgentCheckpoint.task_id == task.id
+        if task is not None
+        else AgentCheckpoint.task_id.is_(None)
+    )
+    answer_rows = list(
+        await db.scalars(
+            select(AgentCheckpoint)
+            .where(
+                AgentCheckpoint.run_id == run.id,
+                AgentCheckpoint.status == AgentCheckpointStatus.RESOLVED.value,
+                AgentCheckpoint.response.is_not(None),
+                answer_scope,
+            )
+            .order_by(AgentCheckpoint.resolved_at.desc())
+            .limit(3)
+        )
+    )
+    student_answers = [
+        (row.question, row.response or "")
+        for row in reversed(answer_rows)
+        if row.response
+    ]
+
     return assemble_context(
         run_id=run.id,
         task_key=node.key,
@@ -2525,6 +2611,7 @@ async def _build_context(
         requirements=[(link.requirement_key, "") for link in requirement_links],
         constraints=[],
         prior_artifacts=prior_artifacts,
+        student_answers=student_answers,
         assignment_title=assignment.title,
         plan_title=plan.title,
         max_chars=settings.agent_max_context_chars,
@@ -2687,7 +2774,14 @@ async def _tool_approval_state(
         return "pending"
     status_value, response = row
     if status_value == AgentCheckpointStatus.RESOLVED.value:
-        return "approved" if response == "approved" else "rejected"
+        if response == "approved":
+            return "approved"
+        if response == "retry":
+            # "Try that step again" is a request for another option, not a
+            # refusal of the operation. Treat it as unanswered so the runtime
+            # raises a fresh PERMISSION checkpoint instead of blocking.
+            return "pending"
+        return "rejected"
     return "pending"
 
 
@@ -2883,6 +2977,30 @@ async def _artifact_revisions(db: AsyncSession, run: AgentRun, task: PlanTask | 
         .where(AgentArtifact.run_id == run.id, AgentArtifact.task_id == task.id)
     )
     return int(total or 0)
+
+
+async def _revision_limit(db: AsyncSession, run: AgentRun, task: PlanTask | None) -> int:
+    """Draft allowance for a task, extended by explicit student choices.
+
+    The default cap stops a model from spending the whole budget re-drafting.
+    "Keep revising" is a person overriding that judgement for one more pass, so
+    each such resolution on this task buys exactly one extra draft. Without this,
+    the option changed nothing and the run re-asked the identical question.
+    """
+    if task is None:
+        return MAX_REVISIONS_PER_TASK
+    extensions = await db.scalar(
+        select(func.count())
+        .select_from(AgentCheckpoint)
+        .where(
+            AgentCheckpoint.run_id == run.id,
+            AgentCheckpoint.task_id == task.id,
+            AgentCheckpoint.checkpoint_type == AgentCheckpointType.REVIEW.value,
+            AgentCheckpoint.status == AgentCheckpointStatus.RESOLVED.value,
+            func.lower(AgentCheckpoint.response) == "keep revising",
+        )
+    )
+    return MAX_REVISIONS_PER_TASK + int(extensions or 0)
 
 
 def _charge_run(run: AgentRun, response: LLMResponse) -> None:
@@ -3093,7 +3211,7 @@ async def _execute_and_finish(
         # spending the whole step budget on one task would quietly cost the
         # student real money for no additional value. After the cap, ask.
         existing = await _artifact_revisions(db, run, task)
-        if existing >= MAX_REVISIONS_PER_TASK:
+        if existing >= await _revision_limit(db, run, task):
             await _close_execution(db, execution, AgentExecutionStatus.SUCCESS, result.summary)
             decision_row.outcome = "REVISION_LIMIT_REACHED"
             await _create_checkpoint(

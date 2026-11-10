@@ -5,12 +5,13 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_current_user, get_current_workspace
 from app.core.errors import AppError
 from app.db.session import get_db
-from app.models import Assignment, User, Workspace
+from app.models import Assignment, ExecutionArtifact, ExecutionJob, User, Workspace
 from app.models.enums import AssignmentStatus, AuditEventType, NotificationType
 from app.modules.assignments.lifecycle import (
     ensure_client_settable,
@@ -270,6 +271,24 @@ async def delete_assignment(assignment_id: UUID, user: CurrentUser, db: Db) -> N
     storage = get_storage()
     for document in assignment.documents:
         storage.delete(document.storage_key)
+
+    # Execution artifacts are files too, and the assignment foreign key is
+    # SET NULL rather than CASCADE so the execution record survives deletion.
+    # Relying on the row cascade therefore removed the metadata and left the
+    # bytes behind. Delete the objects explicitly and null the keys: the record
+    # that a job ran is evidence, a dangling storage key is a leak.
+    artifact_rows = list(
+        await db.scalars(
+            select(ExecutionArtifact)
+            .join(ExecutionJob, ExecutionJob.id == ExecutionArtifact.job_id)
+            .where(ExecutionJob.assignment_id == assignment.id)
+        )
+    )
+    for artifact in artifact_rows:
+        if artifact.storage_key:
+            storage.delete(artifact.storage_key)
+            artifact.storage_key = None
+
     await record_specification_change(
         db,
         assignment=assignment,

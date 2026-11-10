@@ -1022,6 +1022,71 @@ async def test_recovery_of_your_own_assignment_does_work(
     assert recovered.status_code == 200
     assert recovered.json()["status"] == AgentRunStatus.PAUSED.value
 
+    from app.models.entities import AgentEvent
+    from app.models.enums import AgentEventType
+
+    event = await db_session.scalar(
+        select(AgentEvent).where(
+            AgentEvent.run_id == run.id,
+            AgentEvent.event_type == AgentEventType.RUN_RECOVERED.value,
+        )
+    )
+    assert event is not None
+    assert event.assignment_id == run.assignment_id
+    assert event.workspace_id is not None
+    assert event.correlation_id and event.trace_id and event.span_id
+    assert event.source_component == "agent.recovery"
+    assert event.severity == "WARNING"
+
+
+@pytest.mark.asyncio
+async def test_recovery_events_are_redacted_like_runtime_events(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The recovery writer must use the same redaction/instrumentation path.
+
+    It used to construct ``AgentEvent`` directly, which stored metadata verbatim
+    and omitted the denormalised columns an operational query needs.
+    """
+    from app.models.entities import AgentRun
+    from app.models.enums import AgentEventType
+    from app.modules.agent.recovery import _append_event
+
+    await register_user(client)
+    course = (await client.post("/api/v1/courses", json={"name": "C", "code": "R2"})).json()
+    assignment = (
+        await client.post(
+            "/api/v1/assignments",
+            json={
+                "course_id": course["id"],
+                "title": "T",
+                "description": "D",
+                "deadline": (datetime.now(UTC) + timedelta(days=5)).isoformat(),
+            },
+        )
+    ).json()
+
+    run = AgentRun(
+        assignment_id=UUID(assignment["id"]),
+        plan_id=None,
+        status=AgentRunStatus.RUNNING.value,
+        mode="SUPERVISED",
+    )
+    db_session.add(run)
+    await db_session.flush()
+
+    event = await _append_event(
+        db_session,
+        run,
+        AgentEventType.RUN_RECOVERED,
+        "Recovered.",
+        metadata={"access_token": "must-not-persist", "reason": "stale heartbeat"},
+    )
+    assert event.metadata_json["access_token"] == "[REDACTED]"
+    assert event.metadata_json["reason"] == "stale heartbeat"
+    assert event.source_component == "agent.recovery"
+    assert event.workspace_id is not None
+
 
 # ---------------------------------------------------------------------------
 # Public tool catalogue and run-scoped tool views

@@ -19,12 +19,14 @@ JavaScript.
 Supporting choices:
 
 - Passwords are hashed with Argon2id and never leave the database in any form.
-- The login response also returns `access_token` for API clients and integration tests, but the web
-  application does not use it.
+- Auth responses never put the token in the JSON body. Browsers rely solely on the cookie, so the
+  token is not exposed to JavaScript, logs, or XSS. Auth responses also send `Cache-Control: no-store`.
+- The JWT carries a `ver` claim matching `users.token_version`. Logout increments that version, so
+  every outstanding token for the user is rejected, not just the cookie being cleared.
 - `SameSite=Lax` and an explicit `max_age` bound the cookie lifetime; the token TTL is shorter than
   the cookie so an expired session fails server side rather than relying on cookie expiry alone.
 - CORS is an explicit allowlist and never `*` with credentials.
-- Logout clears the cookie server side.
+- Logout clears the cookie server side and revokes the token version.
 
 ## Consequences
 
@@ -33,5 +35,7 @@ Supporting choices:
 - Because cookies are not sent on cross-site requests, the web app and the API must be addressed
   through the same hostname during local development. Mixing `localhost` and `127.0.0.1` produces
   silent 401s, which is the most likely first-time setup mistake.
-- Adding a mobile or CLI client later means treating the returned `access_token` as the primary
-  path, which the current API already supports.
+- Adding a mobile or CLI client later is a deliberate change: it needs an explicit token endpoint or
+  client type, because the browser login response no longer exposes a token.
+- Revocation is global per user, not per device. Logging out on one device ends the sessions on the
+  others; per-device sessions would need a separate session table.

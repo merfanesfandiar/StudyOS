@@ -58,6 +58,24 @@ def test_migrations_match_model_columns(tmp_path: Path, monkeypatch: pytest.Monk
         assert migrated == {column.name for column in table.columns}, table_name
 
 
+def test_planning_runs_started_at_is_not_nullable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A column comparison ignores nullability, which is the part that matters.
+
+    ``PlanningRun`` is written already RUNNING with ``started_at`` set, so a null
+    is not a valid state. The model declared the column nullable anyway, and a
+    migration that merely matched the name would leave a database able to store a
+    run whose duration can never be measured.
+    """
+    database_file = tmp_path / "started-at.db"
+    _migrate_to_head(database_file, monkeypatch)
+
+    inspector = inspect(_sync_engine(database_file))
+    columns = {column["name"]: column for column in inspector.get_columns("planning_runs")}
+    assert columns["started_at"]["nullable"] is False
+
+
 def test_migrations_are_reversible(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     database_file = tmp_path / "reversible.db"
     _migrate_to_head(database_file, monkeypatch)

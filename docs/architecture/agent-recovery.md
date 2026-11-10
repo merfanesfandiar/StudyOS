@@ -56,7 +56,10 @@ previous sweep did.
 
 ## Audit attribution
 
-Recovery events are written with `user_id = None`.
+Recovery events are written with `user_id = None`: the actor was the runtime, not a person. They go
+through the same `observability.service.record_event` path as runtime events, so metadata is redacted,
+`assignment_id`/`workspace_id` and correlation/trace ids are stamped, and the rows are queryable from
+the operational views with `agent.recovery` as the source component.
 
 The actor was the runtime, not a person. Recording the student who happened to click a button — or
 the operator who happened to restart a node — would put a false actor in an audit log, and an audit

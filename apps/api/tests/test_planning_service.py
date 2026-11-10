@@ -690,6 +690,10 @@ async def test_run_records_the_model_that_answered(
         prompt_version="academic_planner_v1",
     )
     assert run.status == PlanningRunStatus.RUNNING.value
+    # A run row is written before the first model call, and its whole purpose is
+    # to prove generation was attempted. A null start time makes its duration
+    # unmeasurable, so the writer sets it at creation.
+    assert run.started_at is not None
 
     plan, _ = await _persist(db_session, assignment, analysis, contract, preferences)
     await service.finish_run(

@@ -76,10 +76,13 @@ async def register(
             409, "EMAIL_ALREADY_REGISTERED", "An account with this email already exists."
         ) from exc
 
-    token, expires_in = create_access_token(user.id)
+    token, expires_in = create_access_token(user.id, user.token_version)
     set_session_cookie(response, token, expires_in)
+    # A token in the response body is readable by JavaScript, logged by proxies
+    # and copied by XSS. The browser already has the HttpOnly cookie, so the
+    # body only carries session metadata.
+    response.headers["Cache-Control"] = "no-store"
     return TokenResponse(
-        access_token=token,
         expires_in=expires_in,
         user=UserResponse.model_validate(user),
     )
@@ -100,10 +103,10 @@ async def login(
     user = await db.scalar(select(User).where(func.lower(User.email) == payload.email.lower()))
     if user is None or not await verify_password(payload.password, user.password_hash):
         raise AppError(401, "INVALID_CREDENTIALS", "Email or password is incorrect.")
-    token, expires_in = create_access_token(user.id)
+    token, expires_in = create_access_token(user.id, user.token_version)
     set_session_cookie(response, token, expires_in)
+    response.headers["Cache-Control"] = "no-store"
     return TokenResponse(
-        access_token=token,
         expires_in=expires_in,
         user=UserResponse.model_validate(user),
     )
@@ -115,5 +118,20 @@ async def me(user: User = Depends(get_current_user)) -> UserResponse:
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, summary="Log out")
-async def logout(response: Response) -> None:
+async def logout(
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Revoke this user's tokens, not just the cookie holding one.
+
+    Deleting the cookie only stops the browser that received it. A token copied
+    elsewhere stays valid for the rest of its 30-minute lifetime, which is not
+    what "log out" means. Bumping ``token_version`` invalidates every token
+    minted before this moment; the cost is that logging out signs the user out
+    of all their sessions, which is the safe default for a study account.
+    """
+    user.token_version = (user.token_version or 0) + 1
+    await db.commit()
     response.delete_cookie(settings.cookie_name, path="/")
+    response.headers["Cache-Control"] = "no-store"

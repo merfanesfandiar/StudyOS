@@ -11,9 +11,12 @@ what this deployment cannot run.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
+from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import register_user
 
@@ -261,3 +264,60 @@ async def test_metrics_can_be_disabled(
     await register_user(client)
     response = await client.get(f"{BASE}/executions/metrics")
     assert response.status_code == 404
+
+
+async def test_deleting_an_assignment_removes_execution_artifact_bytes(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """Deleting an assignment must remove the files its executions produced.
+
+    ``ExecutionJob.assignment_id`` is ``SET NULL`` so the record that untrusted
+    code ran survives deletion. Relying on the row cascade therefore removed the
+    metadata and left the bytes in storage — a leak with an audit trail. The
+    delete path has to remove each object and null the key itself.
+    """
+    import importlib
+
+    from app.models import Assignment as AssignmentModel
+    from app.models import ExecutionArtifact, ExecutionJob
+
+    # ``app.modules.assignments.router`` the attribute is the APIRouter, not the
+    # module, so resolve the module the same way the fixtures do.
+    assignments_router = importlib.import_module("app.modules.assignments.router")
+
+    await register_user(client)
+    assignment = await _assignment(client)
+    row = await db_session.get(AssignmentModel, UUID(assignment["id"]))
+    assert row is not None
+
+    storage = assignments_router.get_storage()
+    key = "executions/job-1/out.txt"
+    storage.save(key, BytesIO(b"artifact bytes"), max_bytes=1_024)
+    assert storage.exists(key)
+
+    job = ExecutionJob(
+        workspace_id=row.workspace_id,
+        assignment_id=row.id,
+        execution_type="PYTHON",
+    )
+    db_session.add(job)
+    await db_session.flush()
+    artifact = ExecutionArtifact(
+        job_id=job.id,
+        workspace_id=row.workspace_id,
+        filename="out.txt",
+        storage_key=key,
+        kind="OUTPUT",
+    )
+    db_session.add(artifact)
+    await db_session.flush()
+
+    deleted = await client.delete(f"{BASE}/assignments/{row.id}")
+    assert deleted.status_code == 204, deleted.text
+
+    assert not storage.exists(key), "the artifact bytes must be deleted with the assignment"
+    await db_session.refresh(artifact)
+    assert artifact.storage_key is None
+    assert await db_session.get(ExecutionJob, job.id) is not None, (
+        "the execution record is evidence and must survive the assignment"
+    )

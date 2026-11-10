@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, EmptyState, LoadingState } from "@/components/ui";
 import { AgentUiView } from "@/components/agent/agent-ui";
 import { usePreferences } from "@/components/preferences-provider";
@@ -21,6 +21,7 @@ import { parseAgentUi } from "@/lib/agent-ui/validate";
 import { useAgent } from "@/lib/use-agent";
 import { api } from "@/lib/api";
 import { errorMessage } from "@/lib/error-message";
+import type { MessageKey, TranslateVars } from "@/lib/i18n/messages";
 
 /**
  * The agent workspace.
@@ -61,8 +62,9 @@ export function AgentPanel({
    */
   hasApprovedPlan: boolean;
 }) {
-  const { t, count, formatNumber, formatDate } = usePreferences();
+  const { t, count, formatNumber, formatDate, dir } = usePreferences();
   const [tab, setTab] = useState<Tab>("tasks");
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [mode, setMode] = useState<AgentRunMode>("SUPERVISED");
   const [note, setNote] = useState("");
   const [answer, setAnswer] = useState("");
@@ -305,7 +307,7 @@ export function AgentPanel({
       {run ? (
         <div className="space-y-4">
           <div className="flex gap-1 border-b border-[var(--color-line)]" role="tablist">
-            {tabs.map((item) => (
+            {tabs.map((item, index) => (
               <button
                 aria-controls={`agent-panel-${item.id}`}
                 aria-selected={tab === item.id}
@@ -317,7 +319,33 @@ export function AgentPanel({
                 id={`agent-tab-${item.id}`}
                 key={item.id}
                 onClick={() => setTab(item.id)}
+                onKeyDown={(event) => {
+                  // Roving tabindex: only the selected tab is in the tab order,
+                  // and arrows/Home/End move selection within the tablist. The
+                  // horizontal direction follows writing direction, or a Persian
+                  // reader pressing "right" would jump backwards.
+                  const forward = dir === "rtl" ? "ArrowLeft" : "ArrowRight";
+                  const backward = dir === "rtl" ? "ArrowRight" : "ArrowLeft";
+                  let next: number | null = null;
+                  if (event.key === forward || event.key === "ArrowDown") {
+                    next = (index + 1) % tabs.length;
+                  } else if (event.key === backward || event.key === "ArrowUp") {
+                    next = (index - 1 + tabs.length) % tabs.length;
+                  } else if (event.key === "Home") {
+                    next = 0;
+                  } else if (event.key === "End") {
+                    next = tabs.length - 1;
+                  }
+                  if (next === null) return;
+                  event.preventDefault();
+                  setTab(tabs[next].id);
+                  tabRefs.current[next]?.focus();
+                }}
+                ref={(node) => {
+                  tabRefs.current[index] = node;
+                }}
                 role="tab"
+                tabIndex={tab === item.id ? 0 : -1}
                 type="button"
               >
                 {item.label}
@@ -609,6 +637,10 @@ function CheckpointPrompt({
   );
   const needsText = !isDecision && (options.length === 0 || chosen === "");
   const canAnswer = Boolean(answer.trim() || chosen);
+  const question = localizeCheckpointQuestion(checkpoint.question, t);
+  const context = checkpoint.context
+    ? localizeCheckpointContext(checkpoint.context, t)
+    : null;
 
   return (
     <form
@@ -627,11 +659,11 @@ function CheckpointPrompt({
 
       <p className="text-sm text-[var(--color-ink)]">
         <span className="font-medium">{t("agent.question")}: </span>
-        {checkpoint.question}
+        {question}
       </p>
-      {checkpoint.context ? (
+      {context ? (
         <p className="rounded-lg bg-[var(--color-surface)] px-3 py-2 text-xs text-[var(--color-ink-muted)]">
-          {checkpoint.context}
+          {context}
         </p>
       ) : null}
 
@@ -655,7 +687,9 @@ function CheckpointPrompt({
                   type="radio"
                   value={option}
                 />
-                <span className="text-[var(--color-ink)]">{option}</span>
+                <span className="text-[var(--color-ink)]">
+                  {localizeCheckpointOption(option, t)}
+                </span>
               </label>
             ))}
           </div>
@@ -717,6 +751,58 @@ function CheckpointPrompt({
 
 /** The runtime's two option sentinels, matched case-insensitively. */
 const DECISION_OPTIONS = new Set(["approve", "reject"]);
+
+type RuntimeTranslator = (key: MessageKey, vars?: TranslateVars) => string;
+
+const REVISION_QUESTION =
+  /^I have drafted (.+) (\d+) times without finishing it\. Would you like me to keep revising, move on, or stop\?$/;
+const PERMISSION_QUESTION =
+  /^Running '(.+)' executes outside this run's own process, so it needs your approval\.$/;
+
+/**
+ * The agent runtime writes a small set of checkpoint questions and options
+ * itself (revision limits, the permission gate). Those strings are product copy,
+ * not model output, so the Persian UI should not show them in English. Anything
+ * the model authored passes through unchanged: translating generation requires a
+ * translation service, which is a product decision rather than a UI fix.
+ */
+function localizeCheckpointQuestion(question: string, t: RuntimeTranslator): string {
+  const revision = REVISION_QUESTION.exec(question);
+  if (revision) {
+    return t("agent.checkpoint.revisionLimit", {
+      key: revision[1],
+      count: revision[2],
+    });
+  }
+  const permission = PERMISSION_QUESTION.exec(question);
+  if (permission) {
+    return t("agent.checkpoint.permission", { tool: permission[1] });
+  }
+  return question;
+}
+
+function localizeCheckpointOption(option: string, t: RuntimeTranslator): string {
+  switch (option.trim().toLowerCase()) {
+    case "keep revising":
+      return t("agent.checkpoint.keepRevising");
+    case "move on and leave the draft":
+      return t("agent.checkpoint.moveOn");
+    case "stop this run":
+      return t("agent.checkpoint.stopRun");
+    default:
+      return option;
+  }
+}
+
+function localizeCheckpointContext(context: string, t: RuntimeTranslator): string {
+  if (
+    context ===
+    "Repeated drafting usually means the task is missing information rather than that another pass will fix it."
+  ) {
+    return t("agent.checkpoint.revisionContext");
+  }
+  return context;
+}
 
 /**
  * The optional Dynamic Agent UI attached to a checkpoint or artifact.

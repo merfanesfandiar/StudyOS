@@ -28,9 +28,9 @@ async def get_current_user(
             "Authentication is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    user_id = decode_access_token(raw_token)
+    user_id, token_version = decode_access_token(raw_token)
     user = await db.get(User, user_id)
-    if user is None:
+    if user is None or (user.token_version or 0) != token_version:
         raise AppError(401, "INVALID_TOKEN", "The authentication token is invalid.")
     request.state.user_id = str(user.id)
     return user

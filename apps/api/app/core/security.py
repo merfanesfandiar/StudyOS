@@ -52,17 +52,29 @@ async def verify_password(password: str, password_hash: str) -> bool:
     return await asyncio.to_thread(_verify)
 
 
-def create_access_token(user_id: UUID) -> tuple[str, int]:
+def create_access_token(user_id: UUID, token_version: int = 0) -> tuple[str, int]:
+    """Mint a token carrying the user's current revocation version.
+
+    The version is what makes logout meaningful for a stateless JWT: bumping
+    ``User.token_version`` invalidates every token minted at the old version, so
+    deleting the cookie is no longer the only thing standing between a copied
+    token and a live session.
+    """
     expires_delta = timedelta(minutes=settings.access_token_expire_minutes)
     expires_at = datetime.now(UTC) + expires_delta
-    payload = {"sub": str(user_id), "exp": expires_at, "iat": datetime.now(UTC)}
+    payload = {
+        "sub": str(user_id),
+        "ver": max(0, int(token_version)),
+        "exp": expires_at,
+        "iat": datetime.now(UTC),
+    }
     return (
         jwt.encode(payload, _resolve_signing_key(), algorithm="HS256"),
         int(expires_delta.total_seconds()),
     )
 
 
-def decode_access_token(token: str) -> UUID:
+def decode_access_token(token: str) -> tuple[UUID, int]:
     credentials_error = AppError(
         status_code=401,
         code="AUTHENTICATION_REQUIRED",
@@ -74,6 +86,10 @@ def decode_access_token(token: str) -> UUID:
         subject = payload.get("sub")
         if not subject:
             raise credentials_error
-        return UUID(subject)
+        # Tokens minted before revocation existed carry no ``ver`` claim. They
+        # are version 0, which is why existing sessions keep working across the
+        # upgrade while a token minted after a logout does not.
+        version = int(payload.get("ver") or 0)
+        return UUID(subject), max(0, version)
     except (JWTError, ValueError, TypeError) as exc:
         raise credentials_error from exc

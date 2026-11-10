@@ -39,6 +39,7 @@ from app.models.enums import (
     AgentExecutorKind,
     AgentInteractionStatus,
     AgentRunMode,
+    AgentRunStatus,
 )
 from app.modules.agent import interactions as interaction_service
 from app.modules.agent import service
@@ -458,12 +459,17 @@ async def resolve_checkpoint(
         retry=payload.retry,
     )
 
-    provider = None
-    try:
-        provider = build_llm_provider(settings)
-    except LLMUnavailableError:
+    # A REVIEW choice can end the run ("Stop this run") or complete its task
+    # ("Move on"). Only a run the decision actually resumed may be executed;
+    # calling execute_run on a cancelled run would turn a deliberate stop into a
+    # 409 from a state the student just chose.
+    if run.status == AgentRunStatus.RUNNING.value:
         provider = None
-    await service.execute_run(run, user, db, provider=provider)
+        try:
+            provider = build_llm_provider(settings)
+        except LLMUnavailableError:
+            provider = None
+        await service.execute_run(run, user, db, provider=provider)
     await db.commit()
     return await _run_response(run_id, assignment_id, user, db)
 

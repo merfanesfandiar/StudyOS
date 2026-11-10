@@ -14,9 +14,10 @@ This report is additive. It does not replace `PHASE9_REPORT.md`, which describes
 - **P1 correctness/contract defects are fixed:** checkpoint decisions can actually be submitted from the UI (the previous form produced a guaranteed `422`), status vocabularies match the backend, pagination is bounded with real totals, and the TypeScript contract matches the API.
 - **A user-visible data bug was found during browser verification and fixed:** readiness was multiplied by 100 (`4,800%` instead of `48%`). It now renders correctly in both locales, with a regression test.
 - **UI/UX and i18n:** agent status labels no longer render blank, the HITL block is localized and surfaces failures, the Persian catalogue corruption is fixed, and several accessibility primitives (live regions, status semantics, skip-link target, landmark nesting) are corrected.
-- **Local validation is green:** API `522 passed, 1 skipped`, ruff and mypy clean; web `tsc`/`eslint` clean, `196` vitest tests passing, production build succeeds.
+- **All ten findings from the first pass's section I are now closed:** checkpoint decisions are consumed by the runtime, recovery events use the redacted append path, auth is cookie-only with logout revocation, execution artifacts are deleted with their assignment, the dashboard average is a SQL aggregate, UUID ordering is process-tagged and clock-regression safe, `PlanningRun.started_at` is non-nullable, and the agent tablists support roving keyboard focus in both directions.
+- **Local validation is green:** API `535 passed, 1 skipped`, ruff and mypy clean; web `tsc`/`eslint` clean, `199` vitest tests passing, production build succeeds.
 - **Not verified locally:** the Postgres-backed suite, `docker compose`, Playwright/e2e, and the Docker image build. The Docker daemon is not running in this environment. These must run in CI before a production claim.
-- **Readiness:** materially improved and safe for continued development and single-instance local use. Not yet production-ready; the remaining items in section I are the reason.
+- **Readiness:** materially improved and safe for continued development and single-instance local use. Not yet production-ready; the unverified CI gates in section J are the reason.
 
 ---
 
@@ -133,7 +134,7 @@ The tree also contained uncommitted work from earlier phases (`AGENTS.md` rule, 
 | taxonomy technologies/tags | capped at `500` |
 | artifact-event provenance scan | capped at `2000` |
 
-The dashboard readiness **aggregate** is still computed in Python over the loaded window; see section I.
+The dashboard **list** is capped at `500`, but the readiness **aggregate** is computed in SQL over the whole workspace, so it does not describe only the visible window.
 
 ### D5. `TECHICAL` typo in a persisted enum
 
@@ -154,7 +155,7 @@ The dashboard readiness **aggregate** is still computed in Python over the loade
 - **Skip link / landmarks:** loading and error states on the assignment page carry `id="main-content"`; the segment error boundary no longer nests a second `<main>` inside the app shell's landmark.
 - **Verified in the browser:** `dir="rtl"`, `lang="fa-IR"`, Persian labels for run/decision/risk/actions, no leaked `status.*`/`agent.risk.*` keys, dashboard shows `۴۸%`.
 
-Deliberately not done: roving arrow-key focus for the agent tablists (documented as a P3 a11y gap).
+- **Agent tablists:** roving `tabindex` with `ArrowLeft`/`ArrowRight`/`Home`/`End`, including RTL-aware arrow direction and wrap-around; the selected tab is the only tab stop.
 
 ---
 
@@ -180,6 +181,16 @@ Deliberately not done: roving arrow-key focus for the agent tablists (documented
 - `docs/architecture/agent-observability.md` (redaction rule made exact)
 - `docs/architecture/agent-security.md` (approval gate / `agent_tool_approval_required`)
 
+**Follow-up pass (section I closures)**
+- `app/core/{security,dependencies}.py`, `app/schemas/auth.py`, `app/modules/auth/router.py`
+- `app/models/{entities,identifiers}.py`, `app/modules/agent/{service,context,router,recovery}.py`
+- `app/modules/assignments/router.py`, `app/modules/dashboard/router.py`
+- `alembic/versions/0016_token_revocation_and_planning_started_at.py`
+- `tests/{test_identifiers,test_agent_runtime,test_agent_api,test_auth,test_execution_api,test_migrations,test_planning_service,test_specification}.py`
+- `apps/web/components/agent/agent-panel.tsx`, `apps/web/lib/{types,i18n/messages}.ts`
+- `apps/web/tests/unit/agent-panel.test.tsx`
+- `docs/architecture/decisions/0001-cookie-session-auth.md`, `docs/architecture/agent-runtime.md`, `docs/architecture/agent-recovery.md`
+
 Uncommitted user work in `globals.css`, `layout.tsx`, `app-shell.tsx`, `auth-page.tsx`, and `next-env.d.ts` was left untouched.
 
 ---
@@ -196,8 +207,18 @@ Uncommitted user work in `globals.css`, `layout.tsx`, `app-shell.tsx`, `auth-pag
 | i18n vocabulary | every backend status and interaction risk has a key in every locale |
 | Readiness formatting | card renders `48%`, not `4,800%` |
 | Redaction | `token_usage` survives while `token`/`*_token` do not |
+| Checkpoint semantics | Stop cancels, Move on completes, Keep revising extends the allowance, answers reach the next context, permission retry stays pending |
+| Logout revocation | a token copied before logout is rejected afterwards |
+| Auth response | no token in the JSON body; `Cache-Control: no-store` |
+| Dashboard average | covers more than the 500-row list window |
+| Assignment deletion | removes execution artifact bytes and keeps the job row |
+| UUIDv7 | version/variant, 2,000 strictly increasing ids, backwards-clock monotonicity |
+| `started_at` | set when a run starts; `NOT NULL` after migrations |
+| Recovery redaction | recovery metadata is redacted and instrumented like runtime events |
+| Tab keyboard nav | roving tab stop, wrap-around, RTL arrow direction |
+| Runtime prose i18n | the revision-limit REVIEW prompt/options/context render in Persian |
 
-Net new tests: **+7 API** (`515 → 522`) and **+6 web** (`190 → 196`), plus one migration data check.
+Net new tests across both passes: **+20 API** (`515 → 535`) and **+9 web** (`190 → 199`), plus migration data/nullability checks.
 
 ---
 
@@ -207,10 +228,10 @@ Net new tests: **+7 API** (`515 → 522`) and **+6 web** (`190 → 196`), plus o
 |---|---|
 | `cd apps/api && .venv/bin/ruff check .` | `All checks passed!` |
 | `cd apps/api && .venv/bin/mypy app` | `Success: no issues found in 158 source files` |
-| `cd apps/api && .venv/bin/python -m pytest -q` | `522 passed, 1 skipped` in `70.99s` |
+| `cd apps/api && .venv/bin/python -m pytest -q` | `535 passed, 1 skipped` in `72.71s` |
 | `cd apps/web && npx tsc --noEmit` | clean |
 | `cd apps/web && npx eslint .` | clean |
-| `cd apps/web && npx vitest run` | `196 passed` (14 files) |
+| `cd apps/web && npx vitest run` | `199 passed` (14 files) |
 | `cd apps/web && npx next build` | compiled; TypeScript finished; 11 routes generated |
 | Browser — dashboard | `48%` / `۴۸%`, `dir=rtl` in Persian |
 | Browser — agent panel | REVIEW checkpoint resolved, `POST .../resolve` → `200`, body `{"approved":true}` |
@@ -220,43 +241,59 @@ Warnings in the pytest output are third-party deprecations (notably `python-jose
 
 ---
 
-## I. Remaining findings (not fixed in this pass)
+## I. First-pass findings — all closed in the follow-up pass
 
-Severity is my judgement, not an external rating. Each item is a real gap, not a stylistic preference.
+Severity is my judgement, not an external rating. Each entry keeps the original defect and records the correction and its evidence.
 
-1. **Checkpoint decision semantics are stored but not consumed (P2, functional).**
-   `resolve_checkpoint` persists `response`, `approved`, and `retry` and then flips the run back to `RUNNING`. The resume path does not branch on `retry` or `selected_option`. A `REVIEW` checkpoint offering "Keep revising / Move on / Stop this run" therefore always takes the same path; only the panel's separate **Stop the run** button actually cancels. The UI is now usable, but the server should either honour these fields or stop offering options it will ignore.
+1. **Checkpoint decision semantics are consumed (was P2, functional).**
+   `resolve_checkpoint` now acts on the fields it stores. `retry` is written as `"retry"` and leaves a pending gate instead of pretending the permission was refused. A `REVIEW` option is read as a decision: **Stop this run** cancels, **Move on and leave the draft** completes the task and resumes, and **Keep revising** extends the draft allowance. Student answers are injected into the next step through a bounded `student_answers` context section. Regression tests cover all four paths plus the permission-retry case in `tests/test_agent_runtime.py`.
 
-2. **Recovery events bypass redaction and instrumentation (P2, security/observability).**
-   `app/modules/agent/recovery.py::_append_event` writes `AgentEvent.metadata_json` directly. It does not call `redact_dict` and does not stamp `assignment_id`, `workspace_id`, correlation/trace ids, severity, or source. If a recovery payload ever contains a credential, it is persisted verbatim. Route it through `observability.service.record_event` or apply `redact_dict` plus the denormalised columns.
+2. **Recovery events use the redacted append path (was P2, security/observability).**
+   `_append_event` delegates to `observability.service.record_event`, so recovery metadata is redacted and rows carry `assignment_id`, `workspace_id`, correlation/trace ids, `WARNING` severity, and `agent.recovery` as the source. `tests/test_agent_api.py` asserts a credential is persisted as `[REDACTED]` and that the operational columns are populated.
 
-3. **The access token is returned in the JSON body as well as the HttpOnly cookie (P2, security).**
-   `login`/`register` return `access_token`. The web client relies on the cookie, so the body copy is unnecessary exposure to JavaScript, logs, and XSS. Prefer cookie-only (or a body flag that a non-browser client must opt into) and add `Cache-Control: no-store` on auth responses.
+3. **Auth is cookie-only (was P2, security).**
+   `login` and `register` no longer return `access_token`; the web client already relied on the HttpOnly cookie, and `AuthResponse` now matches. Auth responses carry `Cache-Control: no-store`. `tests/test_auth.py` covers the response shape and header.
 
-4. **Logout does not revoke a stateless token (P2/P3, security).**
-   `POST /auth/logout` only deletes the cookie. A copied token remains valid until `access_token_expire_minutes` (30 minutes). A revocation list or token version would close this; document the window if that is a deliberate trade-off.
+4. **Logout revokes tokens (was P2/P3, security).**
+   `users.token_version` is embedded as the `ver` JWT claim and checked in `get_current_user`; logout bumps it, revoking every session for that user rather than only deleting the current cookie. Tokens without a `ver` claim are treated as version `0` for migration compatibility. `test_logout_revokes_a_token_that_was_already_copied` copies a token, logs out, and asserts the copy is rejected.
 
-5. **Execution artifact storage survives assignment deletion (P3, data hygiene).**
-   `delete_assignment` deletes document storage, but `ExecutionArtifact` files are removed only by the cascade of database rows, not their storage keys. Deleting an assignment can leave orphaned bytes. Enumerate and delete execution artifact keys in the same operation, or run a periodic sweeper.
+5. **Execution artifact storage is deleted with the assignment (was P3, data hygiene).**
+   `delete_assignment` enumerates the assignment's execution artifacts, deletes their storage objects, and nulls `storage_key` while preserving the `ExecutionJob` row (`assignment_id` is still `SET NULL`). `test_deleting_an_assignment_removes_execution_artifact_bytes` checks both the missing bytes and the surviving audit row.
 
-6. **Dashboard readiness aggregate is computed over a 500-row window (P2, correctness at scale).**
-   The list is bounded (good), but `average_readiness_score` is computed in Python after the window. Above 500 assignments in a workspace the average silently describes a subset. Move the aggregate to SQL or state the bound in the UI.
+6. **The dashboard average is a SQL aggregate (was P2, correctness at scale).**
+   `average_readiness_score` is computed with a database aggregate over the whole workspace, independent of the 500-row list cap. `test_dashboard_average_covers_more_than_the_visible_window` seeds more rows than the window and asserts the returned average includes them.
 
-7. **`time_ordered_uuid` monotonicity is per process (P3, correctness).**
-   The counter in `app/models/identifiers.py` is module-global. Two API workers can mint ids that are not globally ordered within the same millisecond, which weakens the stable tie-break the identifier exists for. Use a per-process prefix/DB sequence if strict cross-worker ordering matters.
+7. **`time_ordered_uuid` is process-tagged and clock-regression safe (was P3, correctness).**
+   Ids now combine a per-process 8-bit prefix, a 12-bit sub-millisecond slot (~244µs), a millisecond timestamp, and randomness. When the wall clock moves backwards the generator advances from the last emitted `(ms, slot)` rather than the regressed clock, so ids stay monotonic. `tests/test_identifiers.py` asserts UUIDv7 version/variant, 2,000 strictly increasing ids, and monotonicity across a backwards clock jump. Strict cross-process wall-clock ordering would still need a shared sequence; the process prefix makes collisions impossible, which is the property the identifier actually needs.
 
-8. **`PlanningRun.started_at` nullability is inconsistent with its status (P3).** Noted during the read-through; not reproduced. Confirm the writer sets it when the run leaves `PENDING`, or make the column nullable by contract.
+8. **`PlanningRun.started_at` is non-nullable (was P3).**
+   The model declares it non-nullable and the service sets it when the run starts. Migration `0016_token_revocation_and_planning_started_at` backfills existing rows and applies `NOT NULL`; `tests/test_migrations.py` checks nullability after upgrading to head, and `test_planning_service.py` checks the writer.
 
-9. **Agent workspace tablists lack roving arrow-key focus (P3, a11y).** Deliberate scope cut in this pass; the tabs are still reachable by Tab.
+9. **Agent tablists have roving keyboard focus (was P3, a11y).**
+   Tabs use roving `tabindex` with `ArrowLeft`/`ArrowRight`/`Home`/`End`, wrap-around, and RTL-aware arrow direction. `apps/web/tests/unit/agent-panel.test.tsx` verifies the single tab stop, selection movement, `End`, wrap-around, and Persian direction.
 
-10. **Server-provided prose remains English in Persian pages (P3, expected).**
-    Checkpoint questions/options, failure reasons, and agent-authored UI blocks come from the runtime, not the catalogue. They render as data. Localising them would require translating model output, which is a product decision, not a frontend fix.
+10. **Deterministic runtime prose is localized (was P3).**
+    The runtime's revision-limit question, its three options, its context note, and the permission question now come from the i18n catalogue, so Persian pages no longer show those fixed English sentences. Model-authored prose and stored failure reasons remain data by design. The Persian REVIEW rendering is covered by a unit test.
+
+### Follow-up validation evidence
+
+| Command | Result |
+|---|---|
+| `cd apps/api && .venv/bin/ruff check .` | `All checks passed!` |
+| `cd apps/api && .venv/bin/mypy app` | `Success: no issues found in 158 source files` |
+| `cd apps/api && .venv/bin/python -m pytest -q` | `535 passed, 1 skipped` in `72.71s` |
+| `cd apps/web && npx tsc --noEmit` | clean |
+| `cd apps/web && npx eslint .` | clean |
+| `cd apps/web && npx vitest run` | `199 passed` (14 files) |
+| `cd apps/web && npx next build` | compiled; TypeScript finished; routes generated |
+
+The Postgres suite, Docker stack/image, and Playwright/e2e remain unverified here for the environment reasons in section J.
 
 ---
 
 ## J. Not verified here (environment-blocked)
 
-- **Postgres-backed test suite and migrations.** Docker is not running, so `pytest` used SQLite (`aiosqlite`). The migration was exercised only on SQLite. Postgres-specific DDL, concurrent writers, and the `FOR UPDATE` paths remain unverified in this environment.
+- **Postgres-backed test suite and migrations.** Docker is not running, so `pytest` used SQLite (`aiosqlite`). Migrations `0015` and `0016` (including the `started_at` backfill and `NOT NULL` change) were exercised only on SQLite. Postgres-specific DDL, concurrent writers, and the `FOR UPDATE` paths remain unverified in this environment.
 - **`docker compose` stack and the container image build.** No daemon.
 - **Playwright / end-to-end tests.** Not run; browser checks above are manual, single-session evidence.
 - **Load/performance and memory profiling.** Not measured; no claim is made.
@@ -274,6 +311,9 @@ These are the first things CI should run.
 - Interaction/checkpoint expiry is swept on list calls, so a stale `PENDING` interaction can become `EXPIRED` without a background job.
 - Pagination responses now carry real `total` values; clients that assumed `total == len(items)` should re-check.
 - The dashboard/card readiness figure changed from a 100× value to the real percentage. Any snapshot test keyed to `4,800%` was wrong.
+- Auth responses no longer include `access_token`; a non-browser client must rely on the cookie. Logout increments `users.token_version`, so it now ends **every** session for that user, not just the current browser.
+- `POST /agent/runs/{id}/resume` only executes a run that is still `RUNNING` after a decision; an option that cancels or completes the task never re-enters the executor.
+- Checkpoint answers now appear in the next step's context under `student_answers` (bounded by the usual truncation order), so a runtime that ignored them is no longer an option.
 
 ---
 
@@ -281,6 +321,6 @@ These are the first things CI should run.
 
 **What is solid:** the security boundary (proxy trust, idempotency scoping, signing key, approval gate), the run-claim/state machine, the contract between API and web for the agent surface, the i18n vocabulary, and the tested UI paths. The local validation set is fully green and the browser flow from login → assignment → agent decision works against a live API.
 
-**What blocks a production claim:** the Postgres suite and migrations are unverified; the checkpoint decision fields are not consumed; recovery writes bypass redaction; tokens are exposed in the response body and survive logout; execution artifact storage can leak; and the dashboard average is window-bounded. None of these are regressions introduced here, but they are real and should be scheduled before exposing the product to real student data.
+**What blocks a production claim:** the environment-blocked gates in section J. The Postgres suite and migrations are unverified, `docker compose` and the image build have not run, and Playwright/e2e has not run. The ten functional/security findings from the first pass are closed. Multi-process UUID ordering remains a per-process guarantee by design; it prevents collisions but does not provide a global wall-clock order.
 
-**Honest verdict:** this pass moved the codebase from "several P0s and a hard-broken agent decision flow" to "green locally, with a documented short list of production blockers". It is ready for continued development, demos, and CI hardening. It is **not** ready for a production deployment that stores real credentials or runs untrusted code without the items in section I and the CI gates in section J being closed.
+**Honest verdict:** this work moved the codebase from "several P0s and a hard-broken agent decision flow" to "green locally, with all first-pass findings closed and a short list of CI gates left". It is ready for continued development, demos, and CI hardening. It is **not** ready for a production deployment that stores real credentials or runs untrusted code until the gates in section J are run and pass.

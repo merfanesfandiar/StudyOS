@@ -42,6 +42,7 @@ from app.models.enums import (
     AuditEventType,
 )
 from app.modules.agent.state_machine import assert_transition, parse_status
+from app.modules.observability.service import record_event
 from app.services.events import record_audit
 
 logger = logging.getLogger(__name__)
@@ -123,24 +124,24 @@ async def _append_event(
     summary: str,
     *,
     metadata: dict[str, Any] | None = None,
-) -> None:
-    """Append a recovery event without going through the service lock.
+) -> AgentEvent:
+    """Append a recovery event through the same pipeline as runtime events.
 
-    Recovery holds no run lock: it is by definition the only writer, because the
-    writer it is replacing is gone. ``lock_version`` still advances so the
-    sequence number keeps moving forward.
+    Recovery used to construct ``AgentEvent`` directly. That bypassed metadata
+    redaction and left recovery rows without ``assignment_id``, ``workspace_id``,
+    correlation/trace ids, severity or a source component, so they were invisible
+    to the operational views and could persist a credential verbatim. Going
+    through :func:`record_event` keeps one append path for both writers.
     """
-    run.lock_version = (run.lock_version or 0) + 1
-    db.add(
-        AgentEvent(
-            run_id=run.id,
-            sequence=run.lock_version,
-            event_type=event_type.value,
-            summary=summary[:500],
-            metadata_json=dict(metadata or {}),
-        )
+    return await record_event(
+        db,
+        run,
+        event_type.value,
+        summary,
+        metadata=metadata,
+        severity="WARNING",
+        source_component="agent.recovery",
     )
-    await db.flush()
 
 
 async def _audit(

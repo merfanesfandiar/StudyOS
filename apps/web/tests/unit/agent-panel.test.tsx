@@ -671,6 +671,98 @@ describe("AgentPanel", () => {
     expect(await screen.findByRole("button", { name: "ساخت اجرا" })).toBeInTheDocument();
     window.localStorage.removeItem("studyos.locale");
   });
+
+  it("moves between tabs with the keyboard and keeps one tab stop", async () => {
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "COMPLETED" })] }),
+        [`GET ${BASE}/runs/r1`]: () => jsonResponse(detail({ status: "COMPLETED" })),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    const tabs = await screen.findAllByRole("tab");
+    expect(tabs).toHaveLength(4);
+    // Roving tabindex: the selected tab is the only one Tab reaches.
+    expect(tabs[0]).toHaveAttribute("tabindex", "0");
+    expect(tabs[1]).toHaveAttribute("tabindex", "-1");
+
+    tabs[0].focus();
+    fireEvent.keyDown(tabs[0], { key: "ArrowRight" });
+    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[1]).toHaveAttribute("tabindex", "0");
+    expect(tabs[0]).toHaveAttribute("tabindex", "-1");
+    expect(document.activeElement).toBe(tabs[1]);
+
+    fireEvent.keyDown(tabs[1], { key: "End" });
+    expect(tabs[3]).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(tabs[3]);
+
+    // Arrows wrap, so forward from the last tab returns to the first.
+    fireEvent.keyDown(tabs[3], { key: "ArrowRight" });
+    expect(tabs[0]).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(tabs[0]);
+  });
+
+  it("follows writing direction when arrowing through tabs", async () => {
+    window.localStorage.setItem("studyos.locale", "fa");
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "COMPLETED" })] }),
+        [`GET ${BASE}/runs/r1`]: () => jsonResponse(detail({ status: "COMPLETED" })),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    const tabs = await screen.findAllByRole("tab");
+    tabs[0].focus();
+    // In RTL the next tab is to the left; ArrowRight would move backwards.
+    fireEvent.keyDown(tabs[0], { key: "ArrowLeft" });
+    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
+    expect(document.activeElement).toBe(tabs[1]);
+    window.localStorage.removeItem("studyos.locale");
+  });
+
+  it("localizes the runtime's own review question and options in Persian", async () => {
+    window.localStorage.setItem("studyos.locale", "fa");
+    const review = checkpoint({
+      checkpoint_type: "REVIEW",
+      question:
+        "I have drafted T1 3 times without finishing it. Would you like me to keep revising, move on, or stop?",
+      context:
+        "Repeated drafting usually means the task is missing information rather than that another pass will fix it.",
+      options: ["Keep revising", "Move on and leave the draft", "Stop this run"],
+    });
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () =>
+          jsonResponse({ items: [run({ status: "WAITING_FOR_USER" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "WAITING_FOR_USER",
+              awaiting_checkpoint_id: "cp1",
+              checkpoints: [review],
+            }),
+          ),
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    // The runtime's revision-limit question is product copy, not model output,
+    // so the Persian UI must not show it in English.
+    expect(
+      await screen.findByText(/من T1 را 3 بار بدون تمام‌کردن پیش‌نویس نوشته‌ام/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("ادامهٔ بازنویسی")).toBeInTheDocument();
+    expect(screen.getByText("رفتن به مرحلهٔ بعد و نگه‌داشتن پیش‌نویس")).toBeInTheDocument();
+    expect(screen.getByText("متوقف کردن این اجرا")).toBeInTheDocument();
+    expect(
+      screen.getByText(/تکرار پیش‌نویس معمولاً یعنی کار به اطلاعات بیشتری نیاز دارد/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/I have drafted T1/)).not.toBeInTheDocument();
+    window.localStorage.removeItem("studyos.locale");
+  });
 });
 
 describe("AgentPanel dynamic interface", () => {

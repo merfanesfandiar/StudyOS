@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 from app.modules.assignments.requirements import execution_order
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tests.conftest import register_user
 from tests.environment import RELIABLE, SKIP_REASON
@@ -796,6 +797,63 @@ async def test_dashboard_reports_readiness_progress(client: AsyncClient) -> None
     assert dashboard["average_readiness_score"] > 0
     # The dashboard payload is the list row, not the whole nested assignment.
     assert "requirements" not in listed["Ready to go"]
+
+
+@pytest.mark.asyncio
+async def test_dashboard_average_covers_more_than_the_visible_window(
+    client: AsyncClient, db_session: AsyncSession
+) -> None:
+    """The average must aggregate the workspace, not the 500-row render window.
+
+    The dashboard deliberately caps the list at 500 assignments it can render.
+    Computing the average from that window turned "your average readiness" into
+    "the average of the newest 500", so older work silently stopped counting once
+    a workspace grew past the cap.
+    """
+    from app.models import Assignment as AssignmentModel
+
+    await register_user(client)
+    course = await create_course(client)
+    workspace_id = UUID(course["workspace_id"])
+    course_id = UUID(course["id"])
+
+    now = datetime.now(UTC)
+    # 100 older assignments are fully ready; 600 newer ones are empty. Averaging
+    # only the newest 500 would report 0.
+    old = [
+        AssignmentModel(
+            workspace_id=workspace_id,
+            course_id=course_id,
+            title=f"Old {index}",
+            description="D",
+            deadline=None,
+            status="READY_FOR_ANALYSIS",
+            readiness_score=100,
+            created_at=now - timedelta(days=2, seconds=index),
+        )
+        for index in range(100)
+    ]
+    new = [
+        AssignmentModel(
+            workspace_id=workspace_id,
+            course_id=course_id,
+            title=f"New {index}",
+            description="D",
+            deadline=None,
+            status="DRAFT",
+            readiness_score=0,
+            created_at=now - timedelta(seconds=index),
+        )
+        for index in range(600)
+    ]
+    db_session.add_all(old + new)
+    await db_session.flush()
+
+    dashboard = (await client.get("/api/v1/dashboard")).json()
+
+    assert dashboard["assignments_count"] == 500, "the rendered window stays bounded"
+    # 100 * 100 / 700 = 14.28 -> 14. The rendered-window average would be 0.
+    assert dashboard["average_readiness_score"] == 14
 
 
 # ---------------------------------------------------------------------------

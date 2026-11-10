@@ -45,6 +45,7 @@ TRUNCATION_ORDER: Final[tuple[str, ...]] = (
     "constraints",
     "requirements",
     "acceptance_criteria",
+    "student_answers",
     "dependencies",
     "task_description",
 )
@@ -126,6 +127,7 @@ def assemble_context(
     constraints: Sequence[tuple[str, str]] = (),
     reference_material: Sequence[tuple[str, str]] = (),
     prior_artifacts: Sequence[tuple[str, str]] = (),
+    student_answers: Sequence[tuple[str, str]] = (),
     assignment_title: str = "",
     plan_title: str = "",
     student_guidance: str | None = None,
@@ -147,6 +149,16 @@ def assemble_context(
         ContextSource("dependencies", False, 60, _pairs(dependencies, "depends on")),
         ContextSource("requirements", True, 50, _pairs(requirements, "requirement")),
         ContextSource("constraints", True, 50, _pairs(constraints, "constraint")),
+        ContextSource(
+            "student_answers",
+            True,
+            90,
+            "\n".join(
+                f"- Question: {question}\n  Answer: {answer}"
+                for question, answer in student_answers
+                if answer
+            ),
+        ),
         ContextSource("reference_material", True, 30, _pairs(reference_material, "source")),
         ContextSource("prior_artifacts", True, 20, _pairs(prior_artifacts, "artifact")),
     ]

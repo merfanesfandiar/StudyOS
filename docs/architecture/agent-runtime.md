@@ -72,7 +72,10 @@ between a bug and an unbounded bill.
 
 Reaching the revision cap does not stop the run quietly. It opens a review checkpoint with real
 options — keep revising, move on and leave the draft, or stop — because a runtime that silently
-burns its budget is a runtime a student cannot trust.
+burns its budget is a runtime a student cannot trust. The options are not advisory: **keep revising**
+extends the draft allowance, **move on** completes the task and resumes, and **stop** cancels the
+run. A decision can also carry free-text, which is injected into the next step as bounded
+`student_answers` context rather than discarded.
 
 ## Failure is a state, not an exception
 

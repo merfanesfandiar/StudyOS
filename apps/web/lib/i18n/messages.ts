@@ -956,6 +956,15 @@ export const en = {
   "agent.chooseDifferent": "Something else",
   "agent.answerRequired": "This question needs an answer before the run can continue.",
   "agent.retryRejected": "Try that step again",
+  "agent.checkpoint.keepRevising": "Keep revising",
+  "agent.checkpoint.moveOn": "Move on and leave the draft",
+  "agent.checkpoint.stopRun": "Stop this run",
+  "agent.checkpoint.revisionLimit":
+    "I have drafted {key} {count} times without finishing it. Would you like me to keep revising, move on, or stop?",
+  "agent.checkpoint.revisionContext":
+    "Repeated drafting usually means the task is missing information rather than that another pass will fix it.",
+  "agent.checkpoint.permission":
+    "Running '{tool}' executes outside this run's own process, so it needs your approval.",
   "agent.approve": "Approve",
   "agent.reject": "Reject",
   "agent.stopHere": "Stop the run",
@@ -2076,6 +2085,15 @@ export const fa: Catalogue = {
   "agent.chooseDifferent": "چیز دیگری",
   "agent.answerRequired": "برای ادامهٔ اجرا، پاسخ این پرسش لازم است.",
   "agent.retryRejected": "آن گام را دوباره امتحان کن",
+  "agent.checkpoint.keepRevising": "ادامهٔ بازنویسی",
+  "agent.checkpoint.moveOn": "رفتن به مرحلهٔ بعد و نگه‌داشتن پیش‌نویس",
+  "agent.checkpoint.stopRun": "متوقف کردن این اجرا",
+  "agent.checkpoint.revisionLimit":
+    "من {key} را {count} بار بدون تمام‌کردن پیش‌نویس نوشته‌ام. می‌خواهید ادامه بدهم، به مرحلهٔ بعد بروم یا متوقف کنم؟",
+  "agent.checkpoint.revisionContext":
+    "تکرار پیش‌نویس معمولاً یعنی کار به اطلاعات بیشتری نیاز دارد، نه اینکه یک بار دیگر مشکل را حل کند.",
+  "agent.checkpoint.permission":
+    "اجرای «{tool}» بیرون از فرایند این اجرا انجام می‌شود، پس به تأیید شما نیاز دارد.",
   "agent.approve": "تأیید",
   "agent.reject": "رد کردن",
   "agent.stopHere": "توقف اجرا",

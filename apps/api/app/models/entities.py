@@ -96,6 +96,11 @@ class User(TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     email: Mapped[str] = mapped_column(String(320), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    #: Bumped on logout. Tokens carry the version they were minted with, so an
+    #: old but unexpired token stops authenticating as soon as this moves.
+    token_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
 
     memberships: Mapped[list[WorkspaceMember]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -1295,7 +1300,10 @@ class PlanningRun(TimestampMixin, Base):
     idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     input_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     output_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: A planning run is created already RUNNING (the row is the evidence that
+    #: generation was attempted), so this is part of the contract, not optional
+    #: telemetry. Migration 0016 backfills any historical null with created_at.
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     token_usage: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
