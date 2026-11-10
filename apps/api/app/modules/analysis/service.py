@@ -127,14 +127,28 @@ async def latest_analysis(assignment_id: UUID, db: AsyncSession) -> AssignmentAn
     return result.scalar_one_or_none()
 
 
-async def list_runs(assignment_id: UUID, db: AsyncSession, *, limit: int) -> list[AnalysisRun]:
+async def list_runs(
+    assignment_id: UUID, db: AsyncSession, *, limit: int, offset: int = 0
+) -> tuple[list[AnalysisRun], int]:
+    """A page of runs plus the true total, so pagination reports don't lie.
+
+    A count is taken over the same filter so a large history reports a page
+    count that reflects the assignable history, not just the rows fetched.
+    """
     result = await db.execute(
         select(AnalysisRun)
         .where(AnalysisRun.assignment_id == assignment_id)
         .order_by(AnalysisRun.started_at.desc(), AnalysisRun.id.desc())
+        .offset(offset)
         .limit(limit)
     )
-    return list(result.scalars().all())
+    runs = list(result.scalars().all())
+    total = await db.scalar(
+        select(func.count())
+        .select_from(AnalysisRun)
+        .where(AnalysisRun.assignment_id == assignment_id)
+    )
+    return runs, total or 0
 
 
 async def active_run(assignment_id: UUID, db: AsyncSession) -> AnalysisRun | None:

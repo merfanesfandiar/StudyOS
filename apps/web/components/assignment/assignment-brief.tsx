@@ -139,15 +139,14 @@ export function AssignmentBrief({
             <textarea defaultValue={description ?? ""} maxLength={20000} name="description" />
           </label>
           <p className="text-sm text-[var(--color-ink-subtle)] md:col-span-2">
-            Only draft, incomplete, completed, and archived can be set here. Moving into analysis
-            happens through the readiness gate below.
+            {t("brief.statusOptionsNote")}
           </p>
           <div className="flex flex-wrap justify-end gap-3 md:col-span-2">
             <button className="btn-danger" onClick={onDelete} type="button">
-              Delete assignment
+              {t("brief.delete")}
             </button>
             <SubmitButton pending={pending} pendingLabel={t("action.saving")}>
-              Save changes
+              {t("brief.saveChanges")}
             </SubmitButton>
           </div>
         </form>

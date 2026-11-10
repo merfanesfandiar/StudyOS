@@ -19,6 +19,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from app.ai.provider import LLMProvider, LLMRequest, LLMResponse, LLMUsage
+from app.core.config import get_settings
 from app.models.enums import (
     AcademicTaskType,
     AgentRunStatus,
@@ -545,6 +546,212 @@ async def test_a_run_that_needs_the_student_says_so_explicitly(
 
     after = await client.get(f"{BASE}/{assignment_id}/agent/runs/{run_id}/checkpoints/pending")
     assert after.json() is None, "a resolved question must not be asked again"
+
+
+@pytest.mark.asyncio
+async def test_an_approved_high_risk_tool_runs_after_the_permission_checkpoint(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_execution: None,
+) -> None:
+    """Sandbox execution is a person's decision, bound to the exact operation.
+
+    A HIGH-risk tool (run_tests) is never dispatched the first time the model
+    asks: the runtime stops, a PERMISSION checkpoint is created bound to the
+    (tool, arguments) hash, and no job exists. After the student approves, the
+    step replays and the invocation really runs.
+    """
+    import json
+
+    from app.modules.agent import router as agent_router
+
+    class _CallsSandboxedTool(LLMProvider):
+        name = "deterministic"
+        model = "deterministic-agent-v1"
+
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            usage = LLMUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+            metadata = request.metadata or {}
+            key = metadata.get("agent_input", {}).get("task_key") or "T1"
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "action": "CALL_TOOL",
+                        "tool": "run_tests",
+                        "tool_arguments": {"code": "print('probe')"},
+                        "reason": "Checking the work.",
+                        "confidence": 0.9,
+                        "task_key": key,
+                    }
+                ),
+                provider=self.name,
+                model=self.model,
+                usage=usage,
+                estimated_cost=0.0001,
+            )
+
+    monkeypatch.setattr(
+        agent_router, "build_llm_provider", lambda settings: _CallsSandboxedTool()
+    )
+    # The model loops on the same tool call, so cap the step budget: this test
+    # is about the gate, not about how long a stuck loop takes to fail.
+    monkeypatch.setattr(get_settings(), "agent_max_iterations", 6)
+    monkeypatch.setattr(get_settings(), "execution_enabled", True)
+    monkeypatch.setattr(get_settings(), "execution_backend", "mock")
+
+    # The plan's tasks are READ-typed by the deterministic planner, whose
+    # RESEARCH worker does not hold sandbox tools (by design: the boundary is
+    # the worker's). The approval gate must run for *any* worker that can reach
+    # a HIGH-risk tool, so widen the RESEARCH boundary here instead of fighting
+    # the planner: run_tests is the registered HIGH-risk tool the decision will
+    # request.
+    from dataclasses import replace
+
+    from app.models.enums import AgentWorkerKind
+    from app.modules.agent import service as agent_service
+    from app.modules.agent.workers import DEFAULT_WORKERS, WorkerRegistry
+
+    widened = tuple(
+        (
+            replace(w, tool_ids=w.tool_ids + ("run_tests",))
+            if w.kind == AgentWorkerKind.RESEARCH
+            else w
+        )
+        for w in DEFAULT_WORKERS
+    )
+    monkeypatch.setattr(agent_service, "DEFAULT_WORKER_REGISTRY", WorkerRegistry(widened))
+
+    await register_user(client)
+    seeded = await _seeded_assignment(client, keys=("T1",))
+    assignment_id = seeded["assignment"]["id"]
+    await client.post(f"{BASE}/{assignment_id}/plans/{seeded['plan']['id']}/approve", json={})
+    run_id = (await client.post(f"{BASE}/{assignment_id}/agent/runs", json={})).json()["id"]
+
+    started = await client.post(f"{BASE}/{assignment_id}/agent/runs/{run_id}/start", json={})
+    assert started.status_code in (200, 201, 202), started.text
+    assert started.json()["status"] == AgentRunStatus.WAITING_FOR_USER.value, started.json()
+
+    # Nothing ran: the gate stopped the step before dispatch.
+    jobs = (await client.get(f"{BASE}/{assignment_id}/executions")).json()
+    assert jobs["items"] == [], "no sandbox job may exist before approval"
+    assert jobs["page"]["total"] == 0
+
+    pending = await client.get(f"{BASE}/{assignment_id}/agent/runs/{run_id}/checkpoints/pending")
+    assert pending.status_code == 200
+    question = pending.json()
+    assert question["checkpoint_type"] == "PERMISSION"
+    assert question["options"] == ["approve", "reject"]
+
+    answered = await client.post(
+        f"{BASE}/{assignment_id}/agent/runs/{run_id}/checkpoints/{question['id']}/resolve",
+        json={"approved": True},
+    )
+    assert answered.status_code == 200, answered.text
+
+    detail = (await client.get(f"{BASE}/{assignment_id}/agent/runs/{run_id}")).json()
+    invocations = [
+        i for i in (detail.get("tool_invocations") or []) if i["tool_name"] == "run_tests"
+    ]
+    assert invocations, "the approved invocation must have run"
+    succeeded = {i["status"] for i in invocations}
+    assert "SUCCESS" in succeeded, succeeded
+
+    jobs_after = (await client.get(f"{BASE}/{assignment_id}/executions")).json()
+    assert jobs_after["page"]["total"] >= 1, (
+        "approval must have actually executed code"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_high_risk_tool_never_runs(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    mock_execution: None,
+) -> None:
+    """A rejection blocks this exact invocation, and records the refusal.
+
+    Every retry of the rejected operation stays blocked: an approval had to be
+    explicit, so staying safe under retries is the point of the binding.
+    """
+    import json
+
+    from app.modules.agent import router as agent_router
+
+    class _CallsSandboxedTool(LLMProvider):
+        name = "deterministic"
+        model = "deterministic-agent-v1"
+
+        async def complete(self, request: LLMRequest) -> LLMResponse:
+            usage = LLMUsage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+            metadata = request.metadata or {}
+            key = metadata.get("agent_input", {}).get("task_key") or "T1"
+            return LLMResponse(
+                content=json.dumps(
+                    {
+                        "action": "CALL_TOOL",
+                        "tool": "run_tests",
+                        "tool_arguments": {"code": "print('probe')"},
+                        "reason": "Checking the work.",
+                        "confidence": 0.9,
+                        "task_key": key,
+                    }
+                ),
+                provider=self.name,
+                model=self.model,
+                usage=usage,
+                estimated_cost=0.0001,
+            )
+
+    monkeypatch.setattr(
+        agent_router, "build_llm_provider", lambda settings: _CallsSandboxedTool()
+    )
+    monkeypatch.setattr(get_settings(), "agent_max_iterations", 6)
+    monkeypatch.setattr(get_settings(), "execution_enabled", True)
+    monkeypatch.setattr(get_settings(), "execution_backend", "mock")
+
+    from dataclasses import replace
+
+    from app.models.enums import AgentWorkerKind
+    from app.modules.agent import service as agent_service
+    from app.modules.agent.workers import DEFAULT_WORKERS, WorkerRegistry
+
+    widened = tuple(
+        (
+            replace(w, tool_ids=w.tool_ids + ("run_tests",))
+            if w.kind == AgentWorkerKind.RESEARCH
+            else w
+        )
+        for w in DEFAULT_WORKERS
+    )
+    monkeypatch.setattr(agent_service, "DEFAULT_WORKER_REGISTRY", WorkerRegistry(widened))
+
+    await register_user(client)
+    seeded = await _seeded_assignment(client, keys=("T1",))
+    assignment_id = seeded["assignment"]["id"]
+    await client.post(f"{BASE}/{assignment_id}/plans/{seeded['plan']['id']}/approve", json={})
+    run_id = (await client.post(f"{BASE}/{assignment_id}/agent/runs", json={})).json()["id"]
+
+    started = await client.post(f"{BASE}/{assignment_id}/agent/runs/{run_id}/start", json={})
+    assert started.json()["status"] == AgentRunStatus.WAITING_FOR_USER.value, started.json()
+
+    pending = await client.get(f"{BASE}/{assignment_id}/agent/runs/{run_id}/checkpoints/pending")
+    question = pending.json()
+
+    answered = await client.post(
+        f"{BASE}/{assignment_id}/agent/runs/{run_id}/checkpoints/{question['id']}/resolve",
+        json={"approved": False},
+    )
+    assert answered.status_code == 200, answered.text
+
+    detail = (await client.get(f"{BASE}/{assignment_id}/agent/runs/{run_id}")).json()
+    invocations = [
+        i for i in (detail.get("tool_invocations") or []) if i["tool_name"] == "run_tests"
+    ]
+    assert invocations and all(i["status"] == "BLOCKED" for i in invocations), invocations
+    assert all("rejected" in (i.get("error") or "").lower() for i in invocations), invocations
+
+    jobs = (await client.get(f"{BASE}/{assignment_id}/executions")).json()
+    assert jobs["items"] == [], "a rejected operation must never reach the sandbox"
 
 
 @pytest.mark.asyncio

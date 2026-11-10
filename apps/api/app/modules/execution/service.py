@@ -164,8 +164,16 @@ async def create_job(
     client request cannot start two sandboxes.
     """
     if idempotency_key:
+        # Scoped to the requesting user AND the workspace: the key is
+        # client-chosen, so a global lookup would let a caller presenting
+        # someone else's low-entropy key ("run1") read a foreign job's
+        # metadata. The unique index itself stays global; the lookup filters.
         existing = await db.scalar(
-            select(ExecutionJob).where(ExecutionJob.idempotency_key == idempotency_key)
+            select(ExecutionJob).where(
+                ExecutionJob.idempotency_key == idempotency_key,
+                ExecutionJob.requested_by_id == requested_by_id,
+                ExecutionJob.workspace_id == workspace_id,
+            )
         )
         if existing is not None:
             return existing
@@ -305,15 +313,36 @@ async def load_owned_job(
 
 
 async def list_jobs(
-    assignment_id: UUID, db: AsyncSession, *, limit: int = 50
-) -> list[ExecutionJob]:
-    result = await db.execute(
-        select(ExecutionJob)
-        .where(ExecutionJob.assignment_id == assignment_id)
-        .order_by(ExecutionJob.created_at.desc())
-        .limit(limit)
+    assignment_id: UUID,
+    db: AsyncSession,
+    *,
+    limit: int = 50,
+    offset: int = 0,
+) -> tuple[list[ExecutionJob], int]:
+    """A page of jobs and the true total, so pagination messages don't lie.
+
+    Reporting ``total`` as the size of the returned page would make page 2 of a
+    40-job list claim there is nothing more to read. The count is a single
+    indexed scan over the same filter; jobs and count are read together so the
+    two cannot disagree between them.
+    """
+    jobs = list(
+        (
+            await db.scalars(
+                select(ExecutionJob)
+                .where(ExecutionJob.assignment_id == assignment_id)
+                .order_by(ExecutionJob.created_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).all()
     )
-    return list(result.scalars().all())
+    total = await db.scalar(
+        select(func.count())
+        .select_from(ExecutionJob)
+        .where(ExecutionJob.assignment_id == assignment_id)
+    )
+    return jobs, total or 0
 
 
 async def cancel_job(db: AsyncSession, job: ExecutionJob) -> ExecutionJob:

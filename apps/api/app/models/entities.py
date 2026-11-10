@@ -38,6 +38,10 @@ from app.models.enums import (
     AgentCheckpointType,
     AgentExecutionStatus,
     AgentExecutorKind,
+    AgentInteractionPriority,
+    AgentInteractionRisk,
+    AgentInteractionStatus,
+    AgentInteractionType,
     AgentRunMode,
     AgentRunStatus,
     AgentToolInvocationStatus,
@@ -612,6 +616,10 @@ class AuditLog(Base):
         Index("ix_audit_logs_user_id_created_at", "user_id", "created_at"),
         Index("ix_audit_logs_workspace_id_created_at", "workspace_id", "created_at"),
         Index("ix_audit_logs_assignment_id", "assignment_id"),
+        Index("ix_audit_logs_agent_run_id", "agent_run_id"),
+        Index("ix_audit_logs_event_type", "event_type"),
+        Index("ix_audit_logs_entity", "entity_type", "entity_id"),
+        Index("ix_audit_logs_created_at", "created_at"),
     )
 
     # A time-ordered id keeps the assignment activity feed stable: several audit
@@ -630,9 +638,18 @@ class AuditLog(Base):
         ForeignKey("assignments.id", name="fk_audit_logs_assignment_id", ondelete="SET NULL"),
         nullable=True,
     )
+    agent_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     event_type: Mapped[str] = mapped_column(String(80), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(80), nullable=False)
     entity_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    action: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    target_type: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    target_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    actor_type: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
+    outcome: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    policy_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -1465,6 +1482,10 @@ class AgentRun(TimestampMixin, Base):
     checkpoints: Mapped[list[AgentCheckpoint]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
+    interactions: Mapped[list[AgentInteraction]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    interaction_responses: Mapped[list[AgentInteractionResponse]] = relationship()
     events: Mapped[list[AgentEvent]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
@@ -1728,6 +1749,8 @@ class AgentCheckpoint(TimestampMixin, Base):
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
     options: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Optional structured UI envelope emitted by the runtime.
+    ui: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -1742,6 +1765,161 @@ class AgentCheckpoint(TimestampMixin, Base):
     run: Mapped[AgentRun] = relationship(back_populates="checkpoints")
     task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
     resolved_by: Mapped[User | None] = relationship(foreign_keys=[resolved_by_id])
+    interactions: Mapped[list[AgentInteraction]] = relationship(
+        back_populates="checkpoint"
+    )
+
+
+class AgentInteraction(TimestampMixin, Base):
+    """A durable human-in-the-loop interaction bound to an exact operation.
+
+    Interactions are created by the runtime to pause work until a valid,
+    authorized response is received. Each interaction is bound to a specific
+    operation (tool/operation/target/params) and can only authorize that scope.
+    """
+
+    __tablename__ = "agent_interactions"
+    __table_args__ = (
+        Index("ix_agent_interactions_run_id", "run_id"),
+        Index("ix_agent_interactions_assignment_id", "assignment_id"),
+        Index("ix_agent_interactions_workspace_id", "workspace_id"),
+        Index("ix_agent_interactions_run_status", "run_id", "status"),
+        Index("ix_agent_interactions_status", "status"),
+        Index("ix_agent_interactions_checkpoint_id", "checkpoint_id"),
+        Index("ix_agent_interactions_owner_id", "owner_id"),
+        Index("ix_agent_interactions_expires_at", "expires_at"),
+        CheckConstraint(
+            "status IN ('PENDING','SUBMITTED','ACCEPTED','REJECTED','EXPIRED','CANCELLED')",
+            name="agent_interactions_status_valid",
+        ),
+        CheckConstraint(
+            "risk IN ('LOW','MEDIUM','HIGH','CRITICAL')",
+            name="agent_interactions_risk_valid",
+        ),
+        CheckConstraint(
+            "priority IN ('LOW','NORMAL','HIGH','URGENT')",
+            name="agent_interactions_priority_valid",
+        ),
+        CheckConstraint(
+            "interaction_type IN ('CLARIFICATION','USER_DECISION','PLAN_APPROVAL','TASK_APPROVAL',"
+            "'TOOL_PERMISSION','EXECUTION_APPROVAL','ARTIFACT_REVIEW','ARTIFACT_APPROVAL',"
+            "'DESTRUCTIVE_ACTION_APPROVAL','EXTERNAL_ACTION_APPROVAL','CONFLICT_RESOLUTION',"
+            "'EXCEPTION_RESOLUTION','OTHER')",
+            name="agent_interactions_type_valid",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("plan_tasks.id", name="fk_agent_interaction_task", ondelete="SET NULL"),
+        nullable=True,
+    )
+    checkpoint_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(
+            "agent_checkpoints.id", name="fk_agent_interaction_checkpoint", ondelete="SET NULL"
+        ),
+        nullable=True,
+    )
+    owner_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    interaction_type: Mapped[str] = mapped_column(
+        String(40), nullable=False, default=AgentInteractionType.OTHER.value
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=AgentInteractionStatus.PENDING.value
+    )
+    risk: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=AgentInteractionRisk.LOW.value
+    )
+    priority: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=AgentInteractionPriority.NORMAL.value
+    )
+    title: Mapped[str] = mapped_column(String(240), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    options: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    #: Bound operation scope - cannot authorize unrelated operations
+    operation_binding: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    #: Validated UI envelope for registered components only
+    ui: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+    run: Mapped[AgentRun] = relationship(back_populates="interactions")
+    assignment: Mapped[Assignment] = relationship()
+    workspace: Mapped[Workspace] = relationship()
+    task: Mapped[PlanTask | None] = relationship(foreign_keys=[task_id])
+    checkpoint: Mapped[AgentCheckpoint | None] = relationship(back_populates="interactions")
+    owner: Mapped[User | None] = relationship(foreign_keys=[owner_id])
+    responses: Mapped[list[AgentInteractionResponse]] = relationship(
+        back_populates="interaction",
+        cascade="all, delete-orphan",
+        order_by="AgentInteractionResponse.version",
+    )
+
+
+class AgentInteractionResponse(Base):
+    """Immutable decision history for an interaction."""
+
+    __tablename__ = "agent_interaction_responses"
+    __table_args__ = (
+        Index("ix_agent_interaction_responses_interaction_id", "interaction_id"),
+        Index("ix_agent_interaction_responses_run_id", "run_id"),
+        Index("ix_agent_interaction_responses_responder_id", "responder_id"),
+        UniqueConstraint("interaction_id", "version", name="uq_agent_interaction_response_version"),
+        CheckConstraint(
+            "status IN ('SUBMITTED','ACCEPTED','REJECTED')",
+            name="agent_interaction_responses_status_valid",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    interaction_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_interactions.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    responder_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    response_type: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifacts: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
+    diff: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    operation_binding_snapshot: Mapped[dict[str, Any]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    interaction: Mapped[AgentInteraction] = relationship(back_populates="responses")
+    responder: Mapped[User | None] = relationship(foreign_keys=[responder_id])
 
 
 class AgentEvent(Base):
@@ -1757,6 +1935,9 @@ class AgentEvent(Base):
         UniqueConstraint("run_id", "sequence", name="uq_agent_events_run_sequence"),
         Index("ix_agent_events_run_id_created_at", "run_id", "created_at"),
         Index("ix_agent_events_run_id_sequence", "run_id", "sequence"),
+        Index("ix_agent_events_run_type", "run_id", "event_type"),
+        Index("ix_agent_events_correlation_id", "correlation_id"),
+        Index("ix_agent_events_trace_id", "trace_id"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -1768,7 +1949,7 @@ class AgentEvent(Base):
     #: Per-run monotonic counter. ``created_at`` alone is not enough: several
     #: events can share a timestamp within one step.
     sequence: Mapped[int] = mapped_column(Integer, nullable=False)
-    event_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     #: User-safe one-line description. Never raw model output.
     summary: Mapped[str] = mapped_column(String(500), nullable=False)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
@@ -1783,6 +1964,23 @@ class AgentEvent(Base):
             "agent_task_executions.id", name="fk_agent_event_execution", ondelete="SET NULL"
         ),
         nullable=True,
+    )
+    workspace_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    assignment_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    user_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    causation_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    span_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False, default="INFO")
+    source_component: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="agent.runtime"
+    )
+    outcome: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

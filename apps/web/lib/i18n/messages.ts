@@ -643,12 +643,13 @@ export const en = {
   "common.email": "Email",
   "common.overall": "Overall",
 
-  "auth.headline": "Turn briefs into a plan you can execute.",
-  "auth.pitch": "Keep courses, assignment briefs, requirements, documents, and grading criteria organized in one focused workspace.",
-  "auth.createTitle": "Create your account",
-  "auth.welcomeTitle": "Welcome back",
-  "auth.createBody": "Start a private workspace for your courses and assignments.",
-  "auth.welcomeBody": "Sign in to continue planning your work.",
+  "auth.headline": "Turn assignments into a plan you can execute.",
+  "auth.pitch": "StudyOS keeps requirements, constraints, and deliverables tied to a reviewable plan, with a governed agent that only moves when you ask or approve.",
+  "auth.eyebrow": "AI academic workspace",
+  "auth.createTitle": "Create your workspace",
+  "auth.welcomeTitle": "Sign in",
+  "auth.createBody": "Start organising briefs, requirements, and a reviewable plan in one place.",
+  "auth.welcomeBody": "Pick up where you left off with your assignments, plans, and agent activity.",
 
   "notFound.title": "Page not found",
   "notFound.body": "The page you asked for is not here. It may have moved, or never existed.",
@@ -996,18 +997,21 @@ export const en = {
   "status.agentRun.cancelled": "Cancelled",
 
   "status.agentArtifact.draft": "Draft",
-  "status.agentArtifact.reviewed": "Reviewed",
-  "status.agentArtifact.submitted": "Submitted",
+  "status.agentArtifact.active": "Active",
+  "status.agentArtifact.superseded": "Superseded",
+  "status.agentArtifact.archived": "Archived",
 
-  "status.agentExecution.pending": "Not started",
-  "status.agentExecution.running": "Running",
-  "status.agentExecution.succeeded": "Succeeded",
+  "status.agentExecution.success": "Succeeded",
+  "status.agentExecution.partial_success": "Partly done",
   "status.agentExecution.failed": "Failed",
-  "status.agentExecution.rejected": "Rejected",
+  "status.agentExecution.blocked": "Blocked",
+  "status.agentExecution.needs_user_input": "Needs your input",
+  "status.agentExecution.needs_approval": "Needs approval",
   "status.agentExecution.skipped": "Skipped",
 
   "status.agentCheckpoint.pending": "Open",
   "status.agentCheckpoint.resolved": "Answered",
+  "status.agentCheckpoint.cancelled": "Cancelled",
   "status.agentCheckpoint.expired": "Timed out",
 
   "status.agentTool.success": "Done",
@@ -1119,6 +1123,28 @@ export const en = {
   "agentUi.progressOf": "{value} of {max}",
   "agentUi.unsupported": "This part of the interface needs a newer version of the app (block: {type}).",
   "agentUi.notice": "Some parts of the agent's interface could not be displayed.",
+
+  // Filled in when a surface that previously hard-coded English was moved onto
+  // the catalogue. Kept together so the next audit can see what was missing.
+  "brief.statusOptionsNote":
+    "Only draft, incomplete, completed, and archived can be set here. Moving into analysis happens through the readiness gate below.",
+  "requirements.empty": "No requirements yet. The readiness gate needs at least one.",
+  "constraints.empty": "No constraints recorded.",
+  "criteria.empty": "No criteria yet.",
+  "deliverables.empty": "No deliverables listed yet.",
+  "taxonomy.emptyTechnologies": "None recorded.",
+  "taxonomy.emptyTags": "None yet.",
+  "analysis.rubricProvided": "A rubric was provided in your brief.",
+  "assignment.deleteConfirm":
+    "Delete {title} and all of its documents? This cannot be undone.",
+  "settings.markReadFailed": "The notification could not be marked as read.",
+  "agent.pendingDecisions": "Waiting for your decision",
+  "agent.interactionAwaiting": "Awaiting your response",
+  "agent.decisionFailed": "Your decision could not be sent.",
+  "agent.risk.low": "Low risk",
+  "agent.risk.medium": "Medium risk",
+  "agent.risk.high": "High risk",
+  "agent.risk.critical": "Critical risk",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -1554,7 +1580,7 @@ export const fa: Catalogue = {
   "analysis.sourceLabel": "منبع: {source}",
   "analysis.expectsLabel": "انتظار: {items}",
   "analysis.toVerify": "برای بررسی: {items}",
-  "analysis.rubricInferred": " rubricای ارائه نشده است، بنابراین این انتظارات استنتاج شده‌اند و باید آن‌ها را با استاد خود تأیید کنید.",
+  "analysis.rubricInferred": "بارم‌نامه‌ای ارائه نشده است، بنابراین این انتظارات استنتاج شده‌اند و باید آن‌ها را با استاد خود تأیید کنید.",
   "analysis.stillUnknown": "هنوز نامشخص: {items}",
   "analysis.mustPrecede": "{before} باید پیش از {after} بیاید",
   "analysis.reviewBeforePlanning": "پیش از هر برنامه‌ریزی این را بازبینی کنید. پذیرش یعنی ثبت شدن تطابق آن با شرح تکلیف؛ رد کردن تحلیل را نگه می‌دارد اما آن را غیرقابل استفاده علامت می‌زند.",
@@ -1744,12 +1770,13 @@ export const fa: Catalogue = {
   "common.email": "ایمیل",
   "common.overall": "کلی",
 
-  "auth.headline": "صورت مسئله را به برنامه‌ای که می‌توانید اجرا کنید تبدیل کنید.",
-  "auth.pitch": "دروس، صورت مسئله‌ها، الزامات، اسناد و معیارهای نمره‌دهی را در یک فضای کاری منظم نگه دارید.",
-  "auth.createTitle": "حساب خود را بسازید",
-  "auth.welcomeTitle": "خوش آمدید",
-  "auth.createBody": "فضای کاری خصوصی خود را برای دروس و تکالیف شروع کنید.",
-  "auth.welcomeBody": "برای ادامهٔ برنامه‌ریزی کارتان وارد شوید.",
+  "auth.headline": "تکالیف را به برنامه‌ای اجرایی تبدیل کنید.",
+  "auth.pitch": "StudyOS نیازمندی‌ها، محدودیت‌ها و تحویل‌دادنی‌ها را به یک برنامهٔ قابل بازبینی پیوند می‌دهد و عامل هوشمند تنها با درخواست یا تأیید شما حرکت می‌کند.",
+  "auth.eyebrow": "فضای کاری آکادمیک با هوش مصنوعی",
+  "auth.createTitle": "ایجاد فضای کاری",
+  "auth.welcomeTitle": "ورود",
+  "auth.createBody": "صورت‌مسئله، نیازمندی‌ها و برنامه‌ای قابل بازبینی را یک‌جا سازمان‌دهی کنید.",
+  "auth.welcomeBody": "از جایی که رها کردید ادامه دهید؛ تکالیف، برنامه‌ها و فعالیت عامل در دسترس‌اند.",
 
   "notFound.title": "صفحه پیدا نشد",
   "notFound.body": "صفحه‌ای که خواستید اینجا نیست. شاید جابه‌جا شده یا هرگز وجود نداشته است.",
@@ -2090,18 +2117,21 @@ export const fa: Catalogue = {
   "status.agentRun.cancelled": "لغو شد",
 
   "status.agentArtifact.draft": "پیش‌نویس",
-  "status.agentArtifact.reviewed": "بازبینی‌شده",
-  "status.agentArtifact.submitted": "ارسال‌شده",
+  "status.agentArtifact.active": "فعال",
+  "status.agentArtifact.superseded": "جایگزین‌شده",
+  "status.agentArtifact.archived": "بایگانی‌شده",
 
-  "status.agentExecution.pending": "شروع نشده",
-  "status.agentExecution.running": "در حال اجرا",
-  "status.agentExecution.succeeded": "موفق",
+  "status.agentExecution.success": "موفق",
+  "status.agentExecution.partial_success": "تا حدی انجام شد",
   "status.agentExecution.failed": "ناموفق",
-  "status.agentExecution.rejected": "رد شده",
-  "status.agentExecution.skipped": "رد شده",
+  "status.agentExecution.blocked": "مسدود",
+  "status.agentExecution.needs_user_input": "نیازمند پاسخ شما",
+  "status.agentExecution.needs_approval": "نیازمند تأیید",
+  "status.agentExecution.skipped": "رد شد",
 
   "status.agentCheckpoint.pending": "باز",
   "status.agentCheckpoint.resolved": "پاسخ داده شد",
+  "status.agentCheckpoint.cancelled": "لغو شد",
   "status.agentCheckpoint.expired": "اتمام مهلت",
 
   "status.agentTool.success": "انجام شد",
@@ -2213,6 +2243,25 @@ export const fa: Catalogue = {
   "agentUi.progressOf": "{value} از {max}",
   "agentUi.unsupported": "این بخش از رابط به نسخهٔ جدیدتری از برنامه نیاز دارد (بلوک: {type}).",
   "agentUi.notice": "بخشی از رابط عامل نمایش داده نشد.",
+
+  "brief.statusOptionsNote":
+    "در اینجا فقط می‌توان وضعیت را به پیش‌نویس، ناتمام، تکمیل‌شده یا بایگانی تغییر داد. رفتن به مرحلهٔ تحلیل از طریق دروازهٔ آمادگی در پایین انجام می‌شود.",
+  "requirements.empty": "هنوز شرطی ثبت نشده است. دروازهٔ آمادگی به دست‌کم یک شرط نیاز دارد.",
+  "constraints.empty": "محدودیتی ثبت نشده است.",
+  "criteria.empty": "هنوز معیاری ثبت نشده است.",
+  "deliverables.empty": "هنوز تحویل‌دادنی‌ای ثبت نشده است.",
+  "taxonomy.emptyTechnologies": "چیزی ثبت نشده است.",
+  "taxonomy.emptyTags": "هنوز چیزی نیست.",
+  "analysis.rubricProvided": "بارم‌نامه در شرح تکلیف شما ارائه شده است.",
+  "assignment.deleteConfirm": "«{title}» و همهٔ سندهایش حذف شود؟ این کار برگشت‌پذیر نیست.",
+  "settings.markReadFailed": "اعلان به‌عنوان خوانده‌شده علامت‌گذاری نشد.",
+  "agent.pendingDecisions": "در انتظار تصمیم شما",
+  "agent.interactionAwaiting": "در انتظار پاسخ شما",
+  "agent.decisionFailed": "تصمیم شما ارسال نشد.",
+  "agent.risk.low": "ریسک کم",
+  "agent.risk.medium": "ریسک متوسط",
+  "agent.risk.high": "ریسک زیاد",
+  "agent.risk.critical": "ریسک بحرانی",
 };
 
 export const catalogues: Record<Locale, Catalogue> = { en, fa };

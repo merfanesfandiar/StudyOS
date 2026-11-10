@@ -742,6 +742,15 @@ class ToolRegistry:
             raise ToolNotRegisteredError(name, self.names())
         return tool
 
+    def lookup(self, name: str) -> AgentTool | None:
+        """The registration for ``name`` if it exists, else ``None``.
+
+        For inspection paths (e.g. the approval policy) that must not raise:
+        unknown names are rejected by :meth:`get`/``require_granted`` at
+        dispatch with their own visible error.
+        """
+        return self._tools.get(name)
+
     def assert_permitted(self, name: str, required: str) -> AgentTool:
         """Resolve a tool only if it holds ``required``.
 

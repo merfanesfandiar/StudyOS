@@ -188,7 +188,7 @@ export function RequirementsSection({
       </ol>
       {requirements.length === 0 ? (
         <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-          No requirements yet. The readiness gate needs at least one.
+          {t("requirements.empty")}
         </p>
       ) : null}
 

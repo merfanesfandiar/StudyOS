@@ -62,7 +62,13 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
 
   async function deleteAssignment() {
     if (!specification) return;
-    if (!window.confirm(`Delete ${specification.assignment.title} and all of its documents?`)) return;
+    if (
+      !window.confirm(
+        t("assignment.deleteConfirm", { title: specification.assignment.title }),
+      )
+    ) {
+      return;
+    }
     setDeleteError("");
     try {
       await api.deleteAssignment(specification.assignment.id);
@@ -75,12 +81,23 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
     }
   }
 
+  // Both interim states keep the skip link's target on the page. Without the
+  // id, "Skip to content" is a link to nowhere for exactly the users who rely
+  // on it most: the ones waiting for a slow load or reading an error.
   if (loading && !specification) {
-    return <LoadingState label={t("assignment.loading")} />;
+    return (
+      <div id="main-content">
+        <LoadingState label={t("assignment.loading")} />
+      </div>
+    );
   }
 
   if (!specification) {
-    return <Alert>{error || t("assignment.loadFailed")}</Alert>;
+    return (
+      <div id="main-content">
+        <Alert>{error || t("assignment.loadFailed")}</Alert>
+      </div>
+    );
   }
 
   return (

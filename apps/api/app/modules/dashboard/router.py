@@ -47,6 +47,13 @@ async def dashboard(
         .where(Assignment.workspace_id == workspace.id)
         .order_by(Assignment.created_at.desc())
         .options(*SPECIFICATION_LOADERS)
+        # Bounded deliberately: this is a summary the home page renders, not a
+        # bulk export. Every assignment here is eagerly loaded with its full
+        # specification, so an uncapped read would scan the whole workspace on
+        # every dashboard visit and grow linearly with use. The cap only needs
+        # to exceed what the UI can render; older rows are reachable through
+        # the assignment list, which is filtered and paginated properly.
+        .limit(500)
     )
     assignments = list(result.scalars().unique().all())
     items = [assignment_list_item(assignment) for assignment in assignments]

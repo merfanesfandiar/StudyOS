@@ -25,7 +25,10 @@ export default function ErrorBoundary({
   const { t } = usePreferences();
 
   return (
-    <main className="grid min-h-[60vh] place-items-center px-6" id="main-content">
+    // A segment boundary renders inside the app shell, whose `<main>` is
+    // already the page landmark. A second `<main>` here would nest landmarks
+    // and give the skip link two targets.
+    <div className="grid min-h-[60vh] place-items-center px-6" id="main-content">
       <div className="max-w-md text-center">
         <p className="text-sm font-bold uppercase tracking-widest text-[var(--color-critical)]">
           500
@@ -41,6 +44,6 @@ export default function ErrorBoundary({
           </Link>
         </div>
       </div>
-    </main>
+    </div>
   );
 }

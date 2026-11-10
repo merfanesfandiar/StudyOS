@@ -28,45 +28,70 @@ export type AgentRunStatus =
 /** `SUPERVISED` asks before acting; `AUTONOMOUS` runs to the next real wall. */
 export type AgentRunMode = "SUPERVISED" | "AUTONOMOUS";
 
+/**
+ * The closed set of decisions the runtime may take. Mirrors `AgentAction` in
+ * `app/models/enums.py` exactly: a model may not invent an action, and the UI
+ * must not render one that cannot exist.
+ */
 export type AgentAction =
-  | "CREATE_ARTIFACT"
-  | "COMPLETE_TASK"
-  | "REQUEST_CHECKPOINT"
+  | "EXECUTE_TASK"
   | "ASK_USER"
-  | "PAUSE"
-  | "SKIP_TASK"
-  | "RETRY";
+  | "REQUEST_APPROVAL"
+  | "CREATE_ARTIFACT"
+  | "UPDATE_ARTIFACT"
+  | "REVIEW_RESULT"
+  | "RETRY_TASK"
+  | "MARK_BLOCKED"
+  | "COMPLETE_TASK"
+  | "PAUSE_RUN"
+  | "CALL_TOOL";
 
+/** Mirrors `AgentCheckpointType`. */
 export type AgentCheckpointType =
   | "CLARIFICATION"
-  | "MISSING_INFORMATION"
   | "APPROVAL"
   | "REVIEW"
-  | "RESOURCE";
+  | "DECISION"
+  | "MISSING_INFORMATION"
+  | "PERMISSION";
 
-export type AgentCheckpointStatus = "PENDING" | "RESOLVED" | "EXPIRED";
+/** Mirrors `AgentCheckpointStatus`. `EXPIRED` questions can never authorise. */
+export type AgentCheckpointStatus = "PENDING" | "RESOLVED" | "CANCELLED" | "EXPIRED";
 
+/** Mirrors `AgentArtifactType`. */
 export type AgentArtifactType =
+  | "TEXT"
+  | "MARKDOWN"
+  | "REPORT"
   | "OUTLINE"
-  | "DRAFT"
   | "SOLUTION"
-  | "SUMMARY"
-  | "NOTES"
-  | "CODE";
+  | "CALCULATION"
+  | "PROOF_DRAFT"
+  | "PRESENTATION"
+  | "RESEARCH_NOTES"
+  | "CODE"
+  | "DOCUMENT";
 
-export type AgentArtifactStatus = "DRAFT" | "REVIEWED" | "SUBMITTED";
+/** Mirrors `AgentArtifactStatus`. */
+export type AgentArtifactStatus = "DRAFT" | "ACTIVE" | "SUPERSEDED" | "ARCHIVED";
 
-/** Who an artifact belongs to. `USER_OWNED` is never overwritten by the runtime. */
+/** Who an artifact belongs to. Mirrors `AgentArtifactOwnership`. */
 export type AgentArtifactOwnership =
   | "USER_OWNED"
   | "AGENT_OWNED"
   | "SYSTEM_GENERATED"
   | "IMPORTED";
 
+/** How a task kind is executed. Mirrors `AgentExecutorKind`. */
 export type AgentExecutorKind =
-  | "DETERMINISTIC"
-  | "MODEL_WORKER"
-  | "HUMAN_REVIEW";
+  | "REASONING"
+  | "WRITING"
+  | "ANALYSIS"
+  | "RESEARCH"
+  | "CALCULATION"
+  | "PLANNING"
+  | "ARTIFACT"
+  | "MOCK_TOOL";
 
 /**
  * The specialized academic worker serving a task. Mirrors `AgentWorkerKind`.
@@ -88,25 +113,33 @@ export type AgentWorkerKind =
 /** Outcome of one recorded tool call. Mirrors `AgentToolInvocationStatus`. */
 export type AgentToolInvocationStatus = "SUCCESS" | "FAILED" | "BLOCKED";
 
+/** Outcome of one attempt at one task. Mirrors `AgentExecutionStatus`. */
 export type AgentExecutionStatus =
-  | "PENDING"
-  | "RUNNING"
-  | "SUCCEEDED"
+  | "SUCCESS"
+  | "PARTIAL_SUCCESS"
   | "FAILED"
-  | "REJECTED"
+  | "BLOCKED"
+  | "NEEDS_USER_INPUT"
+  | "NEEDS_APPROVAL"
   | "SKIPPED";
 
+/** Why an attempt failed, in terms the recovery policy can act on. Mirrors `AgentFailureCategory`. */
 export type AgentFailureCategory =
-  | "PROVIDER_UNAVAILABLE"
-  | "PROVIDER_RATE_LIMIT"
-  | "INVALID_OUTPUT"
-  | "VALIDATION_FAILED"
+  | "TRANSIENT_PROVIDER"
+  | "RATE_LIMITED"
+  | "VALIDATION_ERROR"
+  | "CONTEXT_ERROR"
+  | "DEPENDENCY_ERROR"
   | "PERMISSION_DENIED"
-  | "BUDGET_EXHAUSTED"
-  | "STEP_TIMEOUT"
-  | "DEPENDENCY_FAILED"
-  | "TOOL_ERROR"
-  | "INTERNAL";
+  | "AUTHORIZATION_ERROR"
+  | "USER_INPUT_REQUIRED"
+  | "UNSUPPORTED_OPERATION"
+  | "TIMEOUT"
+  | "EXTERNAL_SERVICE_ERROR"
+  | "INVALID_RESULT"
+  | "RESOURCE_LIMIT"
+  | "SYSTEM_ERROR"
+  | "CANCELLED";
 
 /** Plan-task status, as the runtime sees it. Mirrors `AcademicTaskStatus`. */
 export type AcademicTaskStatus =
@@ -183,7 +216,8 @@ export interface AgentTask {
 
 export interface AgentExecution {
   id: string;
-  task_id: string;
+  /** Nullable: attempt history outlives its task (`SET NULL` on task deletion). */
+  task_id: string | null;
   task_key: string;
   attempt: number;
   status: AgentExecutionStatus;
@@ -394,9 +428,103 @@ export interface AgentCheckpointResolveInput {
   response?: string;
   /** Must be one of the options actually offered. */
   selected_option?: string;
-  /** Only meaningful for APPROVAL and REVIEW. */
+  /** Only meaningful for APPROVAL, REVIEW and PERMISSION. */
   approved?: boolean;
   retry?: boolean;
+}
+
+export type AgentInteractionType =
+  | "CLARIFICATION"
+  | "USER_DECISION"
+  | "PLAN_APPROVAL"
+  | "TASK_APPROVAL"
+  | "TOOL_PERMISSION"
+  | "EXECUTION_APPROVAL"
+  | "ARTIFACT_REVIEW"
+  | "ARTIFACT_APPROVAL"
+  | "DESTRUCTIVE_ACTION_APPROVAL"
+  | "EXTERNAL_ACTION_APPROVAL"
+  | "CONFLICT_RESOLUTION"
+  | "EXCEPTION_RESOLUTION"
+  | "OTHER";
+
+export type AgentInteractionStatus =
+  | "PENDING"
+  | "SUBMITTED"
+  | "ACCEPTED"
+  | "REJECTED"
+  | "EXPIRED"
+  | "CANCELLED";
+
+export type AgentInteractionRisk = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type AgentInteractionPriority = "LOW" | "NORMAL" | "HIGH" | "URGENT";
+
+export interface AgentInteraction {
+  id: string;
+  run_id: string;
+  assignment_id: string;
+  workspace_id: string;
+  task_id: string | null;
+  checkpoint_id: string | null;
+  owner_id: string | null;
+  interaction_type: AgentInteractionType;
+  status: AgentInteractionStatus;
+  risk: AgentInteractionRisk;
+  priority: AgentInteractionPriority;
+  title: string;
+  prompt: string;
+  context: string | null;
+  options: Array<Record<string, unknown>> | null;
+  operation_binding: Record<string, unknown>;
+  ui: Record<string, unknown>;
+  version: number;
+  expires_at: string | null;
+  requested_at: string;
+  resolved_at: string | null;
+  cancelled_at: string | null;
+  cancel_reason: string | null;
+  metadata_json: Record<string, unknown>;
+  responses?: AgentInteractionResponseHistoryItem[];
+}
+
+export interface AgentInteractionResponseHistoryItem {
+  id: string;
+  interaction_id: string;
+  run_id: string;
+  responder_id: string | null;
+  version: number;
+  status: string;
+  response_type: string | null;
+  payload: Record<string, unknown>;
+  rationale: string | null;
+  artifacts: Array<Record<string, unknown>> | null;
+  diff: Record<string, unknown> | null;
+  operation_binding_snapshot: Record<string, unknown>;
+  submitted_at: string;
+}
+
+export interface AgentInteractionRespondInput {
+  action: string;
+  payload?: Record<string, unknown>;
+  rationale?: string;
+  artifacts?: Array<Record<string, unknown>> | null;
+  diff?: Record<string, unknown> | null;
+}
+
+export interface AgentInteractionCreateInput {
+  interaction_type?: AgentInteractionType;
+  risk?: AgentInteractionRisk;
+  priority?: AgentInteractionPriority;
+  title: string;
+  prompt: string;
+  context?: string | null;
+  options?: Array<Record<string, unknown>> | null;
+  operation_binding?: Record<string, unknown>;
+  ui?: Record<string, unknown>;
+  task_id?: string | null;
+  checkpoint_id?: string | null;
+  expires_at?: string | null;
+  metadata_json?: Record<string, unknown>;
 }
 
 /**

@@ -78,6 +78,59 @@ describe("translate", () => {
       catalogues.fa = original;
     }
   });
+
+  /**
+   * The UI builds these keys from server values:
+   * `status.agentRun.${status.toLowerCase()}`. A value the catalogue does not
+   * know renders the raw key, and the type system cannot catch it because the
+   * server vocabulary is data, not a literal. Pinning the lists here means a new
+   * backend status fails this test rather than reaching a student as
+   * "status.agentExecution.needs_approval".
+   */
+  it("has a label for every agent status the API can send", () => {
+    const vocabulary: Record<string, string[]> = {
+      agentRun: [
+        "CREATED",
+        "STARTING",
+        "RUNNING",
+        "WAITING_FOR_USER",
+        "PAUSED",
+        "BLOCKED",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+      ],
+      agentExecution: [
+        "SUCCESS",
+        "PARTIAL_SUCCESS",
+        "FAILED",
+        "BLOCKED",
+        "NEEDS_USER_INPUT",
+        "NEEDS_APPROVAL",
+        "SKIPPED",
+      ],
+      agentArtifact: ["DRAFT", "ACTIVE", "SUPERSEDED", "ARCHIVED"],
+      agentTool: ["SUCCESS", "FAILED", "BLOCKED"],
+      agentCheckpoint: ["PENDING", "RESOLVED", "CANCELLED", "EXPIRED"],
+    };
+    for (const locale of LOCALES) {
+      const missing = Object.entries(vocabulary).flatMap(([namespace, values]) =>
+        values
+          .map((value) => `status.${namespace}.${value.toLowerCase()}`)
+          .filter((key) => !(key in catalogues[locale])),
+      );
+      expect({ locale, missing }).toEqual({ locale, missing: [] });
+    }
+  });
+
+  it("has a risk label for every value an interaction can carry", () => {
+    for (const locale of LOCALES) {
+      const missing = ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        .map((risk) => `agent.risk.${risk.toLowerCase()}`)
+        .filter((key) => !(key in catalogues[locale]));
+      expect({ locale, missing }).toEqual({ locale, missing: [] });
+    }
+  });
 });
 
 describe("pluralisation", () => {

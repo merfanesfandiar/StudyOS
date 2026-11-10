@@ -37,8 +37,10 @@ from app.models import User
 from app.models.enums import (
     AgentAction,
     AgentExecutorKind,
+    AgentInteractionStatus,
     AgentRunMode,
 )
+from app.modules.agent import interactions as interaction_service
 from app.modules.agent import service
 from app.modules.agent.tools import DEFAULT_TOOLS
 from app.modules.agent.workers import DEFAULT_WORKER_REGISTRY
@@ -46,6 +48,11 @@ from app.schemas.agent import (
     AgentCapabilitiesResponse,
     AgentCheckpointResolveRequest,
     AgentCheckpointResponse,
+    AgentInteractionCancelRequest,
+    AgentInteractionCreateRequest,
+    AgentInteractionResponse,
+    AgentInteractionResponseHistoryItem,
+    AgentInteractionResponseRequest,
     AgentRunActionRequest,
     AgentRunCreateRequest,
     AgentRunDetailResponse,
@@ -251,9 +258,10 @@ async def list_run_tool_invocations(
     run_id: UUID,
     user: CurrentUser,
     db: Db,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 500,
 ) -> dict[str, list[AgentToolInvocationResponse]]:
     run = await service.load_owned_run(assignment_id, run_id, user.id, db)
-    return {"items": await service.run_tool_invocations(run, db)}
+    return {"items": await service.run_tool_invocations(run, db, limit=limit)}
 
 
 @router.get(
@@ -458,6 +466,307 @@ async def resolve_checkpoint(
     await service.execute_run(run, user, db, provider=provider)
     await db.commit()
     return await _run_response(run_id, assignment_id, user, db)
+
+
+# ---------------------------------------------------------------------------
+# Interactions (Phase 8)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/{assignment_id}/agent/runs/{run_id}/interactions",
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    payload: AgentInteractionCreateRequest,
+    user: CurrentUser,
+    db: Db,
+) -> AgentInteractionResponse:
+    _require_enabled()
+    from app.models import Assignment
+
+    run = await service.load_owned_run(assignment_id, run_id, user.id, db)
+    assignment = await db.get(Assignment, assignment_id)
+    if assignment is None:
+        # load_owned_run already proved the caller owns this assignment; the
+        # row cannot legitimately disappear between the two reads.
+        raise AppError(404, "ASSIGNMENT_NOT_FOUND", "Assignment not found.")
+    workspace_id = assignment.workspace_id
+    interaction = await interaction_service.create_interaction(
+        db,
+        run,
+        assignment_id,
+        workspace_id,
+        interaction_type=payload.interaction_type,
+        risk=payload.risk,
+        priority=payload.priority,
+        title=payload.title,
+        prompt=payload.prompt,
+        context=payload.context,
+        options=payload.options,
+        operation_binding=payload.operation_binding,
+        ui=payload.ui,
+        task_id=payload.task_id,
+        checkpoint_id=payload.checkpoint_id,
+        owner_id=user.id,
+        expires_at=payload.expires_at,
+        metadata_json=payload.metadata_json,
+    )
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.get(
+    "/{assignment_id}/agent/runs/{run_id}/interactions",
+)
+async def list_agent_interactions(
+    assignment_id: UUID,
+    run_id: UUID,
+    user: CurrentUser,
+    db: Db,
+    limit: int = Query(default=100, ge=1, le=500),
+    status_filter: str | None = Query(default=None, alias="status"),
+) -> list[AgentInteractionResponse]:
+    _require_enabled()
+    run = await service.load_owned_run(assignment_id, run_id, user.id, db)
+    filt = None
+    if status_filter:
+        try:
+            filt = AgentInteractionStatus(status_filter)
+        except ValueError as exc:
+            raise AppError(
+                422, "AGENT_INTERACTION_INVALID_STATUS", "Unsupported status filter."
+            ) from exc
+    interactions = await interaction_service.list_interactions(db, run, filt, limit=limit)
+    return [AgentInteractionResponse.model_validate(i) for i in interactions]
+
+
+@router.get(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}",
+)
+async def get_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    user: CurrentUser,
+    db: Db,
+) -> AgentInteractionResponse:
+    interaction, _run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.post(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}/respond",
+)
+async def respond_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    payload: AgentInteractionResponseRequest,
+    user: CurrentUser,
+    db: Db,
+) -> AgentInteractionResponse:
+    _require_enabled()
+    interaction, run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    interaction = await interaction_service.respond_to_interaction(
+        db,
+        interaction,
+        run,
+        user,
+        action=payload.action,
+        payload=payload.payload,
+        rationale=payload.rationale,
+        artifacts=payload.artifacts,
+        diff=payload.diff,
+    )
+    # Only an accepted decision continues the run. A rejection or a revision
+    # must never trigger execution: the protected operation is not authorized.
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    if loaded is None:
+        raise AppError(404, "AGENT_INTERACTION_NOT_FOUND", "Interaction not found.")
+    if loaded.status != AgentInteractionStatus.ACCEPTED.value:
+        return AgentInteractionResponse.model_validate(loaded)
+    provider = None
+    try:
+        provider = build_llm_provider(settings)
+    except LLMUnavailableError:
+        provider = None
+    await service.execute_run(run, user, db, provider=provider)
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.post(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}/approve",
+)
+async def approve_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    user: CurrentUser,
+    db: Db,
+    payload: AgentInteractionResponseRequest | None = None,
+) -> AgentInteractionResponse:
+    _require_enabled()
+    interaction, run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    p = payload or AgentInteractionResponseRequest(action="approve", payload={})
+    interaction = await interaction_service.respond_to_interaction(
+        db,
+        interaction,
+        run,
+        user,
+        action="approve",
+        payload=p.payload,
+        rationale=p.rationale,
+        artifacts=p.artifacts,
+        diff=p.diff,
+    )
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    if loaded is None:
+        raise AppError(404, "AGENT_INTERACTION_NOT_FOUND", "Interaction not found.")
+    if loaded.status != AgentInteractionStatus.ACCEPTED.value:
+        return AgentInteractionResponse.model_validate(loaded)
+    provider = None
+    try:
+        provider = build_llm_provider(settings)
+    except LLMUnavailableError:
+        provider = None
+    await service.execute_run(run, user, db, provider=provider)
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.post(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}/reject",
+)
+async def reject_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    user: CurrentUser,
+    db: Db,
+    payload: AgentInteractionResponseRequest | None = None,
+) -> AgentInteractionResponse:
+    interaction, run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    p = payload or AgentInteractionResponseRequest(action="reject", payload={})
+    interaction = await interaction_service.respond_to_interaction(
+        db,
+        interaction,
+        run,
+        user,
+        action="reject",
+        payload=p.payload,
+        rationale=p.rationale,
+        artifacts=p.artifacts,
+        diff=p.diff,
+    )
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.post(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}/revise",
+)
+async def revise_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    payload: AgentInteractionResponseRequest,
+    user: CurrentUser,
+    db: Db,
+) -> AgentInteractionResponse:
+    interaction, run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    interaction = await interaction_service.respond_to_interaction(
+        db,
+        interaction,
+        run,
+        user,
+        action="revise",
+        payload=payload.payload,
+        rationale=payload.rationale,
+        artifacts=payload.artifacts,
+        diff=payload.diff,
+    )
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.post(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}/cancel",
+)
+async def cancel_interaction(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    user: CurrentUser,
+    db: Db,
+    payload: AgentInteractionCancelRequest | None = None,
+) -> AgentInteractionResponse:
+    interaction, _run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    reason = payload.reason if payload else None
+    interaction = await interaction_service.cancel_interaction(db, interaction, reason=reason)
+    await db.commit()
+    loaded = await interaction_service.get_interaction_with_responses(db, interaction.id)
+    return AgentInteractionResponse.model_validate(loaded)
+
+
+@router.get(
+    "/{assignment_id}/agent/runs/{run_id}/interactions/{interaction_id}/history",
+    response_model=list[AgentInteractionResponseHistoryItem],
+)
+async def interaction_history(
+    assignment_id: UUID,
+    run_id: UUID,
+    interaction_id: UUID,
+    user: CurrentUser,
+    db: Db,
+) -> list[dict[str, Any]]:
+    interaction, _run = await interaction_service.load_owned_interaction(
+        assignment_id, run_id, interaction_id, user.id, db
+    )
+    await db.refresh(interaction)
+    history = []
+    for r in sorted(interaction.responses, key=lambda x: x.version):
+        history.append(
+            {
+                "id": str(r.id),
+                "interaction_id": str(r.interaction_id),
+                "run_id": str(r.run_id),
+                "responder_id": str(r.responder_id) if r.responder_id else None,
+                "version": r.version,
+                "status": r.status,
+                "response_type": r.response_type,
+                "payload": r.payload,
+                "rationale": r.rationale,
+                "artifacts": r.artifacts,
+                "diff": r.diff,
+                "operation_binding_snapshot": r.operation_binding_snapshot,
+                "submitted_at": r.submitted_at.isoformat(),
+            }
+        )
+    return history
 
 
 # ---------------------------------------------------------------------------

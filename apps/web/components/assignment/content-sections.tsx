@@ -98,7 +98,7 @@ export function ConstraintsSection({
         ))}
         {constraints.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-            No constraints recorded.
+            {t("constraints.empty")}
           </p>
         ) : null}
       </div>
@@ -248,7 +248,7 @@ export function CriteriaSection({
         ))}
         {criteria.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-            No criteria yet.
+            {t("criteria.empty")}
           </p>
         ) : null}
       </div>

@@ -38,6 +38,8 @@ import type {
   AgentCapabilities,
   AgentCheckpoint,
   AgentCheckpointResolveInput,
+  AgentInteraction,
+  AgentInteractionResponseHistoryItem,
   AgentRun,
   AgentRunActionInput,
   AgentRunCreateInput,
@@ -485,6 +487,81 @@ export const api = {
     request<AgentRunDetail>(
       `/assignments/${assignmentId}/agent/runs/${runId}/checkpoints/${checkpointId}/resolve`,
       { method: "POST", ...json(input) },
+    ),
+
+  // -- Phase 8: interactions (HITL) ----------------------------------------
+  agentInteractions: (assignmentId: string, runId: string, status?: string) => {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return request<AgentInteraction[]>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions${qs}`,
+    );
+  },
+  agentInteraction: (assignmentId: string, runId: string, interactionId: string) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}`,
+    ),
+  createAgentInteraction: (
+    assignmentId: string,
+    runId: string,
+    input: import("./agent-types").AgentInteractionCreateInput,
+  ) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions`,
+      { method: "POST", ...json(input) },
+    ),
+  respondAgentInteraction: (
+    assignmentId: string,
+    runId: string,
+    interactionId: string,
+    input: import("./agent-types").AgentInteractionRespondInput,
+  ) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}/respond`,
+      { method: "POST", ...json(input) },
+    ),
+  approveAgentInteraction: (
+    assignmentId: string,
+    runId: string,
+    interactionId: string,
+    input?: import("./agent-types").AgentInteractionRespondInput,
+  ) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}/approve`,
+      { method: "POST", ...json(input ?? { action: "approve", payload: {} }) },
+    ),
+  rejectAgentInteraction: (
+    assignmentId: string,
+    runId: string,
+    interactionId: string,
+    input?: import("./agent-types").AgentInteractionRespondInput,
+  ) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}/reject`,
+      { method: "POST", ...json(input ?? { action: "reject", payload: {} }) },
+    ),
+  reviseAgentInteraction: (
+    assignmentId: string,
+    runId: string,
+    interactionId: string,
+    input: import("./agent-types").AgentInteractionRespondInput,
+  ) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}/revise`,
+      { method: "POST", ...json(input) },
+    ),
+  cancelAgentInteraction: (
+    assignmentId: string,
+    runId: string,
+    interactionId: string,
+    reason?: string,
+  ) =>
+    request<AgentInteraction>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}/cancel`,
+      { method: "POST", ...json(reason ? { reason } : {}) },
+    ),
+  agentInteractionHistory: (assignmentId: string, runId: string, interactionId: string) =>
+    request<AgentInteractionResponseHistoryItem[]>(
+      `/assignments/${assignmentId}/agent/runs/${runId}/interactions/${interactionId}/history`,
     ),
 
   /**

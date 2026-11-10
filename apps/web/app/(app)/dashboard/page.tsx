@@ -70,8 +70,8 @@ export default function DashboardPage() {
   const glance = [
     { label: t("nav.courses"), value: data.courses_count },
     { label: t("nav.assignments"), value: data.assignments_count },
-    { label: t("dashboard.glance.completion"), value: formatNumber(data.completion_percentage, { style: "percent", maximumFractionDigits: 0 }) },
-    { label: t("dashboard.glance.readiness"), value: formatNumber(data.average_readiness_score, { style: "percent", maximumFractionDigits: 0 }) },
+    { label: t("dashboard.glance.completion"), value: `${formatNumber(data.completion_percentage)}%` },
+    { label: t("dashboard.glance.readiness"), value: `${formatNumber(data.average_readiness_score)}%` },
   ];
   const next = data.upcoming_assignments[0];
 
@@ -89,7 +89,7 @@ export default function DashboardPage() {
       {next ? (
         <section
           aria-label={t("dashboard.focus")}
-          className="card relative mb-6 overflow-hidden p-6"
+          className="card relative mb-6 overflow-hidden p-6 shadow-[var(--shadow-card)]"
         >
           <span aria-hidden="true" className="absolute inset-y-0 start-0 w-1 bg-[var(--color-accent)]" />
           <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
@@ -109,7 +109,7 @@ export default function DashboardPage() {
                   {next.completed_requirements_count}/{next.requirements_count} {t("requirements.shortTitle")}
                 </span>
                 <span className="font-semibold text-[var(--color-ink-muted)]">
-                  {formatNumber(next.readiness_score, { style: "percent", maximumFractionDigits: 0 })}{" "}
+                  {formatNumber(next.readiness_score)}%{" "}
                   {t("readiness.shortTitle")}
                 </span>
               </div>
@@ -184,7 +184,7 @@ export default function DashboardPage() {
                   <div className="min-w-0">
                     <p className="truncate font-semibold text-[var(--color-ink)]">{assignment.title}</p>
                     <p className="mt-0.5 text-xs text-[var(--color-ink-subtle)]">
-                      {assignment.course_code} · {formatNumber(assignment.readiness_score, { style: "percent", maximumFractionDigits: 0 })}{" "}
+                      {assignment.course_code} · {formatNumber(assignment.readiness_score)}%{" "}
                       {t("dashboard.ready")} ·{" "}
                       {assignment.completed_requirements_count}/{assignment.requirements_count}{" "}
                       {t("requirements.title")}

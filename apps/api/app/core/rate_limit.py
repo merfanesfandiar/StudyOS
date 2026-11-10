@@ -18,11 +18,13 @@ Design notes, stated because they are load-bearing:
   two coroutines cannot interleave there. That saves the cross-loop mess of a
   module-level ``asyncio.Lock`` (pytest-asyncio makes a fresh loop per test)
   while keeping the check-append atomic within one process.
-* **Keyed by the caller-supplied address, documented as such.** Behind a proxy
-  every request arrives from the proxy, so ``x-forwarded-for`` is preferred when
-  present. Trusting a client-supplied header for *throttling* is safe (worst
-  case an attacker throttles themselves); it only becomes dangerous when a
-  header drives *authorization*, which it never does here.
+* **``x-forwarded-for`` is only trusted behind a configured proxy.** In the
+  shipped topology the API is exposed directly, where the header is
+  attacker-controlled: rotating it per request would give every credential
+  guess an empty window, so the limiter would enforce nothing. By default the
+  limiter keys on the socket address and ignores the header entirely; an
+  operator who actually deploys a trusted reverse proxy sets
+  ``rate_limit_trust_proxy=true`` to re-enable header-derived keys.
 
 Windows are evicted lazily: a stale hit is dropped only when the bucket is
 touched again, and only while it is older than the window. Idle keys therefore
@@ -52,13 +54,22 @@ def reset_rate_limits() -> None:
 def client_key(request: Request) -> str:
     """A stable identifier for one caller.
 
-    Prefers ``x-forwarded-for`` so the limiter still groups a caller correctly
-    when the API sits behind a proxy; falls back to the socket address.
+    Keys on the socket address by default. ``x-forwarded-for`` is consulted
+    only when ``rate_limit_trust_proxy`` is set, because behind the API in the
+    default topology the header is client-supplied and rotating it would evade
+    throttling entirely.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if _trust_proxy():
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
     return request.client.host if request.client else "unknown"
+
+
+def _trust_proxy() -> bool:
+    from app.core.config import get_settings
+
+    return get_settings().rate_limit_trust_proxy
 
 
 def check_rate_limit(

@@ -64,6 +64,9 @@ async def list_workspace_technologies(
             select(Technology)
             .where(Technology.workspace_id == workspace.id)
             .order_by(Technology.name, Technology.version)
+            # User-grown vocabulary, but still bounded: a runaway OPTIONS query
+            # is not worth the risk of an unbounded response.
+            .limit(500)
         )
     ).all()
     return [
@@ -216,7 +219,14 @@ async def list_workspace_tags(
 ) -> list[TagResponse]:
     _ensure_workspace(workspace_id, workspace)
     tags = (
-        await db.scalars(select(Tag).where(Tag.workspace_id == workspace.id).order_by(Tag.name))
+        await db.scalars(
+            select(Tag)
+            .where(Tag.workspace_id == workspace.id)
+            .order_by(Tag.name)
+            # User-grown vocabulary, but still bounded: a runaway OPTIONS query
+            # is not worth the risk of an unbounded response.
+            .limit(500)
+        )
     ).all()
     return [
         TagResponse(

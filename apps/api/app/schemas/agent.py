@@ -33,6 +33,10 @@ from app.models.enums import (
     AgentExecutionStatus,
     AgentExecutorKind,
     AgentFailureCategory,
+    AgentInteractionPriority,
+    AgentInteractionRisk,
+    AgentInteractionStatus,
+    AgentInteractionType,
     AgentRunMode,
     AgentRunStatus,
     AgentToolInvocationStatus,
@@ -85,6 +89,40 @@ class AgentCheckpointResolveRequest(APIModel):
     approved: bool | None = None
     #: Ask the agent to try the rejected step again.
     retry: bool = False
+
+
+class AgentInteractionCreateRequest(APIModel):
+    model_config = APIModel.model_config | {"extra": "forbid"}
+
+    interaction_type: AgentInteractionType = AgentInteractionType.OTHER
+    risk: AgentInteractionRisk = AgentInteractionRisk.LOW
+    priority: AgentInteractionPriority = AgentInteractionPriority.NORMAL
+    title: str = Field(min_length=1, max_length=240)
+    prompt: str = Field(min_length=1, max_length=4000)
+    context: str | None = Field(default=None, max_length=4000)
+    options: list[dict[str, Any]] | None = None
+    operation_binding: dict[str, Any] = Field(default_factory=dict)
+    ui: dict[str, Any] = Field(default_factory=dict)
+    task_id: UUID | None = None
+    checkpoint_id: UUID | None = None
+    expires_at: datetime | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentInteractionResponseRequest(APIModel):
+    model_config = APIModel.model_config | {"extra": "forbid"}
+
+    action: str = Field(min_length=1, max_length=32)  # approve/reject/revise/submit/answer
+    payload: dict[str, Any] = Field(default_factory=dict)
+    rationale: str | None = Field(default=None, max_length=2000)
+    artifacts: list[dict[str, Any]] | None = None
+    diff: dict[str, Any] | None = None
+
+
+class AgentInteractionCancelRequest(APIModel):
+    model_config = APIModel.model_config | {"extra": "forbid"}
+
+    reason: str | None = Field(default=None, max_length=500)
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +204,10 @@ class AgentExecutionResponse(APIModel):
     """One attempt at one task. Every attempt is kept, including failures."""
 
     id: UUID
-    task_id: UUID
+    #: Nullable because the FK is ``SET NULL`` on task deletion while attempt
+    #: history is kept (the model docstring explains why); ``task_key`` keeps
+    #: the row attributable either way.
+    task_id: UUID | None
     task_key: str
     attempt: int
     status: AgentExecutionStatus
@@ -225,6 +266,57 @@ class AgentCheckpointResponse(APIModel):
     requested_at: datetime
     resolved_at: datetime | None = None
     expires_at: datetime | None = None
+    #: Optional structured UI envelope emitted by the runtime. Validated by the
+    #: web client before rendering; absent for plain-text checkpoints.
+    ui: dict[str, Any] | None = None
+
+
+class AgentInteractionResponseHistoryItem(APIModel):
+    model_config = APIModel.model_config
+
+    id: UUID
+    interaction_id: UUID
+    run_id: UUID
+    responder_id: UUID | None = None
+    version: int
+    status: str
+    response_type: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+    rationale: str | None = None
+    artifacts: list[dict[str, Any]] | None = None
+    diff: dict[str, Any] | None = None
+    operation_binding_snapshot: dict[str, Any] = Field(default_factory=dict)
+    submitted_at: datetime
+
+
+class AgentInteractionResponse(APIModel):
+    model_config = APIModel.model_config
+
+    id: UUID
+    run_id: UUID
+    assignment_id: UUID
+    workspace_id: UUID
+    task_id: UUID | None = None
+    checkpoint_id: UUID | None = None
+    owner_id: UUID | None = None
+    interaction_type: AgentInteractionType
+    status: AgentInteractionStatus
+    risk: AgentInteractionRisk
+    priority: AgentInteractionPriority
+    title: str
+    prompt: str
+    context: str | None = None
+    options: list[dict[str, Any]] | None = None
+    operation_binding: dict[str, Any] = Field(default_factory=dict)
+    ui: dict[str, Any] = Field(default_factory=dict)
+    version: int
+    expires_at: datetime | None = None
+    requested_at: datetime
+    resolved_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    cancel_reason: str | None = None
+    metadata_json: dict[str, Any] = Field(default_factory=dict)
+    responses: list[AgentInteractionResponseHistoryItem] = Field(default_factory=list)
 
 
 class AgentEventResponse(APIModel):

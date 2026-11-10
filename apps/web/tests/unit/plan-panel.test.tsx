@@ -295,6 +295,21 @@ describe("PlanPanel: approval", () => {
     fetchMock.mockImplementation(async (input, init) => {
       const url = String(input).replace(/^https?:\/\/[^/]+/, "");
       const method = init?.method ?? "GET";
+      // PlanPanel embeds AgentPanel, which loads the run list on mount. Without
+      // a benign answer here that request 404s and renders its own alert, so
+      // `findByRole("alert")` would match an unrelated error.
+      if (url.endsWith("/agent/runs")) return jsonResponse({ items: [] });
+      if (url.endsWith("/agent/capabilities")) {
+        return jsonResponse({
+          tools: [],
+          workers: [],
+          executors: [],
+          modes: [],
+          actions: [],
+          absent_capabilities: [],
+          limits: {},
+        });
+      }
       if (method === "POST" && url.endsWith("/approve")) {
         return jsonResponse(
           {

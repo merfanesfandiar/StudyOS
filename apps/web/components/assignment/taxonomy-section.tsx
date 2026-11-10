@@ -112,7 +112,7 @@ export function DeliverablesSection({
         ))}
         {deliverables.length === 0 ? (
           <p className="rounded-xl border border-dashed border-[var(--color-line)] p-4 text-sm text-[var(--color-ink-subtle)]">
-            No deliverables listed yet.
+            {t("deliverables.empty")}
           </p>
         ) : null}
       </div>
@@ -235,7 +235,7 @@ export function TaxonomySection({
             ))}
             {technologies.length === 0 ? (
               <li className="rounded-lg border border-dashed border-[var(--color-line)] p-3 text-sm text-[var(--color-ink-subtle)]">
-                None recorded.
+                {t("taxonomy.emptyTechnologies")}
               </li>
             ) : null}
           </ul>
@@ -308,7 +308,7 @@ export function TaxonomySection({
             ))}
             {tags.length === 0 ? (
               <li className="rounded-lg border border-dashed border-[var(--color-line)] p-3 text-sm text-[var(--color-ink-subtle)]">
-                None yet.
+                {t("taxonomy.emptyTags")}
               </li>
             ) : null}
           </ul>

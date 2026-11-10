@@ -16,7 +16,7 @@ export function AssignmentCard({ assignment }: { assignment: AssignmentListItem 
 
   return (
     <Link
-      className="block rounded-2xl border border-[var(--color-line)] bg-[var(--color-surface)] p-5 shadow-sm transition hover:-translate-y-0.5 hover:border-[var(--color-accent)] hover:shadow-md"
+      className="group block rounded-[var(--radius-card)] border border-[var(--color-line)] bg-[var(--color-surface)] p-5 shadow-[var(--shadow-card)] transition-all duration-[var(--duration-fast)] ease-[var(--ease-out)] hover:-translate-y-0.5 hover:border-[color-mix(in_oklab,var(--color-accent)_40%,var(--color-line))] hover:shadow-[var(--shadow-raised)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--color-focus)]"
       href={`/assignments/${assignment.id}`}
     >
       <div className="flex items-start justify-between gap-4">
@@ -36,7 +36,7 @@ export function AssignmentCard({ assignment }: { assignment: AssignmentListItem 
             {t("requirements.shortTitle")}
           </span>
           <span>
-            {formatNumber(assignment.readiness_score, { style: "percent", maximumFractionDigits: 0 })}{" "}
+            {formatNumber(assignment.readiness_score)}%{" "}
             {t("readiness.shortTitle")}
           </span>
         </div>

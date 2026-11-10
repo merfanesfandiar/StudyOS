@@ -114,8 +114,9 @@ async def list_executions(
     params: Annotated[PageParams, Depends()],
 ) -> Any:
     await load_owned_assignment(assignment_id, user.id, db)
-    jobs = await service.list_jobs(assignment_id, db, limit=params.limit)
-    total = len(jobs)
+    jobs, total = await service.list_jobs(
+        assignment_id, db, limit=params.limit, offset=params.offset
+    )
     return PageResponse[ExecutionJobResponse](
         items=[ExecutionJobResponse.model_validate(job) for job in jobs],
         page=Page(

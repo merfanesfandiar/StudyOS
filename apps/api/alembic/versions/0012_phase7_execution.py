@@ -34,7 +34,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0012_phase7_execution"
-down_revision: str | None = "0011_artifact_ownership"
+down_revision: str | None = "0012_agent_ui"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

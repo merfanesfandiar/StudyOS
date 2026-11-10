@@ -64,6 +64,29 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
+def mock_execution(monkeypatch: pytest.MonkeyPatch, tmp_path):
+    """Turn on execution with the mock backend and an isolated storage root.
+
+    Lives in conftest because the agent runtime's sandboxed tools submit
+    through the same execution module in-process: an agent test that exercises
+    code execution needs the mock backend just like an execution API test.
+    """
+    from app.core.config import get_settings
+    from app.modules.execution import router as execution_router
+    from app.modules.execution.service import build_orchestrator
+
+    settings = get_settings().model_copy(
+        update={"execution_enabled": True, "execution_backend": "mock"}
+    )
+    monkeypatch.setattr(execution_router, "settings", settings)
+    monkeypatch.setattr(execution_router, "get_storage", lambda: LocalStorage(tmp_path / "exec"))
+    # The inline path builds its own orchestrator from settings; keep it on the
+    # mock by binding the same settings object through the service call sites.
+    monkeypatch.setattr(execution_router.service, "build_orchestrator", build_orchestrator)
+    return settings
+
+
+@pytest.fixture
 async def client(
     db_session: AsyncSession, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncGenerator[AsyncClient, None]:

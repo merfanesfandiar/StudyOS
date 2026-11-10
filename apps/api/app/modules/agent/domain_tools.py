@@ -1448,7 +1448,7 @@ def _bounded_int(value: Any, default: int, cap: int) -> int:
     """Coerce an argument to a positive int, capped. Non-numbers use the default."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return default
-    return min(value, cap)
+    return min(int(value), cap)
 
 
 def _detect_delimiter(data: str) -> str:

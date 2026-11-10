@@ -32,7 +32,11 @@ class RequirementStatus(StrEnum):
 
 class RequirementType(StrEnum):
     FUNCTIONAL = "FUNCTIONAL"
-    TECHNICAL = "TECHICAL"
+    #: The stored value is the correct spelling. The original code shipped a
+    #: misspelled value ("TECHICAL") that became persisted data; migration
+    #: 0015 rewrites any surviving rows, so the Python value and the database
+    #: vocabulary agree again.
+    TECHNICAL = "TECHNICAL"
     DESIGN = "DESIGN"
     DOCUMENTATION = "DOCUMENTATION"
     CONSTRAINT = "CONSTRAINT"
@@ -368,6 +372,13 @@ class AuditEventType(StrEnum):
     AGENT_ARTIFACT_CREATED = "AGENT_ARTIFACT_CREATED"
     AGENT_ARTIFACT_REVISED = "AGENT_ARTIFACT_REVISED"
 
+    # Phase 8: durable HITL interaction decisions, recorded so approvals are
+    # attributable to the person who made them and the operation they bound.
+    AGENT_INTERACTION_REQUESTED = "AGENT_INTERACTION_REQUESTED"
+    AGENT_INTERACTION_RESOLVED = "AGENT_INTERACTION_RESOLVED"
+    AGENT_INTERACTION_EXPIRED = "AGENT_INTERACTION_EXPIRED"
+    AGENT_INTERACTION_CANCELLED = "AGENT_INTERACTION_CANCELLED"
+
 
 # ---------------------------------------------------------------------------
 # Phase 4: the Academic Planning Engine.
@@ -694,6 +705,47 @@ class AgentCheckpointStatus(StrEnum):
     EXPIRED = "EXPIRED"
 
 
+class AgentInteractionType(StrEnum):
+    """Why the runtime is waiting on a human. Domain-agnostic and extensible."""
+
+    CLARIFICATION = "CLARIFICATION"
+    USER_DECISION = "USER_DECISION"
+    PLAN_APPROVAL = "PLAN_APPROVAL"
+    TASK_APPROVAL = "TASK_APPROVAL"
+    TOOL_PERMISSION = "TOOL_PERMISSION"
+    EXECUTION_APPROVAL = "EXECUTION_APPROVAL"
+    ARTIFACT_REVIEW = "ARTIFACT_REVIEW"
+    ARTIFACT_APPROVAL = "ARTIFACT_APPROVAL"
+    DESTRUCTIVE_ACTION_APPROVAL = "DESTRUCTIVE_ACTION_APPROVAL"
+    EXTERNAL_ACTION_APPROVAL = "EXTERNAL_ACTION_APPROVAL"
+    CONFLICT_RESOLUTION = "CONFLICT_RESOLUTION"
+    EXCEPTION_RESOLUTION = "EXCEPTION_RESOLUTION"
+    OTHER = "OTHER"
+
+
+class AgentInteractionStatus(StrEnum):
+    PENDING = "PENDING"
+    SUBMITTED = "SUBMITTED"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+
+
+class AgentInteractionRisk(StrEnum):
+    LOW = "LOW"
+    MEDIUM = "MEDIUM"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+class AgentInteractionPriority(StrEnum):
+    LOW = "LOW"
+    NORMAL = "NORMAL"
+    HIGH = "HIGH"
+    URGENT = "URGENT"
+
+
 class AgentEventType(StrEnum):
     """The durable, user-safe activity stream.
 
@@ -730,6 +782,15 @@ class AgentEventType(StrEnum):
     TOOL_INVOCATION_FAILED = "TOOL_INVOCATION_FAILED"
     TOOL_INVOKED = "TOOL_INVOKED"
     TOOL_BLOCKED = "TOOL_BLOCKED"
+    #: Phase 8: durable HITL interactions.
+    INTERACTION_REQUESTED = "INTERACTION_REQUESTED"
+    INTERACTION_RESPONDED = "INTERACTION_RESPONDED"
+    INTERACTION_EXPIRED = "INTERACTION_EXPIRED"
+    INTERACTION_CANCELLED = "INTERACTION_CANCELLED"
+    #: Phase 9: model call instrumentation, recorded from the real provider path.
+    LLM_REQUEST_STARTED = "LLM_REQUEST_STARTED"
+    LLM_REQUEST_COMPLETED = "LLM_REQUEST_COMPLETED"
+    LLM_REQUEST_FAILED = "LLM_REQUEST_FAILED"
 
 
 class AgentFailureCategory(StrEnum):

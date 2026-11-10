@@ -26,6 +26,7 @@ from app.modules.execution.router import capabilities_router as execution_capabi
 from app.modules.execution.router import router as execution_router
 from app.modules.health import router as health_router
 from app.modules.notifications import router as notifications_router
+from app.modules.observability.router import router as observability_router
 from app.modules.planning.router import router as planning_router
 from app.storage import get_storage
 
@@ -107,6 +108,7 @@ app.include_router(agent_router)
 app.include_router(agent_tools_router)
 app.include_router(agent_run_tools_router)
 app.include_router(execution_router)
+app.include_router(observability_router)
 app.include_router(execution_capabilities_router)
 app.include_router(documents_router)
 app.include_router(dashboard_router)

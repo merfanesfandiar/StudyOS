@@ -113,6 +113,7 @@ from app.modules.agent.limits import (
     may_retry,
 )
 from app.modules.agent.ml import PredictorRegistry, advise
+from app.modules.agent.policy import DEFAULT_POLICY
 from app.modules.agent.selection import (
     Selection,
     TaskNode,
@@ -138,10 +139,12 @@ from app.modules.agent.tools import (
     ToolResult,
     invoke_tool,
 )
+from app.modules.agent.ui import build_artifact_ui, build_checkpoint_ui
 from app.modules.agent.workers import DEFAULT_WORKER_REGISTRY, WorkerRegistry
 from app.modules.assignments.service import load_owned_assignment
 from app.modules.execution.external_agent import build_external_agent
 from app.modules.execution.gateway import ExecutionGateway
+from app.modules.observability.service import redact_dict
 from app.modules.planning import service as planning_service
 from app.modules.planning.complexity import ComplexityScore
 from app.services.events import record_audit
@@ -489,6 +492,10 @@ async def _append_event(
     metadata: Mapping[str, Any] | None = None,
     task_id: UUID | None = None,
     execution_id: UUID | None = None,
+    outcome: str | None = None,
+    duration_ms: int | None = None,
+    severity: str = "INFO",
+    source_component: str = "agent.runtime",
 ) -> AgentEvent:
     """Append one user-safe event.
 
@@ -500,14 +507,25 @@ async def _append_event(
     itself.
     """
     run.lock_version = (run.lock_version or 0) + 1
+    safe_metadata = redact_dict(dict(metadata or {}))
     event = AgentEvent(
         run_id=run.id,
         sequence=run.lock_version,
         event_type=event_type.value,
         summary=summary[:500],
-        metadata_json=dict(metadata or {}),
+        metadata_json=safe_metadata,
         task_id=task_id,
         execution_id=execution_id,
+        assignment_id=run.assignment_id,
+        workspace_id=await _workspace_for(db, run),
+        correlation_id=safe_metadata.get("correlation_id"),
+        causation_id=safe_metadata.get("causation_id"),
+        trace_id=safe_metadata.get("trace_id"),
+        severity=severity,
+        source_component=source_component,
+        outcome=outcome,
+        duration_ms=duration_ms,
+        schema_version=1,
     )
     db.add(event)
     await db.flush()
@@ -678,9 +696,30 @@ def _limits_for(run: AgentRun) -> AgentLimits:
     )
 
 
-def _set_status(run: AgentRun, target: AgentRunStatus, *, reason: str | None = None) -> None:
-    """Move a run, rejecting anything not in the table."""
-    current = parse_status(run.status)
+async def _set_status(
+    db: AsyncSession, run: AgentRun, target: AgentRunStatus, *, reason: str | None = None
+) -> None:
+    """Move a run, rejecting anything not in the table.
+
+    The authoritative status is re-read from the database before validation.
+    The in-memory copy can be stale relative to another writer (the session is
+    created with ``expire_on_commit=False``, so a student's concurrent pause or
+    cancel never refreshes it); validating against it would let a failure path
+    in the still-executing loop commit ``BLOCKED``/``FAILED`` over a
+    just-committed ``CANCELLED``, silently resurrecting a run the student
+    killed. If the stored status differs from our in-memory copy, the run has
+    moved underneath us: raise :class:`RunClaimLost` so the worker treats it
+    exactly like any other lost writer instead of corrupting state.
+    """
+    stored = await db.scalar(select(AgentRun.status).where(AgentRun.id == run.id))
+    current = parse_status(run.status) if stored is None else parse_status(stored)
+    if stored is not None and parse_status(run.status) is not current:
+        raise RunClaimLost(
+            f"run {run.id} status is now {current.value} in the database but "
+            f"{run.status} in memory",
+            run.id,
+            run.lock_version or 0,
+        )
     assert_transition(current, target)
     run.status = target.value
     if target in TERMINAL_STATUSES and run.completed_at is None:
@@ -777,7 +816,7 @@ async def claim_step(run: AgentRun, db: AsyncSession) -> int:
 
 async def start_run(run: AgentRun, user: User, db: AsyncSession) -> AgentRun:
     """Start a created run."""
-    _set_status(run, AgentRunStatus.STARTING)
+    await _guarded_status(db, run, AgentRunStatus.STARTING)
     run.started_at = run.started_at or datetime.now(UTC)
     await _append_event(
         db, run, AgentEventType.RUN_STARTED, "Agent run started.", metadata={"mode": run.mode}
@@ -787,8 +826,28 @@ async def start_run(run: AgentRun, user: User, db: AsyncSession) -> AgentRun:
     return run
 
 
+async def _guarded_status(
+    db: AsyncSession, run: AgentRun, target: AgentRunStatus, *, reason: str | None = None
+) -> None:
+    """A user-facing status change: a lost race is a 409, not a 500.
+
+    ``cancel_run`` racing another writer mid-step is a normal correctness event,
+    not an internal error; tell the client to refresh instead of leaking a
+    traceback.
+    """
+    try:
+        await _set_status(db, run, target, reason=reason)
+    except RunClaimLost as exc:
+        raise AppError(
+            409,
+            "AGENT_RUN_STATE_CHANGED",
+            "This run changed state while your request was in flight. "
+            "Refresh and check its current status.",
+        ) from exc
+
+
 async def pause_run(run: AgentRun, user: User, db: AsyncSession, *, reason: str) -> AgentRun:
-    _set_status(run, AgentRunStatus.PAUSED, reason=reason)
+    await _guarded_status(db, run, AgentRunStatus.PAUSED, reason=reason)
     await _append_event(db, run, AgentEventType.RUN_PAUSED, reason, metadata={"reason": reason})
     await _audit_run(
         db,
@@ -815,7 +874,7 @@ async def resume_run(
     if status == AgentRunStatus.BLOCKED:
         await _assert_block_resolved(run, db)
 
-    _set_status(run, AgentRunStatus.RUNNING)
+    await _guarded_status(db, run, AgentRunStatus.RUNNING)
     run.heartbeat_at = datetime.now(UTC)
     await _append_event(
         db,
@@ -870,7 +929,7 @@ async def cancel_run(
     run: AgentRun, user: User, db: AsyncSession, *, reason: str = "Cancelled by the student."
 ) -> AgentRun:
     """Cancel a run. Permitted from any non-terminal state, including waiting."""
-    _set_status(run, AgentRunStatus.CANCELLED, reason=reason)
+    await _guarded_status(db, run, AgentRunStatus.CANCELLED, reason=reason)
     # A pending checkpoint belongs to a run that no longer exists; leaving it
     # pending would show the student a question that will never be answered.
     await _resolve_open_checkpoints(
@@ -977,6 +1036,11 @@ async def _persist_artifact(
         for old in previous:
             old.status = AgentArtifactStatus.SUPERSEDED.value
 
+    artifact_metadata = dict(metadata or {})
+    if "ui" not in artifact_metadata:
+        ui = build_artifact_ui(title=title, artifact_type=artifact_type.value)
+        if ui is not None:
+            artifact_metadata["ui"] = ui
     artifact = AgentArtifact(
         run_id=run.id,
         task_id=task_id,
@@ -985,7 +1049,7 @@ async def _persist_artifact(
         status=AgentArtifactStatus.DRAFT.value,
         ownership=ownership.value,
         content=content,
-        metadata_json=dict(metadata or {}),
+        metadata_json=artifact_metadata,
         worker_name=worker_name,
         revision=revision,
         deliverable_key=deliverable_key,
@@ -1106,6 +1170,11 @@ async def _create_checkpoint(
         question=question[:4_000],
         context=context[:4_000] if context else None,
         options=list(options) if options else None,
+        ui=build_checkpoint_ui(
+            question=question[:4_000],
+            context=context[:4_000] if context else None,
+            options=list(options) if options else None,
+        ),
         expires_at=datetime.now(UTC) + timedelta(seconds=limits.checkpoint_ttl_seconds),
     )
     db.add(checkpoint)
@@ -1122,7 +1191,8 @@ async def _create_checkpoint(
         },
         task_id=checkpoint.task_id,
     )
-    _set_status(
+    await _set_status(
+        db,
         run,
         AgentRunStatus.WAITING_FOR_USER,
         reason=f"{checkpoint_type.value.lower()}: {question[:200]}",
@@ -1188,6 +1258,7 @@ async def resolve_checkpoint(
         in {
             AgentCheckpointType.APPROVAL.value,
             AgentCheckpointType.REVIEW.value,
+            AgentCheckpointType.PERMISSION.value,
         }
         and approved is None
     ):
@@ -1229,7 +1300,7 @@ async def resolve_checkpoint(
     # WAITING_FOR_USER forever: the question is resolved, but nothing is left
     # telling the runtime it may proceed, so the student's answer does nothing.
     if parse_status(run.status) is AgentRunStatus.WAITING_FOR_USER:
-        _set_status(run, AgentRunStatus.RUNNING, reason=None)
+        await _set_status(db, run, AgentRunStatus.RUNNING, reason=None)
         await _append_event(
             db,
             run,
@@ -1372,7 +1443,7 @@ async def execute_run(
     if status in TERMINAL_STATUSES:
         raise AppError(409, "AGENT_RUN_FINISHED", "This run has already finished.")
     if status == AgentRunStatus.CREATED:
-        _set_status(run, AgentRunStatus.STARTING)
+        await _set_status(db, run, AgentRunStatus.STARTING)
         run.started_at = run.started_at or datetime.now(UTC)
     elif status in AWAITING_PERSON or status == AgentRunStatus.BLOCKED:
         raise AppError(
@@ -1390,7 +1461,7 @@ async def execute_run(
     # checkpoint answered moments ago. The state machine has no RUNNING -> RUNNING
     # edge on purpose, so treat that as the no-op it is instead of a contradiction.
     if status is not AgentRunStatus.RUNNING:
-        _set_status(run, AgentRunStatus.RUNNING)
+        await _set_status(db, run, AgentRunStatus.RUNNING)
 
     if run.plan_id is None:
         return await _fail_run(
@@ -1507,8 +1578,15 @@ async def execute_run(
             worker_registry,
             limits,
         )
+        # Commit after every step, not only on terminal outcomes. An ADVANCED
+        # step has already been paid for (provider call charged, artifacts and
+        # invocations flushed); leaving its rows to ride uncommitted in the
+        # session until the *next* claim's commit means a lost claim or a crash
+        # in between rolls back evidence of work the run was billed for. The
+        # claim itself was committed before the step began, so this commit is
+        # not re-opening the CAS.
+        await db.commit()
         if outcome.kind != "ADVANCED":
-            await db.commit()
             return outcome
 
     # Out of steps with work still to do. The loop knows it stopped, so it must
@@ -1686,14 +1764,46 @@ async def _run_step(
                     tool_output=tool_results[-1] if tool_results else None,
                 )
                 _gate_provider_call(run, limits, provider, request)
+                started_at = datetime.now(UTC)
+                await _append_event(
+                    db,
+                    run,
+                    AgentEventType.LLM_REQUEST_STARTED,
+                    f"Asked the model for the next step on {node.key}.",
+                    metadata={"model": run.model, "tier": run.model_tier},
+                    task_id=task.id if task else None,
+                    execution_id=execution.id,
+                )
                 response = await asyncio.wait_for(
                     provider.complete(request),
                     timeout=limits.step_timeout_seconds,
                 )
+                latency_ms = int((datetime.now(UTC) - started_at).total_seconds() * 1000)
                 decision_raw = response.content
                 execution.model = response.model
                 execution.token_usage = response.usage.as_dict()
                 _charge_run(run, response)
+                usage = response.usage.as_dict()
+                await _append_event(
+                    db,
+                    run,
+                    AgentEventType.LLM_REQUEST_COMPLETED,
+                    "The model answered the step request.",
+                    metadata={
+                        "model": response.model,
+                        "iteration": run.iteration_count,
+                        "token_usage": usage,
+                        "estimated_cost": (
+                            str(response.estimated_cost)
+                            if getattr(response, "estimated_cost", None) is not None
+                            else None
+                        ),
+                    },
+                    task_id=task.id if task else None,
+                    execution_id=execution.id,
+                    outcome="SUCCESS",
+                    duration_ms=latency_ms,
+                )
             except TimeoutError:
                 return await _record_step_failure(
                     db,
@@ -1707,6 +1817,21 @@ async def _run_step(
                     category=AgentFailureCategory.TRANSIENT_PROVIDER,
                 )
             except (LLMUnavailableError, LLMError) as exc:
+                await _append_event(
+                    db,
+                    run,
+                    AgentEventType.LLM_REQUEST_FAILED,
+                    "The model did not answer this step.",
+                    metadata={
+                        "model": run.model,
+                        "error_code": getattr(exc, "code", "AGENT_PROVIDER_ERROR"),
+                        "error_message": str(getattr(exc, "message", str(exc)))[:200],
+                    },
+                    task_id=task.id if task else None,
+                    execution_id=execution.id,
+                    outcome="FAILED",
+                    severity="ERROR",
+                )
                 return await _record_step_failure(
                     db,
                     run,
@@ -1902,6 +2027,87 @@ async def _run_step(
         started = time.perf_counter()
         cache_key = _tool_cache_key(decision.tool, decision.tool_arguments or {})
         cached = cache_key in step_cache
+
+        # ---- Approval gate ---------------------------------------------
+        # A grant means "this tool may run in general"; an approval means
+        # "this invocation runs now". HIGH-risk tools (sandbox execution,
+        # external delegation) need the second, from a person, bound to the
+        # exact (tool, arguments): see policy.ApprovalPolicy. The gate is
+        # satisfied by a RESOLVED PERMISSION checkpoint with this binding, so
+        # a resume after approval replays the step and proceeds, while a
+        # rejection blocks the call every time the model retries it.
+        if decision.tool is not None and settings.agent_tool_approval_required:
+            registration = _tool_registration(decision.tool, tools)
+            if registration is not None:
+                decision_ = DEFAULT_POLICY.evaluate_tool(
+                    tool_name=decision.tool,
+                    risk_level=registration.risk_level.value,
+                    permissions=registration.permissions,
+                    args=dict(decision.tool_arguments or {}),
+                )
+                if decision_.requires_approval and not cached:
+                    resolution = await _tool_approval_state(
+                        db, run.id, decision_.binding or ""
+                    )
+                    if resolution == "pending":
+                        await _close_execution(
+                            db, execution, AgentExecutionStatus.NEEDS_APPROVAL, decision_.reason
+                        )
+                        decision_row.outcome = "AWAITING_APPROVAL"
+                        checkpoint = await _create_checkpoint(
+                            db,
+                            run,
+                            question=decision_.reason,
+                            checkpoint_type=AgentCheckpointType.PERMISSION,
+                            task=task,
+                            context=decision_.binding,
+                            options=["approve", "reject"],
+                        )
+                        await db.flush()
+                        return StepOutcome(
+                            kind="WAITING",
+                            run_status=AgentRunStatus.WAITING_FOR_USER,
+                            detail=decision_.reason,
+                            checkpoint_id=checkpoint.id,
+                            decision_action=decision.action,
+                            task_key=node.key,
+                        )
+                    if resolution == "rejected":
+                        _record_tool_invocation(
+                            db,
+                            run=run,
+                            task=task,
+                            task_key=node.key,
+                            worker_kind=worker.kind.value,
+                            tool_name=decision.tool,
+                            iteration=run.iteration_count,
+                            status=AgentToolInvocationStatus.BLOCKED,
+                            args=dict(decision.tool_arguments or {}),
+                            error="You rejected this operation.",
+                        )
+                        await _append_event(
+                            db,
+                            run,
+                            AgentEventType.TOOL_BLOCKED,
+                            f"Blocked {decision.tool!r}: you rejected this operation.",
+                            metadata={"tool": decision.tool, "code": "TOOL_PERMISSION_DENIED"},
+                            task_id=task.id if task else None,
+                            execution_id=execution.id,
+                        )
+                        decision_row.outcome = "TOOL_BLOCKED"
+                        return await _record_step_failure(
+                            db,
+                            run,
+                            user,
+                            execution,
+                            task,
+                            node,
+                            code="TOOL_PERMISSION_DENIED",
+                            message="You rejected this operation, so it cannot run.",
+                            category=AgentFailureCategory.PERMISSION_DENIED,
+                            detail="tool rejected at approval gate",
+                        )
+
         # The sandbox gateway is bound to *this* run and assignment. A tool that
         # submits code cannot name a different workspace, backend or limit: those
         # are fixed here, in the runtime, where the request is not the model's.
@@ -2406,7 +2612,7 @@ async def _record_step_failure(
 
     if task is not None:
         task.status = AcademicTaskStatus.BLOCKED.value
-    _set_status(run, AgentRunStatus.BLOCKED, reason=f"{node.key}: {message[:200]}")
+    await _set_status(db, run, AgentRunStatus.BLOCKED, reason=f"{node.key}: {message[:200]}")
     await _append_event(
         db,
         run,
@@ -2447,6 +2653,52 @@ async def _consecutive_failures(db: AsyncSession, run: AgentRun) -> int:
             break
         streak += 1
     return streak
+
+
+async def _tool_approval_state(
+    db: AsyncSession, run_id: UUID, binding: str
+) -> str:
+    """How a specific operation binding was decided, or "pending" if never asked.
+
+    The binding is stored on the PERMISSION checkpoint's ``context`` column, so
+    the answer survives the process boundary between the pause and the resume
+    replay: an approval given once covers this exact invocation, and a rejection
+    keeps blocking this exact invocation no matter how many times the model
+    retries it.
+    """
+    stmt = (
+        select(AgentCheckpoint.status, AgentCheckpoint.response)
+        .where(
+            AgentCheckpoint.run_id == run_id,
+            AgentCheckpoint.checkpoint_type == AgentCheckpointType.PERMISSION.value,
+            AgentCheckpoint.context == binding,
+            AgentCheckpoint.status.in_(
+                [
+                    AgentCheckpointStatus.PENDING.value,
+                    AgentCheckpointStatus.RESOLVED.value,
+                ]
+            ),
+        )
+        .order_by(AgentCheckpoint.requested_at.desc())
+        .limit(1)
+    )
+    row = (await db.execute(stmt)).first()
+    if row is None:
+        return "pending"
+    status_value, response = row
+    if status_value == AgentCheckpointStatus.RESOLVED.value:
+        return "approved" if response == "approved" else "rejected"
+    return "pending"
+
+
+def _tool_registration(tool_name: str, registry: ToolRegistry) -> Any | None:
+    """The tool's registration, or None when the name is unknown here.
+
+    An unknown name is not gated: it is rejected outright by ``invoke_tool``
+    with ``ToolNotRegisteredError`` moments later, which is its own visible
+    outcome.
+    """
+    return registry.lookup(tool_name)
 
 
 async def _apply_decision(
@@ -2512,7 +2764,7 @@ async def _apply_decision(
         if task is not None:
             task.status = AcademicTaskStatus.BLOCKED.value
         reason = decision.blocked_reason or decision.reason
-        _set_status(run, AgentRunStatus.BLOCKED, reason=f"{node.key}: {reason[:200]}")
+        await _set_status(db, run, AgentRunStatus.BLOCKED, reason=f"{node.key}: {reason[:200]}")
         decision_row.outcome = "BLOCKED"
         await _append_event(
             db,
@@ -2793,6 +3045,19 @@ async def _execute_and_finish(
             execution.model = response.model
             execution.token_usage = response.usage.as_dict()
             _charge_run(run, response)
+        except BudgetExceeded:
+            # The decision-path gate handles budget exhaustion with a run
+            # failure; leaving this path unhandled let a raised cap from the
+            # execution call escape execute_run as a bare 500, stranding the
+            # run RUNNING on the provider's money.
+            return await _fail_run(
+                db,
+                run,
+                user,
+                code="AGENT_BUDGET_EXHAUSTED",
+                message="This run exhausted its budget while producing the work product.",
+                category=AgentFailureCategory.RESOURCE_LIMIT,
+            )
         except (TimeoutError, LLMError):
             return await _record_step_failure(
                 db,
@@ -2945,7 +3210,7 @@ async def _fail_run(
     run.error_code = code
     run.error_message = message[:4_000]
     run.error_category = category.value
-    _set_status(run, AgentRunStatus.FAILED, reason=message[:200])
+    await _set_status(db, run, AgentRunStatus.FAILED, reason=message[:200])
     if run.started_at is not None:
         run.duration_ms = _elapsed_ms(run.started_at)
     await _resolve_open_checkpoints(
@@ -2973,7 +3238,7 @@ async def _fail_run(
 async def _pause_run_internal(
     run: AgentRun, user: User, db: AsyncSession, *, reason: str
 ) -> AgentRun:
-    _set_status(run, AgentRunStatus.PAUSED, reason=reason)
+    await _set_status(db, run, AgentRunStatus.PAUSED, reason=reason)
     await _append_event(db, run, AgentEventType.RUN_PAUSED, reason, metadata={"reason": reason})
     await _audit_run(
         db,
@@ -2999,7 +3264,7 @@ async def _finish_run(
     """Complete or block a run depending on whether work actually remains."""
     counts = progress(nodes)
     if complete:
-        _set_status(run, AgentRunStatus.COMPLETED, reason=None)
+        await _set_status(db, run, AgentRunStatus.COMPLETED, reason=None)
         run.duration_ms = _elapsed_ms(run.started_at)
         if run.plan_id is not None:
             plan = await db.get(AcademicWorkPlan, run.plan_id)
@@ -3035,7 +3300,7 @@ async def _finish_run(
         )
 
     reason = selection.blocked_reason or "No task is executable."
-    _set_status(run, AgentRunStatus.BLOCKED, reason=reason[:200])
+    await _set_status(db, run, AgentRunStatus.BLOCKED, reason=reason[:200])
     await _append_event(db, run, AgentEventType.TASK_BLOCKED, reason[:400], metadata=counts)
     await db.flush()
     return StepOutcome(kind="BLOCKED", run_status=AgentRunStatus.BLOCKED, detail=reason)
@@ -3183,12 +3448,13 @@ async def load_run_detail(run: AgentRun, db: AsyncSession) -> dict[str, Any]:
     }
 
 
-async def run_tool_invocations(run: AgentRun, db: AsyncSession) -> list[Any]:
+async def run_tool_invocations(run: AgentRun, db: AsyncSession, *, limit: int = 500) -> list[Any]:
     """Every tool call this run made, including the ones it blocked.
 
     Returned as response models rather than handle-only rows so the endpoint's
     declared contract is checked here. Ordering is stable (time, then name) so two
-    identical calls read the same way twice.
+    identical calls read the same way twice. A limit bounds the response: a long
+    run's full audit trail is paged from here rather than returned in one body.
     """
     from app.schemas.agent import AgentToolInvocationResponse
 
@@ -3196,6 +3462,7 @@ async def run_tool_invocations(run: AgentRun, db: AsyncSession) -> list[Any]:
         select(AgentToolInvocation)
         .where(AgentToolInvocation.run_id == run.id)
         .order_by(AgentToolInvocation.created_at, AgentToolInvocation.tool_name)
+        .limit(limit)
     )
     return [AgentToolInvocationResponse.model_validate(row) for row in rows]
 
@@ -3259,3 +3526,6 @@ async def load_run_with_details(
     if run is None:
         raise AppError(404, "AGENT_RUN_NOT_FOUND", "Agent run not found.")
     return run
+
+
+get_run_by_id = load_owned_run_by_id

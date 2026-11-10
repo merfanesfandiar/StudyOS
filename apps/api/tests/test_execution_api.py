@@ -20,26 +20,6 @@ from tests.conftest import register_user
 BASE = "/api/v1"
 
 
-@pytest.fixture
-def mock_execution(monkeypatch: pytest.MonkeyPatch, tmp_path):
-    """Turn on execution with the mock backend and an isolated storage root."""
-    from app.core.config import get_settings
-    from app.modules.execution import router as execution_router
-    from app.modules.execution.service import build_orchestrator
-    from app.storage.local import LocalStorage
-
-    storage = LocalStorage(tmp_path / "exec")
-    settings = get_settings().model_copy(
-        update={"execution_enabled": True, "execution_backend": "mock"}
-    )
-    monkeypatch.setattr(execution_router, "settings", settings)
-    monkeypatch.setattr(execution_router, "get_storage", lambda: storage)
-    # The inline path builds its own orchestrator from settings; keep it on the
-    # mock by binding the same settings object through the service call sites.
-    monkeypatch.setattr(execution_router.service, "build_orchestrator", build_orchestrator)
-    return settings
-
-
 async def _assignment(client: AsyncClient) -> dict:
     course = (
         await client.post("/api/v1/courses", json={"name": "Computing", "code": "CS101"})
@@ -169,6 +149,42 @@ async def test_an_idempotency_key_returns_the_same_job(
     first = await client.post(f"{BASE}/assignments/{assignment['id']}/executions", json=body)
     second = await client.post(f"{BASE}/assignments/{assignment['id']}/executions", json=body)
     assert first.json()["id"] == second.json()["id"]
+
+
+async def test_someone_elses_idempotency_key_never_leaks_a_job(
+    client: AsyncClient, mock_execution
+) -> None:
+    """A client-chosen key is scoped to its creator: guessing it is not access.
+
+    The key is low-entropy by design (a retry badge), so a global lookup would
+    let one student present "run1" and read what another student executed.
+    """
+    await register_user(client, "owner@example.com")
+    assignment = await _assignment(client)
+    owner_body = {
+        "execution_type": "PYTHON",
+        "files": {"main.py": "print('secret')"},
+        "idempotency_key": "low-entropy-key",
+    }
+    created = await client.post(
+        f"{BASE}/assignments/{assignment['id']}/executions", json=owner_body
+    )
+    assert created.status_code == 201, created.text
+
+    await client.post("/api/v1/auth/logout")
+    await register_user(client, "intruder@example.com")
+    replay = await client.post(
+        f"{BASE}/assignments/{assignment['id']}/executions",
+        json={
+            "execution_type": "PYTHON",
+            "files": {"main.py": "print(1)"},
+            "idempotency_key": "low-entropy-key",
+        },
+    )
+    assert replay.status_code == 404, (
+        f"the intruder has no owned assignment, so the request must not resolve: {replay.text}"
+    )
+    assert replay.json().get("id") != created.json()["id"]
 
 
 async def test_another_student_cannot_read_the_job(client: AsyncClient, mock_execution) -> None:

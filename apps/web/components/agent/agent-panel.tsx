@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Alert, EmptyState, LoadingState } from "@/components/ui";
 import { AgentUiView } from "@/components/agent/agent-ui";
 import { usePreferences } from "@/components/preferences-provider";
@@ -9,6 +9,7 @@ import {
   type AgentArtifact,
   type AgentCapabilities,
   type AgentCheckpoint,
+  type AgentInteraction,
   type AgentRunDetail,
   type AgentRunMode,
   type AgentRunStatus,
@@ -18,6 +19,8 @@ import {
 } from "@/lib/agent-types";
 import { parseAgentUi } from "@/lib/agent-ui/validate";
 import { useAgent } from "@/lib/use-agent";
+import { api } from "@/lib/api";
+import { errorMessage } from "@/lib/error-message";
 
 /**
  * The agent workspace.
@@ -91,6 +94,26 @@ export function AgentPanel({
     [run?.tasks],
   );
 
+  const [interactions, setInteractions] = useState<AgentInteraction[]>([]);
+  const [interactionBusy, setInteractionBusy] = useState<string | null>(null);
+  const [interactionError, setInteractionError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!run?.id) return;
+    (async () => {
+      try {
+        const items = await api.agentInteractions(assignmentId, run.id);
+        if (!cancelled) setInteractions(Array.isArray(items) ? items : []);
+      } catch {
+        if (!cancelled) setInteractions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [assignmentId, run?.id, status]);
+
   if (loading && !run) return <LoadingState label={t("common.loading")} />;
 
   const tabs: { id: Tab; label: string }[] = [
@@ -143,14 +166,93 @@ export function AgentPanel({
           busy={busy === "resolve"}
           onAnswerChange={setAnswer}
           onChosenChange={setChosen}
-          onSubmit={(retry) =>
+          onSubmit={(decision) =>
             sendAnswer(pendingCheckpoint.id, {
               response: answer.trim() || undefined,
               selected_option: chosen || undefined,
-              retry,
+              retry: decision?.retry,
+              approved: decision?.approved,
             })
           }
+          onStop={() => cancel()}
         />
+      ) : null}
+
+      {run && interactions.some((i) => i.status === "PENDING" || i.status === "SUBMITTED") ? (
+        <div className="space-y-3">
+          <h3 className="text-sm font-semibold text-[var(--color-ink)]">
+            {t("agent.pendingDecisions")}
+          </h3>
+          {interactionError ? <Alert>{interactionError}</Alert> : null}
+          {interactions
+            .filter((i) => i.status === "PENDING" || i.status === "SUBMITTED")
+            .map((interaction) => {
+              const parsed = parseAgentUi(interaction.ui);
+              /** One place for approve/reject so both refresh or both report. */
+              const decide = async (approve: boolean) => {
+                setInteractionBusy(interaction.id);
+                setInteractionError("");
+                try {
+                  const input = { action: approve ? "approve" : "reject", payload: {} };
+                  if (approve) {
+                    await api.approveAgentInteraction(assignmentId, run.id, interaction.id, input);
+                  } else {
+                    await api.rejectAgentInteraction(assignmentId, run.id, interaction.id, input);
+                  }
+                  const items = await api.agentInteractions(assignmentId, run.id);
+                  setInteractions(Array.isArray(items) ? items : []);
+                } catch (caught) {
+                  // Silently dropping this was the worst outcome: the button
+                  // looked pressed, nothing changed, and the student had no way
+                  // to tell a refusal from a failed request.
+                  setInteractionError(errorMessage(caught, t, "agent.decisionFailed"));
+                } finally {
+                  setInteractionBusy(null);
+                }
+              };
+              return (
+                <div
+                  key={interaction.id}
+                  className="rounded-xl border border-[var(--color-line)] bg-[var(--color-surface-sunken)] p-4 space-y-3"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--color-ink)]">{interaction.title}</p>
+                      <p className="mt-1 text-xs text-[var(--color-ink-muted)]">
+                        {t("agent.interactionAwaiting")} ·{" "}
+                        {t(`agent.risk.${interaction.risk.toLowerCase()}` as Parameters<typeof t>[0])}
+                      </p>
+                    </div>
+                  </div>
+                  <p className="text-sm text-[var(--color-ink)] whitespace-pre-wrap">{interaction.prompt}</p>
+                  {interaction.context ? (
+                    <p className="text-sm text-[var(--color-ink-muted)] whitespace-pre-wrap">
+                      {interaction.context}
+                    </p>
+                  ) : null}
+                  {parsed.ok ? <AgentUiView envelope={parsed.envelope} /> : null}
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      className="btn-primary"
+                      disabled={interactionBusy === interaction.id}
+                      onClick={() => void decide(true)}
+                      type="button"
+                    >
+                      {t("agent.approve")}
+                    </button>
+                    <button
+                      className="btn-ghost"
+                      disabled={interactionBusy === interaction.id}
+                      onClick={() => void decide(false)}
+                      type="button"
+                    >
+                      {t("agent.reject")}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
       ) : null}
 
       {!run ? (
@@ -477,6 +579,7 @@ function CheckpointPrompt({
   onAnswerChange,
   onChosenChange,
   onSubmit,
+  onStop,
 }: {
   checkpoint: AgentCheckpoint;
   answer: string;
@@ -484,18 +587,35 @@ function CheckpointPrompt({
   busy: boolean;
   onAnswerChange: (value: string) => void;
   onChosenChange: (value: string) => void;
-  onSubmit: (retry: boolean) => void;
+  onSubmit: (decision?: { approved?: boolean; retry?: boolean }) => void;
+  onStop: () => void;
 }) {
   const { t } = usePreferences();
-  const options = checkpoint.options ?? [];
-  const needsText = options.length === 0 || chosen === "";
+  /*
+   * These three types are decided, not answered: the server requires an
+   * explicit `approved` for them and refuses everything else. The panel used to
+   * offer only a text box and a radio list, so a PERMISSION checkpoint (the
+   * approval gate on a high-risk tool) could not be resolved from the UI at
+   * all: every submission came back `AGENT_CHECKPOINT_DECISION_REQUIRED`.
+   */
+  const isDecision =
+    checkpoint.checkpoint_type === "APPROVAL" ||
+    checkpoint.checkpoint_type === "REVIEW" ||
+    checkpoint.checkpoint_type === "PERMISSION";
+  // `approve`/`reject` are the runtime's own option sentinels, not prose to
+  // offer a student beside the two buttons that mean the same thing.
+  const options = (checkpoint.options ?? []).filter(
+    (option) => !isDecision || !DECISION_OPTIONS.has(option.toLowerCase()),
+  );
+  const needsText = !isDecision && (options.length === 0 || chosen === "");
+  const canAnswer = Boolean(answer.trim() || chosen);
 
   return (
     <form
       className="space-y-4 rounded-2xl border border-[var(--color-accent)] bg-[var(--color-accent-soft)] p-5"
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit(false);
+        if (!isDecision && canAnswer) onSubmit();
       }}
     >
       <div>
@@ -555,29 +675,48 @@ function CheckpointPrompt({
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <button className="btn-primary" disabled={busy} type="submit">
-          {busy ? t("agent.sendingAnswer") : t("agent.answer")}
-        </button>
-        <button
-          className="btn-secondary"
-          disabled={busy}
-          onClick={() => onSubmit(true)}
-          type="button"
-        >
-          {t("agent.retryRejected")}
-        </button>
-        <button
-          className="btn-ghost"
-          disabled={busy}
-          onClick={() => onSubmit(false)}
-          type="button"
-        >
+        {isDecision ? (
+          <>
+            <button
+              className="btn-primary"
+              disabled={busy}
+              onClick={() => onSubmit({ approved: true })}
+              type="button"
+            >
+              {busy ? t("agent.sendingAnswer") : t("agent.approve")}
+            </button>
+            <button
+              className="btn-secondary"
+              disabled={busy}
+              onClick={() => onSubmit({ approved: false })}
+              type="button"
+            >
+              {t("agent.reject")}
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={busy}
+              onClick={() => onSubmit({ approved: false, retry: true })}
+              type="button"
+            >
+              {t("agent.retryRejected")}
+            </button>
+          </>
+        ) : (
+          <button className="btn-primary" disabled={busy || !canAnswer} type="submit">
+            {busy ? t("agent.sendingAnswer") : t("agent.answer")}
+          </button>
+        )}
+        <button className="btn-ghost" disabled={busy} onClick={onStop} type="button">
           {t("agent.stopHere")}
         </button>
       </div>
     </form>
   );
 }
+
+/** The runtime's two option sentinels, matched case-insensitively. */
+const DECISION_OPTIONS = new Set(["approve", "reject"]);
 
 /**
  * The optional Dynamic Agent UI attached to a checkpoint or artifact.

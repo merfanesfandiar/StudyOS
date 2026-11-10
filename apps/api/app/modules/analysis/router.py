@@ -198,8 +198,9 @@ async def list_analysis_runs(
     db: Db,
 ) -> PageResponse[AnalysisRunResponse]:
     assignment = await load_owned_assignment(assignment_id, user.id, db)
-    runs = await service.list_runs(assignment.id, db, limit=params.limit + params.offset)
-    sliced = runs[params.offset : params.offset + params.limit]
+    runs, total = await service.list_runs(
+        assignment.id, db, limit=params.limit, offset=params.offset
+    )
     return PageResponse[AnalysisRunResponse](
         items=[
             AnalysisRunResponse(
@@ -221,13 +222,13 @@ async def list_analysis_runs(
                 error_code=run.error_code,
                 error_message=run.error_message,
             )
-            for run in sliced
+            for run in runs
         ],
         page=Page(
             page=params.page,
             page_size=params.page_size,
-            total=len(runs),
-            pages=max(1, -(-len(runs) // params.page_size)),
+            total=total,
+            pages=max(1, -(-total // params.page_size)),
         ),
     )
 

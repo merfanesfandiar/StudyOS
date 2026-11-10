@@ -97,8 +97,12 @@ export function CheckDot({ status }: { status: CheckStatus }) {
   const label = t(CHECK_LABELS[status]);
   return (
     <span
+      // `role="img"` is what makes `aria-label` reach assistive tech. A bare
+      // span with an aria-label is a label on nothing, and the check is then
+      // colour-only for exactly the users who cannot see the colour.
       aria-label={label}
       className={`inline-flex size-2.5 shrink-0 rounded-full ${CHECK_STYLES[status]}`}
+      role="img"
       title={label}
     />
   );
@@ -134,7 +138,17 @@ export function Alert({
     success: "border-[var(--color-positive)] bg-[var(--color-positive-soft)] text-[var(--color-positive)]",
     info: "border-[var(--color-info-soft)] bg-[var(--color-info-soft)] text-[var(--color-info)]",
   };
-  return <div className={`rounded-xl border px-4 py-3 text-sm ${styles[tone]}`}>{children}</div>;
+  // Errors are announced immediately; confirmations wait their turn. Without a
+  // live region a failed save is silent to a screen-reader user, who is left
+  // believing the action worked.
+  return (
+    <div
+      className={`rounded-xl border px-4 py-3 text-sm ${styles[tone]}`}
+      role={tone === "error" ? "alert" : "status"}
+    >
+      {children}
+    </div>
+  );
 }
 
 export function LoadingState({ label }: { label?: string }) {

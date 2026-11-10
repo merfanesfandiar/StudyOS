@@ -367,6 +367,110 @@ describe("AgentPanel", () => {
     expect(screen.queryByText("The agent needs a decision")).not.toBeInTheDocument();
   });
 
+  it("sends an explicit approval decision for a REVIEW checkpoint", async () => {
+    let body: unknown = null;
+    let resolved = false;
+    const review = checkpoint({
+      checkpoint_type: "REVIEW",
+      question: "Is this introduction ready to keep?",
+      // The runtime's own sentinels. Offering them as radios beside the two
+      // buttons that mean the same thing is how a student ends up submitting a
+      // string the API will not accept as a decision.
+      options: ["approve", "reject"],
+    });
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () =>
+          jsonResponse({ items: [run({ status: resolved ? "COMPLETED" : "WAITING_FOR_USER" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: resolved ? "COMPLETED" : "WAITING_FOR_USER",
+              awaiting_checkpoint_id: resolved ? null : "cp1",
+              checkpoints: resolved ? [] : [review],
+            }),
+          ),
+        [`POST ${BASE}/runs/r1/checkpoints/cp1/resolve`]: () => {
+          body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
+          resolved = true;
+          return jsonResponse(detail({ status: "COMPLETED" }));
+        },
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    // A decision checkpoint requires `approved`; without it the server answers
+    // AGENT_CHECKPOINT_DECISION_REQUIRED and the run never moves.
+    expect(await screen.findByText("Is this introduction ready to keep?")).toBeInTheDocument();
+    expect(screen.queryByLabelText("approve")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Approve" }));
+
+    await waitFor(() => expect(screen.getByText("Finished")).toBeInTheDocument());
+    expect(body).toMatchObject({ approved: true });
+  });
+
+  it("sends a rejection decision without inventing a text answer", async () => {
+    let body: unknown = null;
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () => jsonResponse({ items: [run({ status: "WAITING_FOR_USER" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "WAITING_FOR_USER",
+              awaiting_checkpoint_id: "cp1",
+              checkpoints: [checkpoint({ checkpoint_type: "APPROVAL" })],
+            }),
+          ),
+        [`POST ${BASE}/runs/r1/checkpoints/cp1/resolve`]: () => {
+          body = JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1]?.body));
+          return jsonResponse(detail({ status: "WAITING_FOR_USER" }));
+        },
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
+
+    await waitFor(() => expect(body).not.toBeNull());
+    expect(body).toMatchObject({ approved: false });
+    expect(body).not.toHaveProperty("response");
+  });
+
+  it("stops the run from the checkpoint instead of submitting an empty answer", async () => {
+    let cancelled = false;
+    route(
+      baseHandlers({
+        [`GET ${BASE}/runs`]: () =>
+          jsonResponse({ items: [run({ status: "WAITING_FOR_USER" })] }),
+        [`GET ${BASE}/runs/r1`]: () =>
+          jsonResponse(
+            detail({
+              status: "WAITING_FOR_USER",
+              awaiting_checkpoint_id: "cp1",
+              can_resume: true,
+              checkpoints: [checkpoint()],
+            }),
+          ),
+        [`POST ${BASE}/runs/r1/cancel`]: () => {
+          cancelled = true;
+          return jsonResponse(detail({ status: "CANCELLED" }));
+        },
+      }),
+    );
+    renderWithPreferences(<AgentPanel assignmentId="a1" hasApprovedPlan />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Stop the run" }));
+
+    // "Stop" is a cancellation, not an empty answer. The old button posted a
+    // blank response, which the API correctly refused with 422.
+    await waitFor(() => expect(cancelled).toBe(true));
+    const resolveCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).endsWith("/checkpoints/cp1/resolve"),
+    );
+    expect(resolveCalls).toHaveLength(0);
+  });
+
   it("keeps a failed action from blanking the run the student is reading", async () => {
     route(
       baseHandlers({
@@ -401,8 +505,8 @@ describe("AgentPanel", () => {
                   run_id: "r1",
                   task_id: "t1",
                   title: "Introduction",
-                  artifact_type: "DRAFT",
-                  status: "DRAFT",
+                  artifact_type: "MARKDOWN",
+                  status: "ACTIVE",
                   ownership: "AGENT_OWNED",
                   content: "Second attempt, better opening.",
                   metadata_json: null,
@@ -417,8 +521,8 @@ describe("AgentPanel", () => {
                   run_id: "r1",
                   task_id: "t1",
                   title: "Introduction",
-                  artifact_type: "DRAFT",
-                  status: "DRAFT",
+                  artifact_type: "MARKDOWN",
+                  status: "ACTIVE",
                   ownership: "AGENT_OWNED",
                   content: "First attempt.",
                   metadata_json: null,
@@ -622,8 +726,8 @@ describe("AgentPanel dynamic interface", () => {
                   run_id: "r1",
                   task_id: "t1",
                   title: "Introduction",
-                  artifact_type: "DRAFT",
-                  status: "DRAFT",
+                  artifact_type: "MARKDOWN",
+                  status: "ACTIVE",
                   ownership: "AGENT_OWNED",
                   content: "Plain draft text.",
                   metadata_json: {
@@ -662,8 +766,8 @@ describe("AgentPanel dynamic interface", () => {
                   run_id: "r1",
                   task_id: "t1",
                   title: "Comparison",
-                  artifact_type: "DRAFT",
-                  status: "DRAFT",
+                  artifact_type: "MARKDOWN",
+                  status: "ACTIVE",
                   ownership: "AGENT_OWNED",
                   content: "raw fallback",
                   metadata_json: {

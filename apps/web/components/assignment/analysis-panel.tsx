@@ -506,7 +506,7 @@ export function AnalysisPanel({
           <p className="text-sm font-medium text-[var(--color-ink-muted)]">{t("analysis.assignmentTypeLabel")}</p>
           <ul data-testid="classification-types" className="mt-1 space-y-1">
             {analysis.assignment_types.length === 0 ? (
-              <li className="text-sm text-[var(--color-ink-subtle)]">Uncertain</li>
+              <li className="text-sm text-[var(--color-ink-subtle)]">{t("analysis.uncertain")}</li>
             ) : (
               analysis.assignment_types.map((item) => (
                 <li key={item.type} className="text-sm text-[var(--color-ink-muted)]">
@@ -525,7 +525,7 @@ export function AnalysisPanel({
           <p className="text-sm font-medium text-[var(--color-ink-muted)]">{t("analysis.academicDomainLabel")}</p>
           <ul data-testid="classification-domains" className="mt-1 space-y-1">
             {analysis.academic_domains.length === 0 ? (
-              <li className="text-sm text-[var(--color-ink-subtle)]">Uncertain</li>
+              <li className="text-sm text-[var(--color-ink-subtle)]">{t("analysis.uncertain")}</li>
             ) : (
               analysis.academic_domains.map((item) => (
                 <li key={item.domain} className="text-sm text-[var(--color-ink-muted)]">
@@ -733,7 +733,7 @@ export function AnalysisPanel({
       {analysis.evaluation.criteria.length > 0 || analysis.evaluation.implied_quality_expectations.length > 0 ? (
         <Section title={t("analysis.evaluation")}>
           {analysis.evaluation.rubric_available ? (
-            <p className="text-sm text-[var(--color-ink-muted)]">A rubric was provided in your brief.</p>
+            <p className="text-sm text-[var(--color-ink-muted)]">{t("analysis.rubricProvided")}</p>
           ) : (
             <p className="text-sm text-[var(--color-ink-muted)]">
               {t("analysis.rubricInferred")}

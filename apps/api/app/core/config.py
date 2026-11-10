@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     #: inside one window before the limiter answers 429.
     auth_rate_limit_max: int = Field(default=10, ge=1, le=1_000)
     auth_rate_limit_window_seconds: float = Field(default=60.0, ge=1.0, le=3_600.0)
+    #: Set true only when a trusted reverse proxy sets ``x-forwarded-for``.
+    #: False by default because the API is exposed directly in the shipped
+    #: topology, where that header is client-controlled and would let callers
+    #: evade throttling.
+    rate_limit_trust_proxy: bool = False
 
     # -- Connection pooling --------------------------------------------------
     #
@@ -139,6 +144,11 @@ class Settings(BaseSettings):
     #: Consecutive task failures tolerated before the run is failed rather than
     #: retried again.
     agent_max_consecutive_failures: int = Field(default=3, ge=1, le=20)
+    #: HIGH-risk tools (sandbox execution, external delegation) require a
+    #: human approval checkpoint bound to the exact (tool, arguments) before the
+    #: runtime will dispatch them. Turn off only with eyes open: this is the
+    #: switch that keeps "the agent ran code" from happening without a person.
+    agent_tool_approval_required: bool = True
     #: Ceiling on a run's estimated cost, checked before every provider call.
     agent_max_cost_per_run: float = Field(default=5.0, ge=0.0, le=1000.0)
     #: Ceiling on one provider call, so a single step cannot blow the budget.

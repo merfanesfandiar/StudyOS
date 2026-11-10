@@ -41,6 +41,23 @@ See [`agent-tools.md`](./agent-tools.md).
 Phase 6's claim was "no code execution anywhere". Phase 7 narrows that claim rather than dropping it:
 the runtime may *submit* code, and the submission has a fixed shape.
 
+### Human approval before high-risk dispatch
+
+`EXECUTE_SANDBOXED` and `DELEGATE_EXTERNAL_AGENT` do not run merely because the model asked. When a
+tool carrying either permission has `HIGH` risk, `ApprovalPolicy.evaluate_tool` returns a binding
+derived from `(tool, arguments)` and the runtime creates a `PERMISSION` checkpoint instead of
+dispatching. The step pauses until a person answers.
+
+- Approval is stored on the checkpoint that asked: a `RESOLVED` checkpoint whose `context` equals the
+  same binding and whose `response` is `approved`. The binding survives the pause/resume boundary, so
+  an approval covers exactly that invocation and nothing else.
+- A different argument list is a different binding and asks again. A rejection records a `BLOCKED`
+  tool invocation and dispatches nothing, however many times the model retries.
+- `agent_tool_approval_required` (default `True`) is the single switch that turns the gate off. It is
+  a deliberate operator decision, not something the model or a client can change.
+- The approval is audited with the actor and operation binding, so "who let this run" is answerable
+  from the ledger rather than inferred from an event.
+
 - A code tool names a **runtime** (`python`, `java`, `cpp`) and hands over **text**. It cannot name a
   command, an image, a path, an environment variable or a resource limit — the schema has no such
   field, and the `ExecutionGateway` it is handed fixes the workspace, backend, image and profile.

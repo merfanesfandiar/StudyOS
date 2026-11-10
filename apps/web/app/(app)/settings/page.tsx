@@ -15,6 +15,7 @@ export default function SettingsPage() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<unknown>(null);
+  const [actionFailure, setActionFailure] = useState<unknown>(null);
   const { t, count, formatDate } = usePreferences();
 
   useDocumentTitle(t("nav.settings"));
@@ -42,17 +43,27 @@ export default function SettingsPage() {
       const updated = await api.markNotificationRead(id);
       setNotifications((items) => items.map((item) => (item.id === id ? updated : item)));
     } catch (caught) {
-      setFailure(caught);
+      // A read that failed is its own failure: reusing the load message would
+      // tell the student the page did not load while it is plainly on screen.
+      setActionFailure(caught);
     }
   }
 
   const error = failure ? (errorMessage(failure, t, "settings.loadFailed")) : "";
+  const actionError = actionFailure
+    ? errorMessage(actionFailure, t, "settings.markReadFailed")
+    : "";
   const unread = notifications.filter((notification) => !notification.read_at).length;
 
   return (
     <div className="mx-auto max-w-5xl" id="main-content">
       <PageHeader description={t("settings.description")} title={t("nav.settings")} />
       {error ? <div className="mb-5"><Alert>{error}</Alert></div> : null}
+      {actionError ? (
+        <div className="mb-5">
+          <Alert>{actionError}</Alert>
+        </div>
+      ) : null}
       <div className="grid gap-8 lg:grid-cols-[20rem_minmax(0,1fr)]">
         <aside>
           <section className="card p-6">

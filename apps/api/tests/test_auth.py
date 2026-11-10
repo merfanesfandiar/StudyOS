@@ -83,6 +83,38 @@ async def test_auth_endpoints_are_rate_limited(
 
 
 @pytest.mark.asyncio
+async def test_a_forged_forwarded_for_header_cannot_evade_throttling(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The limiter must not let a client rotate its identity via a header.
+
+    The API is exposed directly in the shipped topology, so
+    ``x-forwarded-for`` is attacker-controlled: if it were trusted by default,
+    each guessed credential could arrive with a fresh \"address\" and the auth
+    window would never fill.
+    """
+    settings = get_settings()
+    monkeypatch.setattr(settings, "rate_limit_enabled", True)
+    monkeypatch.setattr(settings, "auth_rate_limit_max", 2)
+    monkeypatch.setattr(settings, "auth_rate_limit_window_seconds", 60.0)
+
+    for attempt, spoofed_ip in enumerate(
+        ["198.51.100.1", "198.51.100.2", "198.51.100.3"], start=1
+    ):
+        response = await client.post(
+            "/api/v1/auth/login",
+            json={"email": "student@example.com", "password": "WrongPass123"},
+            headers={"x-forwarded-for": spoofed_ip},
+        )
+        if attempt <= 2:
+            assert response.status_code == 401
+        else:
+            assert response.status_code == 429, (
+                "rotating x-forwarded-for must not reset the window"
+            )
+
+
+@pytest.mark.asyncio
 async def test_a_text_password_is_never_echoed_by_validation(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
