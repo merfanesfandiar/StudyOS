@@ -83,6 +83,19 @@ describe("request plumbing", () => {
     expect((init.body as FormData).get("file")).toBe(file);
   });
 
+  it("sends an empty JSON body when approving a plan", async () => {
+    // The endpoint accepts an optional `note` and validates the body, so a
+    // bodyless POST is refused with 422 before the approval ever runs.
+    fetchMock.mockResolvedValue(jsonResponse({ id: "p1" }));
+
+    await api.approvePlan("a1", "p1");
+
+    const init = lastInit();
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe("{}");
+    expect(init.headers.get("Content-Type")).toBe("application/json");
+  });
+
   it("preserves the request method for partial updates", async () => {
     fetchMock.mockResolvedValue(jsonResponse(course));
 

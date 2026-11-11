@@ -388,6 +388,33 @@ describe("AnalysisPanel", () => {
     expect(await screen.findByText(/corrected/i)).toBeInTheDocument();
   });
 
+  it("sends a type and a domain correction as one request", async () => {
+    // Two concurrent PATCHes each read the pre-edit row, so the second silently
+    // discards the first. A single request carries both halves of the edit.
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse(analysis()))
+      .mockResolvedValueOnce(jsonResponse(analysis({ edited: true })));
+
+    renderWithPreferences(<AnalysisPanel assignmentId="as-1" />);
+    fireEvent.click(await screen.findByTestId("edit-classification"));
+
+    const editor = screen.getByTestId("classification-editor");
+    fireEvent.click(within(editor).getByLabelText(/research/i));
+    fireEvent.click(within(editor).getByLabelText(/engineering/i));
+    fireEvent.click(screen.getByTestId("save-classification"));
+
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some((call) => call[1]?.method === "PATCH")).toBe(true),
+    );
+
+    const patches = fetchMock.mock.calls.filter((call) => call[1]?.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    expect(JSON.parse(String(patches[0][1]?.body ?? ""))).toMatchObject({
+      types: expect.arrayContaining(["RESEARCH"]),
+      domains: expect.arrayContaining(["ENGINEERING"]),
+    });
+  });
+
   it("reloads when the specification version changes, so staleness appears", async () => {
     // Editing the brief bumps the specification version. Without reloading on
     // that change the panel kept showing the old analysis as fresh.

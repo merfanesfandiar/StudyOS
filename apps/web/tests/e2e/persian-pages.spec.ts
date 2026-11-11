@@ -30,7 +30,14 @@ import {
 
 const THEME_KEY = "studyos.theme";
 const LOCALE_KEY = "studyos.locale";
-const API = "http://localhost:8000/api/v1";
+// The app inlines NEXT_PUBLIC_API_URL at build time. These tests intercept the
+// API, so the pattern they register must be the origin the browser actually
+// calls; CI builds with 127.0.0.1 while the local default is localhost. Reading
+// the same variable keeps the stubs attached to the app under test.
+const API = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1").replace(
+  /\/$/,
+  "",
+);
 const API_PATH = "/api/v1";
 
 const USER = {

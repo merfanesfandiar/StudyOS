@@ -34,6 +34,9 @@ services:
     init: true
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://studyos:studyos@db:5432/studyos}
+      # Alembic imports Settings, so the migration job needs the same signing key
+      # the API requires; without it the process exits before upgrading.
+      SECRET_KEY: ${SECRET_KEY:-development-only-change-this-secret}
       RUN_MIGRATIONS: "true"
     command: ["alembic", "current"]
     depends_on:
@@ -63,6 +66,9 @@ services:
       # replica must not race to migrate on boot.
       RUN_MIGRATIONS: "false"
       SEED_DEMO_DATA: ${SEED_DEMO_DATA:-false}
+      # The browser suite creates a fresh account per scenario from one address,
+      # so its E2E job turns the auth limiter off explicitly.
+      RATE_LIMIT_ENABLED: ${RATE_LIMIT_ENABLED:-true}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
@@ -101,6 +107,7 @@ services:
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://studyos:studyos@db:5432/studyos}
+      SECRET_KEY: ${SECRET_KEY:-development-only-change-this-secret}
       UPLOAD_DIR: /app/data/uploads
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # Migrations are owned by the `migrate` service; the worker must not race.

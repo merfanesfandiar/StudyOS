@@ -21,7 +21,9 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v
  */
 async function apiIsUp(): Promise<boolean> {
   try {
-    const response = await fetch(`${API_URL}/health`, {
+    // The liveness endpoint is served from the API root, not under /api/v1.
+    // Probing the latter returns 404 and silently skips the whole flow.
+    const response = await fetch(new URL("/health", API_URL), {
       signal: AbortSignal.timeout(2_000),
     });
     return response.ok;
@@ -376,14 +378,17 @@ test("the agent needs an approved plan, and a run only starts when asked", async
   await page.getByTestId("accept-analysis").click();
 
   await page.getByRole("button", { name: "Generate plan" }).click();
+
+  // Generation produces a draft; the agent is gated on approval, not generation.
+  await page.getByRole("button", { name: "Approve plan" }).click({ timeout: 30_000 });
   await expect(agent.getByRole("button", { name: "Create run" })).toBeVisible({ timeout: 30_000 });
 
   // Creating a run does not start it. Nothing is in flight until Start is pressed.
   await agent.getByRole("button", { name: "Create run" }).click();
-  await expect(agent.getByRole("button", { name: "Start" })).toBeVisible();
+  await expect(agent.getByRole("button", { name: "Start", exact: true })).toBeVisible();
   await expect(agent.getByText("Running")).toHaveCount(0);
 
-  await agent.getByRole("button", { name: "Start" }).click();
+  await agent.getByRole("button", { name: "Start", exact: true }).click();
 
   // The run stops somewhere honest: finished, waiting for a decision, or blocked.
   // Any of those is a real outcome; what must never appear is a run that claims
@@ -409,11 +414,12 @@ test("a run can be paused and cancelled, and both survive a reload", async ({ pa
   await expect(page.getByTestId("analysis-summary")).toBeVisible();
   await page.getByTestId("accept-analysis").click();
   await page.getByRole("button", { name: "Generate plan" }).click();
+  await page.getByRole("button", { name: "Approve plan" }).click({ timeout: 30_000 });
 
   const agent = section(page, "agent-panel");
   await agent.getByRole("button", { name: "Create run" }).click({ timeout: 30_000 });
-  await expect(agent.getByRole("button", { name: "Start" })).toBeVisible();
-  await agent.getByRole("button", { name: "Start" }).click();
+  await expect(agent.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+  await agent.getByRole("button", { name: "Start", exact: true }).click();
   await expect(agent.getByText(/Finished|Waiting for you|Blocked|Paused/).first()).toBeVisible({
     timeout: 60_000,
   });
@@ -422,7 +428,7 @@ test("a run can be paused and cancelled, and both survive a reload", async ({ pa
   const cancel = agent.getByRole("button", { name: "Cancel run" });
   if (await cancel.count()) {
     await cancel.click();
-    await expect(agent.getByText("Cancelled")).toBeVisible();
+    await expect(agent.getByText("Cancelled", { exact: true })).toBeVisible();
 
     // Terminal means terminal, across a reload.
     await page.reload();

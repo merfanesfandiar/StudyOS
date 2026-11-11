@@ -51,6 +51,7 @@ from app.models.enums import (
     PlanStatus,
 )
 from app.modules.agent import recovery, service
+from app.modules.agent.policy import binding_key
 from app.modules.agent.selection import TaskNode
 from app.modules.agent.state_machine import parse_status
 from sqlalchemy import func, select
@@ -1245,7 +1246,10 @@ async def test_a_permission_retry_stays_pending_rather_than_becoming_a_refusal(
     """
     await _approved_plan(db_session, assignment, analysis, keys=("T1",), chain=False)
     run = await service.create_run(assignment.id, owner, db_session, mode=AgentRunMode.SUPERVISED)
-    binding = "run_tests\x00{}"
+    # Use the production binding rather than a hand-built string: the real key
+    # is what the runtime looks up, and a literal NUL byte is rejected by
+    # PostgreSQL even though SQLite stores it.
+    binding = binding_key("run_tests", {})
     db_session.add(
         AgentCheckpoint(
             run_id=run.id,

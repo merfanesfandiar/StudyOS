@@ -86,22 +86,30 @@ export function PlanPanel({ assignmentId }: { assignmentId: string }) {
 
   if (!plan) {
     return (
-      <section className="card grid gap-4 p-6">
-        <div>
-          <h2 className="section-title">{t("plan.title")}</h2>
-          <p className="muted mt-1 text-sm">{t("plan.empty")}</p>
-        </div>
-        {notice && <p className="text-sm text-[var(--color-critical)]" role="alert">{notice}</p>}
-        <div>
-          <button
-            className="btn-primary"
-            disabled={busy !== null}
-            onClick={() => void generate()}
-            type="button"
-          >
-            {busy === "generate" ? t("plan.generating") : t("plan.generate")}
-          </button>
-        </div>
+      <section className="grid gap-4">
+        <section className="card grid gap-4 p-6">
+          <div>
+            <h2 className="section-title">{t("plan.title")}</h2>
+            <p className="muted mt-1 text-sm">{t("plan.empty")}</p>
+          </div>
+          {notice && <p className="text-sm text-[var(--color-critical)]" role="alert">{notice}</p>}
+          <div>
+            <button
+              className="btn-primary"
+              disabled={busy !== null}
+              onClick={() => void generate()}
+              type="button"
+            >
+              {busy === "generate" ? t("plan.generating") : t("plan.generate")}
+            </button>
+          </div>
+        </section>
+        {/*
+          The agent needs an approved plan, so the requirement belongs on this
+          empty state too. Omitting the panel until a plan exists hides the
+          boundary exactly when the student is deciding whether to generate one.
+        */}
+        <AgentPanel assignmentId={assignmentId} hasApprovedPlan={isApproved} />
       </section>
     );
   }

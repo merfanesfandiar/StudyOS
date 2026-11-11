@@ -371,7 +371,12 @@ export const api = {
     request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}`),
   /** A human decision. Refused for a stale plan or one with graph problems. */
   approvePlan: (assignmentId: string, planId: string) =>
-    request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}/approve`, { method: "POST" }),
+    // The endpoint takes an optional `note`, so the request still needs a JSON
+    // body. A bodyless POST is rejected with 422 before approval runs.
+    request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}/approve`, {
+      method: "POST",
+      ...json({}),
+    }),
   /** Plan-level fields only. Refused once approved: regenerate instead. */
   updatePlan: (assignmentId: string, planId: string, input: PlanUpdateInput) =>
     request<WorkPlan>(`/assignments/${assignmentId}/plans/${planId}`, {

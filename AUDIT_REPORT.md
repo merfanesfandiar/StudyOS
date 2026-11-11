@@ -138,7 +138,7 @@ The dashboard **list** is capped at `500`, but the readiness **aggregate** is co
 
 ### D5. `TECHICAL` typo in a persisted enum
 
-**Fix:** `RequirementType.TECHNICAL` replaces `TECHICAL`. Migration `0015_fix_technical_requirement_type` rewrites existing rows and adds `ix_audit_logs_agent_run_id` in the same migration.
+**Fix:** `RequirementType.TECHNICAL` replaces `TECHICAL`. Migration `0015_fix_technical_type` rewrites existing rows and adds `ix_audit_logs_agent_run_id` in the same migration. The revision id is deliberately short: Alembic's `alembic_version.version_num` is `VARCHAR(32)`, and the original 35-character id failed on PostgreSQL even though SQLite accepted it.
 
 **Evidence:** upgrade → downgrade → upgrade on SQLite; the `TECHICAL` row rewrite was verified with a seeded row. Postgres is untested locally (section J).
 
@@ -167,7 +167,7 @@ The dashboard **list** is capped at `500`, but the readiness **aggregate** is co
 - `app/modules/agent/service.py`, `policy.py`, `router.py`, `tools.py`, `domain_tools.py`
 - `app/modules/analysis/{router,service}.py`, `app/modules/assignments/taxonomy_router.py`
 - `app/modules/dashboard/router.py`, `app/modules/execution/{router,service}.py`
-- `alembic/versions/0015_fix_technical_requirement_type.py`
+- `alembic/versions/0015_fix_technical_type.py`
 - `tests/{conftest,test_agent_api,test_auth,test_execution_api}.py`
 
 **Web**
@@ -192,6 +192,14 @@ The dashboard **list** is capped at `500`, but the readiness **aggregate** is co
 - `docs/architecture/decisions/0001-cookie-session-auth.md`, `docs/architecture/agent-runtime.md`, `docs/architecture/agent-recovery.md`
 
 Uncommitted user work in `globals.css`, `layout.tsx`, `app-shell.tsx`, `auth-page.tsx`, and `next-env.d.ts` was left untouched.
+
+**CI-hardening pass (section M)**
+- `.github/workflows/ci.yml`, `docker-compose.yml`
+- `apps/api/alembic/versions/0015_fix_technical_type.py`, `0016_token_revocation_and_planning_started_at.py`
+- `apps/api/tests/{test_agent_runtime,test_pagination}.py`
+- `apps/web/lib/api.ts`, `apps/web/components/planning/plan-panel.tsx`, `apps/web/components/assignment/analysis-panel.tsx`
+- `apps/web/tests/e2e/{critical-flow,persian-pages,theme-and-locale}.spec.ts`
+- `apps/web/tests/unit/{api,analysis-panel,plan-panel}.test.ts`
 
 ---
 
@@ -218,7 +226,7 @@ Uncommitted user work in `globals.css`, `layout.tsx`, `app-shell.tsx`, `auth-pag
 | Tab keyboard nav | roving tab stop, wrap-around, RTL arrow direction |
 | Runtime prose i18n | the revision-limit REVIEW prompt/options/context render in Persian |
 
-Net new tests across both passes: **+20 API** (`515 → 535`) and **+9 web** (`190 → 199`), plus migration data/nullability checks.
+Net new tests across both passes: **+20 API** (`515 → 535`) and **+12 web** (`190 → 202`), plus migration data/nullability checks. The CI-hardening pass added the plan-approval body, empty-state agent gate, and single-PATCH classification regressions (section M).
 
 ---
 
@@ -293,6 +301,8 @@ The Postgres suite, Docker stack/image, and Playwright/e2e remain unverified her
 
 ## J. Not verified here (environment-blocked)
 
+> **Update:** the gates below were subsequently run on a Docker-enabled host and all pass. Exact commands and results are in section M. The original environment limits are kept here as history.
+
 - **Postgres-backed test suite and migrations.** Docker is not running, so `pytest` used SQLite (`aiosqlite`). Migrations `0015` and `0016` (including the `started_at` backfill and `NOT NULL` change) were exercised only on SQLite. Postgres-specific DDL, concurrent writers, and the `FOR UPDATE` paths remain unverified in this environment.
 - **`docker compose` stack and the container image build.** No daemon.
 - **Playwright / end-to-end tests.** Not run; browser checks above are manual, single-session evidence.
@@ -321,6 +331,65 @@ These are the first things CI should run.
 
 **What is solid:** the security boundary (proxy trust, idempotency scoping, signing key, approval gate), the run-claim/state machine, the contract between API and web for the agent surface, the i18n vocabulary, and the tested UI paths. The local validation set is fully green and the browser flow from login → assignment → agent decision works against a live API.
 
-**What blocks a production claim:** the environment-blocked gates in section J. The Postgres suite and migrations are unverified, `docker compose` and the image build have not run, and Playwright/e2e has not run. The ten functional/security findings from the first pass are closed. Multi-process UUID ordering remains a per-process guarantee by design; it prevents collisions but does not provide a global wall-clock order.
+**What blocks a production claim:** the gates in section J are now green (section M), so the remaining caveats are scope rather than environment: no load/performance profiling, no multi-process recovery exercise, and no backup/restore drill. The ten functional/security findings from the first pass are closed. Multi-process UUID ordering remains a per-process guarantee by design; it prevents collisions but does not provide a global wall-clock order.
 
-**Honest verdict:** this work moved the codebase from "several P0s and a hard-broken agent decision flow" to "green locally, with all first-pass findings closed and a short list of CI gates left". It is ready for continued development, demos, and CI hardening. It is **not** ready for a production deployment that stores real credentials or runs untrusted code until the gates in section J are run and pass.
+**Honest verdict:** this work moved the codebase from "several P0s and a hard-broken agent decision flow" to "green on SQLite, Postgres, the container stack, and the browser suite". It is ready for continued development, demos, and CI hardening. It is **not** ready for a production deployment that stores real credentials or runs untrusted code until the remaining operational items above are exercised.
+
+---
+
+## M. CI-hardening pass — findings and evidence
+
+The first CI run after the audit surfaced a set of defects that only appear when the suite runs on Postgres, in containers, and in a browser. Each one is recorded with the failure it produced and the correction.
+
+### M1. CI API jobs failed before collecting a test
+
+`SECRET_KEY` is required (at least 16 characters) and CI supplied none: `pydantic_core.ValidationError ... secret_key String should have at least 16 characters`. Fixed by setting a workflow-level `SECRET_KEY` and passing it to the Compose `migrate` and `execution-worker` services, rather than weakening the `Settings` validation.
+
+### M2. Migration id exceeded Alembic's version column
+
+Revision `0015_fix_technical_requirement_type` is 35 characters; `alembic_version.version_num` is `VARCHAR(32)`. SQLite accepted it, Postgres failed with `value too long for type character varying(32)` during `docker compose` startup. Renamed to `0015_fix_technical_type` and updated the `down_revision` in `0016_token_revocation_and_planning_started_at`. Widening the shared Alembic column was rejected as a schema change for a cosmetic defect.
+
+### M3. Postgres-only test failures
+
+- `tests/test_agent_runtime.py` embedded a literal NUL byte as a binding key; Postgres rejects it. The test now builds the key with `binding_key("run_tests", {})`, matching production.
+- `tests/test_pagination.py` relied on insert order producing a stable `created_at`. It now pins timestamps and asserts the real contract, newest-first (`CSE3`, `CSE2`; `second.pdf` first).
+
+### M4. E2E stubs missed the app's API origin
+
+`persian-pages.spec.ts` and `theme-and-locale.spec.ts` registered routes for `localhost:8000`, while CI builds the app with `NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1`. The browser called `127.0.0.1`, the stubs never fired, and the pages fell into their login/error states. Both specs now derive the origin from the same environment variable.
+
+### M5. The full-stack E2E flow was silently skipped
+
+`critical-flow.spec.ts` probed `${API_URL}/health` (`/api/v1/health`), which returns `404`; liveness is served at `/health`. The eight full-stack tests reported "skipped" instead of failing, so the suite looked green without testing the flow. The probe now uses `new URL("/health", API_URL)`.
+
+### M6. Approving a plan was a `422`
+
+`api.approvePlan` sent a bodyless `POST`. The endpoint validates an optional `note`, so the request was rejected with `422` before approval ran. The client now sends `{}` as JSON. Regression test: `tests/unit/api.test.ts`.
+
+### M7. The approval gate was invisible before a plan existed
+
+`PlanPanel`'s no-plan state rendered only the generate button, while `AgentPanel` (and its "needs an approved plan" explanation) appeared only after a plan loaded. The empty state now renders `AgentPanel` too. Regression test: `tests/unit/plan-panel.test.tsx`.
+
+### M8. Classification corrections could overwrite each other
+
+Saving a corrected type and domain issued two concurrent `PATCH` requests; the second read the pre-edit row and discarded the first. The editor now sends one combined `{types, domains}` request. Regression test: `tests/unit/analysis-panel.test.tsx`.
+
+### M9. The E2E suite tripped its own auth limiter
+
+Every scenario registers a new student from one address; the auth limiter (10 requests/60s) returned `429 Too Many Requests`. The E2E job sets `RATE_LIMIT_ENABLED=false`, and Compose passes the variable through; production keeps the default `true`.
+
+### M. Evidence
+
+| Command | Result |
+|---|---|
+| `cd apps/api && .venv/bin/ruff check .` | `All checks passed!` |
+| `cd apps/api && .venv/bin/mypy app` | `Success: no issues found` |
+| `cd apps/api && .venv/bin/python -m pytest -q` (SQLite) | `535 passed, 1 skipped` |
+| `TEST_DATABASE_URL=postgresql+asyncpg://… .venv/bin/python -m pytest -q` | `535 passed, 1 skipped` |
+| `docker compose up -d --build --wait db api` | `migrate` exited `0`; `api` healthy |
+| `cd apps/web && npm run typecheck` | clean |
+| `cd apps/web && npm run lint` | clean |
+| `cd apps/web && npm test` | `202 passed` (14 files) |
+| `cd apps/web && CI=true E2E_BASE_URL=http://127.0.0.1:3000 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000/api/v1 npm run test:e2e` | `27 passed` |
+
+The Playwright run exercised the real API and Postgres through the full flow, including registration, specification, analysis, plan generation and approval, agent run creation, and pause/cancel across a reload.

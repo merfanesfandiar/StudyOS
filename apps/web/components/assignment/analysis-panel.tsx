@@ -25,6 +25,7 @@ import {
 } from "@/lib/format";
 import type {
   AcademicDomain,
+  AnalysisEditRequest,
   AnalysisQuestion,
   AssignmentAnalysis,
   AssignmentType,
@@ -210,13 +211,11 @@ function QuestionRow({
 function ClassificationEditor({
   analysis,
   busy,
-  onSetTypes,
-  onSetDomains,
+  onCorrect,
 }: {
   analysis: AssignmentAnalysis;
   busy: boolean;
-  onSetTypes: (types: AssignmentType[]) => void;
-  onSetDomains: (domains: AcademicDomain[]) => void;
+  onCorrect: (input: Omit<AnalysisEditRequest, "note">) => void;
 }) {
   const { t } = usePreferences();
   const [editing, setEditing] = useState(false);
@@ -283,8 +282,13 @@ function ClassificationEditor({
           className="btn-secondary px-3 py-1 text-xs"
           disabled={busy || (types.length === 0 && domains.length === 0)}
           onClick={() => {
-            if (types.length > 0) onSetTypes(types);
-            if (domains.length > 0) onSetDomains(domains);
+            // One request for both fields. Sending types and domains as two
+            // concurrent PATCHes lets the second read the pre-edit row and
+            // overwrite the first, silently losing half the correction.
+            const correction: Omit<AnalysisEditRequest, "note"> = {};
+            if (types.length > 0) correction.types = types;
+            if (domains.length > 0) correction.domains = domains;
+            onCorrect(correction);
             setEditing(false);
           }}
         >
@@ -443,8 +447,7 @@ export function AnalysisPanel({
     reject,
     answerQuestion,
     dismissQuestion,
-    setTypes,
-    setDomains,
+    correct,
   } = useAnalysis(assignmentId, t, refreshToken);
 
   if (loading) {
@@ -544,8 +547,7 @@ export function AnalysisPanel({
       <ClassificationEditor
         analysis={analysis}
         busy={busy}
-        onSetTypes={setTypes}
-        onSetDomains={setDomains}
+        onCorrect={correct}
       />
 
       {analysis.objectives.length > 0 ? (

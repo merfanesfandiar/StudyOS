@@ -104,7 +104,12 @@ const luminance = ([r, g, b]: [number, number, number]) => 0.2126 * r + 0.7152 *
  * says nothing about whether the control you press to change them works.
  */
 async function openShell(browser: Browser, theme: string, locale: string) {
-  const api = "http://localhost:8000/api/v1";
+  // Match the origin the app was built against (CI passes 127.0.0.1); a stub
+  // registered for a different host never fires and the page redirects to login.
+  const api = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1").replace(
+    /\/$/,
+    "",
+  );
   const context = await browser.newContext();
   const page = await context.newPage();
   await seed(page, theme, locale);

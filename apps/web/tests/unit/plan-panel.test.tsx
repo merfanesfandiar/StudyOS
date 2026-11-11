@@ -143,8 +143,47 @@ afterEach(() => {
 });
 
 describe("PlanPanel: empty state", () => {
+  it("explains the agent's approval gate before any plan exists", async () => {
+    route({
+      "GET /api/v1/assignments/a1/plans": () => jsonResponse(null),
+      // AgentPanel loads its own state on mount, so answer it with the empty
+      // shapes instead of letting the catch-all 404 become an unrelated alert.
+      "GET /api/v1/assignments/a1/agent/runs": () => jsonResponse({ items: [] }),
+      "GET /api/v1/assignments/a1/agent/capabilities": () =>
+        jsonResponse({
+          tools: [],
+          workers: [],
+          executors: [],
+          modes: [],
+          actions: [],
+          absent_capabilities: [],
+          limits: {},
+        }),
+    });
+    renderPanel();
+
+    // The agent needs an approved plan, so the requirement belongs on the empty
+    // state too: hiding it until a plan exists hides the gate at the moment the
+    // student is deciding whether to generate one.
+    expect(await screen.findByTestId("agent-panel")).toBeInTheDocument();
+    expect(screen.getByText("Needs an approved plan")).toBeInTheDocument();
+  });
+
   it("offers generation rather than an error when nothing is planned", async () => {
-    route({ "GET /api/v1/assignments/a1/plans": () => jsonResponse(null) });
+    route({
+      "GET /api/v1/assignments/a1/plans": () => jsonResponse(null),
+      "GET /api/v1/assignments/a1/agent/runs": () => jsonResponse({ items: [] }),
+      "GET /api/v1/assignments/a1/agent/capabilities": () =>
+        jsonResponse({
+          tools: [],
+          workers: [],
+          executors: [],
+          modes: [],
+          actions: [],
+          absent_capabilities: [],
+          limits: {},
+        }),
+    });
     renderPanel();
 
     // A null plan is a normal state, not a failure: nothing here should be an alert.

@@ -8,6 +8,11 @@ on:
 permissions:
   contents: read
 
+# Settings refuses an empty signing key at import time, and CI has no `.env`.
+# This is a CI-only value: it must never be reused as a production default.
+env:
+  SECRET_KEY: ci-only-signing-key-0123456789abcdef
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -190,6 +195,9 @@ jobs:
       - name: Start the stack
         env:
           SEED_DEMO_DATA: "false"
+          # Every scenario registers a new student from the same address; the
+          # limiter would reject the later ones and fail the suite spuriously.
+          RATE_LIMIT_ENABLED: "false"
         run: docker compose up -d --build db api
 
       - name: Wait for the API
