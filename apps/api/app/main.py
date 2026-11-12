@@ -28,6 +28,7 @@ from app.modules.health import router as health_router
 from app.modules.notifications import router as notifications_router
 from app.modules.observability.router import router as observability_router
 from app.modules.planning.router import router as planning_router
+from app.modules.verification.router import router as verification_router
 from app.storage import get_storage
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,7 @@ app.include_router(taxonomy_router)
 app.include_router(specification_router)
 app.include_router(analysis_router)
 app.include_router(planning_router)
+app.include_router(verification_router)
 app.include_router(agent_router)
 app.include_router(agent_tools_router)
 app.include_router(agent_run_tools_router)

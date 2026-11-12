@@ -244,6 +244,14 @@ The seams that once were "for Phase 4" are now exercised by real consumers:
 - `SpecializedAnalysis` carries domain-specific data (e.g. `analyzer: "mathematics"`)
   keyed by `AssignmentType`, keeping the universal core programming-agnostic.
 
+## Verification
+
+Produced work is independently evaluated by the Phase 10 Academic Verification
+Engine — deterministic checks first, explicit `UNVERIFIED` for everything it
+cannot check, and rubric scores that are always labelled as estimates.
+See [verification.md](verification.md) for the validator registry, evidence
+model, API, and how to add a validator.
+
 ## Decisions
 
 Architecture decision records live next to this file:

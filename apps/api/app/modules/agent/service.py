@@ -3411,6 +3411,12 @@ async def _finish_run(
             metadata=counts,
         )
         await db.flush()
+        # Phase 10: every completed run's work is verified. The pipeline runs
+        # inside the same session and its own failure is recorded as a FAILED
+        # verification run — it can never flip the agent run's own status, so a
+        # broken validator can't turn completed academic work into a "failed
+        # agent run" (or vice versa: an unverified run is still completed).
+        await _verify_completed_run(db, run, user)
         return StepOutcome(
             kind="COMPLETED",
             run_status=AgentRunStatus.COMPLETED,
@@ -3422,6 +3428,38 @@ async def _finish_run(
     await _append_event(db, run, AgentEventType.TASK_BLOCKED, reason[:400], metadata=counts)
     await db.flush()
     return StepOutcome(kind="BLOCKED", run_status=AgentRunStatus.BLOCKED, detail=reason)
+
+
+async def _verify_completed_run(db: AsyncSession, run: AgentRun, user: User) -> None:
+    """Verify the artifacts a completed run produced (Phase 10).
+
+    Idempotent per run: ``agent_run:<id>`` prevents duplicate verification when
+    the recovery worker replays a run. Failure of the verification pipeline is
+    logged and audited but never re-raised — it must not change the agent run's
+    own already-persisted terminal state.
+    """
+    from app.modules.verification import service as verification_service
+
+    try:
+        if run.assignment_id is None:
+            return
+        assignment = await db.get(Assignment, run.assignment_id)
+        if assignment is None:
+            return
+        artifacts = await verification_service.load_active_artifacts(assignment, db)
+        run_artifacts = [a for a in artifacts if a.run_id == run.id]
+        scoped_ids = frozenset(a.id for a in run_artifacts) or None
+        await verification_service.trigger_verification(
+            assignment,
+            user,
+            db,
+            scope_kind="ARTIFACT" if scoped_ids else "FULL",
+            artifact_ids=scoped_ids,
+            agent_run_id=run.id,
+            idempotency_key=f"agent_run:{run.id}",
+        )
+    except Exception:
+        logger.exception("Post-run verification failed for run %s", run.id)
 
 
 # ---------------------------------------------------------------------------

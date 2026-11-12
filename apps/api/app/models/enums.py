@@ -1160,3 +1160,85 @@ class ExecutionEventType(StrEnum):
     SANDBOX_DESTROYED = "SANDBOX_DESTROYED"
     SANDBOX_CLEANUP_FAILED = "SANDBOX_CLEANUP_FAILED"
     POLICY_VIOLATION_DETECTED = "POLICY_VIOLATION_DETECTED"
+
+
+class VerificationRunStatus(StrEnum):
+    """Lifecycle of one verification run.
+
+    ``COMPLETED`` does not mean the *work* passed; it means the pipeline finished
+    and produced a report. The report's aggregated status carries the verdict.
+    """
+
+    PENDING = "PENDING"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class VerificationTrigger(StrEnum):
+    """What caused a verification run. Kept for auditability and re-verification."""
+
+    MANUAL = "MANUAL"
+    AGENT_RUNTIME = "AGENT_RUNTIME"
+    ARTIFACT_REVISION = "ARTIFACT_REVISION"
+    RE_VERIFICATION = "RE_VERIFICATION"
+
+
+class VerificationLevel(StrEnum):
+    """The five verification layers, ordered cheap-first (see docs/architecture/verification.md)."""
+
+    STRUCTURAL = "STRUCTURAL"
+    REQUIREMENTS = "REQUIREMENTS"
+    DOMAIN = "DOMAIN"
+    EVIDENCE = "EVIDENCE"
+    QUALITY = "QUALITY"
+
+
+class VerificationStatus(StrEnum):
+    """Honest verdict for one checked item.
+
+    ``UNVERIFIED`` is the default: a check that could not run is never reported
+    as passing. ``NOT_APPLICABLE`` means the validator had nothing to check.
+    """
+
+    VERIFIED = "VERIFIED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    UNVERIFIED = "UNVERIFIED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class VerificationSeverity(StrEnum):
+    """Finding severity, ordered worst-first."""
+
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFORMATIONAL = "INFORMATIONAL"
+
+
+class VerificationEvidenceStatus(StrEnum):
+    """How well the evidence backing a conclusion holds up."""
+
+    VERIFIED = "VERIFIED"
+    PARTIAL = "PARTIAL"
+    FAILED = "FAILED"
+    UNVERIFIED = "UNVERIFIED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+
+
+class VerificationMethod(StrEnum):
+    """How a conclusion was reached. Determines how much it can be trusted.
+
+    A claim is only as strong as this label: an ``AI_ASSESSMENT`` conclusion can
+    never substitute for a ``DETERMINISTIC`` or ``TOOL_ASSISTED`` one, and the
+    report marks it accordingly instead of blending them into one score.
+    """
+
+    DETERMINISTIC = "DETERMINISTIC"
+    TOOL_ASSISTED = "TOOL_ASSISTED"
+    EXTERNAL_SOURCE = "EXTERNAL_SOURCE"
+    AI_ASSESSMENT = "AI_ASSESSMENT"
+    HUMAN_REVIEW = "HUMAN_REVIEW"

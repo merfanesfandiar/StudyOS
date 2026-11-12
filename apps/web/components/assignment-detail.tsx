@@ -13,6 +13,7 @@ import { SummarySection } from "@/components/assignment/summary-section";
 import { DeliverablesSection, TaxonomySection } from "@/components/assignment/taxonomy-section";
 import { AnalysisPanel } from "@/components/assignment/analysis-panel";
 import { ExecutionPanel } from "@/components/assignment/execution-panel";
+import { VerificationPanel } from "@/components/assignment/verification-panel";
 import { PlanPanel } from "@/components/planning/plan-panel";
 import { Alert, Breadcrumbs, LoadingState, PageHeader, StatusBadge } from "@/components/ui";
 import { api } from "@/lib/api";
@@ -171,6 +172,7 @@ export function AssignmentDetail({ assignmentId }: { assignmentId: string }) {
           invite the reader to treat an unreviewed classification as a brief.
         */}
         <PlanPanel assignmentId={specification.assignment.id} />
+        <VerificationPanel assignmentId={specification.assignment.id} />
         <HistorySection
           assignmentId={assignmentId}
           refreshToken={specification.specification_version}

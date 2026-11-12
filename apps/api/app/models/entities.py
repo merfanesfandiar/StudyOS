@@ -74,6 +74,7 @@ from app.models.enums import (
     RequirementType,
     SessionLength,
     TechnologyCategory,
+    VerificationRunStatus,
     WorkspaceRole,
 )
 from app.models.identifiers import time_ordered_uuid
@@ -2317,3 +2318,204 @@ class ExecutionEvent(Base):
     )
 
     job: Mapped[ExecutionJob] = relationship(back_populates="events")
+
+
+class VerificationRun(TimestampMixin, Base):
+    """One execution of the Phase 10 verification pipeline.
+
+    Tenant-scoped like every other workspace resource: ``workspace_id`` is
+    denormalised from the assignment so authorisation checks never need a join
+    and cross-tenant access is a single-column comparison away from impossible.
+    The report body itself is bounded structured JSON; raw artifact content
+    stays in ``agent_artifacts``/storage, never duplicated here.
+    """
+
+    __tablename__ = "verification_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "assignment_id", "idempotency_key", name="uq_verification_run_idempotency"
+        ),
+        Index("ix_verification_runs_assignment_id", "assignment_id"),
+        Index("ix_verification_runs_workspace_id", "workspace_id"),
+        Index("ix_verification_runs_assignment_status", "assignment_id", "status"),
+        Index("ix_verification_runs_created_at", "created_at"),
+        CheckConstraint(
+            "status IN ('PENDING','RUNNING','COMPLETED','FAILED','CANCELLED')",
+            name="ck_verification_runs_status",
+        ),
+        CheckConstraint(
+            "scope_kind IN ('FULL','PARTIAL','ARTIFACT','REQUIREMENT','RE_VERIFICATION')",
+            name="ck_verification_runs_scope_kind",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    assignment_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The agent run whose work was verified, when verification came from the
+    #: runtime. Nullable: verification can also be requested manually.
+    agent_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("agent_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    #: The prior run this re-verification compares against, for RE_VERIFICATION.
+    previous_run_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("verification_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    trigger: Mapped[str] = mapped_column(String(30), nullable=False, default="MANUAL")
+    scope_kind: Mapped[str] = mapped_column(String(20), nullable=False, default="FULL")
+    #: Narrowed scope: artifact ids, requirement ids or validator names.
+    scope_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=VerificationRunStatus.PENDING.value, index=True
+    )
+    #: Aggregated pipeline outcome (``VerificationStatus`` value).
+    verdict: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    completion_percentage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    #: Idempotency for repeated requests with the same intent.
+    idempotency_key: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    findings: Mapped[list[VerificationFinding]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    evidence: Mapped[list[VerificationEvidence]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    requirement_results: Mapped[list[RequirementVerification]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    rubric_scores: Mapped[list[RubricEvaluation]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+
+
+class VerificationFinding(TimestampMixin, Base):
+    """One finding a validator produced, with severity and traceability."""
+
+    __tablename__ = "verification_findings"
+    __table_args__ = (
+        Index("ix_verification_findings_run_id", "run_id"),
+        Index("ix_verification_findings_run_severity", "run_id", "severity"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("verification_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    validator_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    validator_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    level: Mapped[str] = mapped_column(String(20), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    recommendation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Requirement codes and artifact ids the finding is about.
+    requirement_codes: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    artifact_ids: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    #: True when the finding comes from a heuristic marker, not an observed fact.
+    heuristic: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+
+    run: Mapped[VerificationRun] = relationship(back_populates="findings")
+
+
+class VerificationEvidence(TimestampMixin, Base):
+    """An evidence record backing verification conclusions.
+
+    ``content`` is bounded structured material (test output, a recomputation, a
+    parsed reference list). An AI's explanation of its own reasoning is never
+    stored as evidence: only ``method``-labelled tool, deterministic or external
+    records qualify.
+    """
+
+    __tablename__ = "verification_evidence"
+    __table_args__ = (
+        Index("ix_verification_evidence_run_id", "run_id"),
+        Index("ix_verification_evidence_run_kind", "run_id", "kind"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("verification_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    validator_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    kind: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[str] = mapped_column(String(200), nullable=False)
+    #: ``VerificationMethod`` value: how this evidence was produced.
+    method: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    artifact_ids: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+
+    run: Mapped[VerificationRun] = relationship(back_populates="evidence")
+
+
+class RequirementVerification(TimestampMixin, Base):
+    """Per-requirement verdict for one run, with its explanation."""
+
+    __tablename__ = "verification_requirement_results"
+    __table_args__ = (
+        UniqueConstraint("run_id", "requirement_id", name="uq_verification_req_result"),
+        Index("ix_verification_req_results_run_id", "run_id"),
+        Index("ix_verification_req_results_requirement_id", "requirement_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("verification_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requirement_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("assignment_requirements.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    requirement_code: Mapped[str] = mapped_column(String(40), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+
+    run: Mapped[VerificationRun] = relationship(back_populates="requirement_results")
+
+
+class RubricEvaluation(TimestampMixin, Base):
+    """One rubric criterion's estimated score for one run.
+
+    ``score`` is a normalised estimate in [0, 1]; the run's ``summary_json``
+    records the scale and the fact that it is an estimate, never an instructor
+    grade.
+    """
+
+    __tablename__ = "verification_rubric_scores"
+    __table_args__ = (
+        UniqueConstraint("run_id", "criterion_id", name="uq_verification_rubric_score"),
+        Index("ix_verification_rubric_scores_run_id", "run_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid4)
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("verification_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    criterion_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("evaluation_criteria.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    justification: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    improvement: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    run: Mapped[VerificationRun] = relationship(back_populates="rubric_scores")

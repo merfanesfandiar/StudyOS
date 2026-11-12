@@ -1154,6 +1154,27 @@ export const en = {
   "agent.risk.medium": "Medium risk",
   "agent.risk.high": "High risk",
   "agent.risk.critical": "Critical risk",
+
+  "verification.title": "Verification",
+  "verification.run": "Verify work",
+  "verification.rerun": "Re-verify",
+  "verification.running": "Verifying…",
+  "verification.noRuns": "No verification yet. Run it to check the work against the requirements.",
+  "verification.loadFailed": "Verification results could not be loaded.",
+  "verification.runFailed": "Verification could not run.",
+  "verification.verdictLabel": "Verdict: {verdict}",
+  "verification.completion": "{percent}% of applicable checks verified.",
+  "verification.estimateNote":
+    "This is StudyOS's own verification, not an instructor grade.",
+  "verification.requirements": "Requirement compliance",
+  "verification.findings": "Findings",
+  "verification.recommendation": "Suggested fix",
+  "verification.heuristic": "heuristic marker",
+  "verification.rubric": "Rubric estimate",
+  "verification.weightedTotal": "Estimated weighted score: {percent}%",
+  "verification.rubricAmbiguous":
+    "The rubric is incomplete, so no weighted total was computed.",
+  "verification.limitations": "What could not be verified",
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -2280,6 +2301,27 @@ export const fa: Catalogue = {
   "agent.risk.medium": "ریسک متوسط",
   "agent.risk.high": "ریسک زیاد",
   "agent.risk.critical": "ریسک بحرانی",
+
+  "verification.title": "بازبینی و راستی‌آزمایی",
+  "verification.run": "راستی‌آزمایی کار",
+  "verification.rerun": "بازرسی دوباره",
+  "verification.running": "در حال راستی‌آزمایی…",
+  "verification.noRuns": "هنوز راستی‌آزمایی نشده است. برای بررسی کار در برابر الزامات اجرا کنید.",
+  "verification.loadFailed": "بارگیری نتایج راستی‌آزمایی ممکن نشد.",
+  "verification.runFailed": "اجرای راستی‌آزمایی ممکن نشد.",
+  "verification.verdictLabel": "نتیجه: {verdict}",
+  "verification.completion": "{percent} درصد از بررسی‌های قابل‌انجام تأیید شد.",
+  "verification.estimateNote":
+    "این ارزیابی خود استادی‌اواس است و نمره استاد نیست.",
+  "verification.requirements": "انطباق با الزامات",
+  "verification.findings": "یافته‌ها",
+  "verification.recommendation": "اصلاح پیشنهادی",
+  "verification.heuristic": "نشانهٔ اکتشافی",
+  "verification.rubric": "برآورد روبریک",
+  "verification.weightedTotal": "نمرهٔ وزنی برآوردی: {percent} درصد",
+  "verification.rubricAmbiguous":
+    "روبریک ناقص است، بنابراین نمرهٔ وزنی کل محاسبه نشد.",
+  "verification.limitations": "چیزهایی که راستی‌آزمایی نشد",
 };
 
 export const catalogues: Record<Locale, Catalogue> = { en, fa };

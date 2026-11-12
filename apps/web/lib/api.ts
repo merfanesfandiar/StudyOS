@@ -67,6 +67,11 @@ import type {
   TaskUpdateInput,
   WorkPlan,
 } from "./planning-types";
+import type {
+  VerificationReport,
+  VerificationRunSummary,
+  VerificationTriggerInput,
+} from "./verification-types";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1").replace(
   /\/$/,
@@ -152,6 +157,18 @@ export function queryString(params: Record<string, string | number | undefined>)
 }
 
 export const api = {
+  // Phase 10: verification engine
+  triggerVerification: (id: string, input: VerificationTriggerInput = {}) =>
+    request<VerificationRunSummary>(`/assignments/${id}/verification`, {
+      method: "POST",
+      ...json(input),
+    }),
+  verificationRuns: (id: string, page = 1, pageSize = 5) =>
+    request<{ items: VerificationRunSummary[]; total: number }>(
+      `/assignments/${id}/verification${queryString({ page, page_size: pageSize })}`,
+    ),
+  verificationReport: (id: string, runId: string) =>
+    request<VerificationReport>(`/assignments/${id}/verification/${runId}`),
   register: (input: { name: string; email: string; password: string }) =>
     request<AuthResponse>("/auth/register", { method: "POST", ...json(input) }),
   login: (input: { email: string; password: string }) =>
