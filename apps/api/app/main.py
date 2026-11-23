@@ -19,6 +19,7 @@ from app.modules.assignments.requirements_router import router as requirements_r
 from app.modules.assignments.specification_router import router as specification_router
 from app.modules.assignments.taxonomy_router import router as taxonomy_router
 from app.modules.auth import router as auth_router
+from app.modules.conversations.router import router as conversations_router
 from app.modules.courses import router as courses_router
 from app.modules.dashboard import router as dashboard_router
 from app.modules.documents import router as documents_router
@@ -97,6 +98,7 @@ app.add_middleware(RequestLoggingMiddleware)
 register_exception_handlers(app)
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(conversations_router)
 app.include_router(courses_router)
 app.include_router(assignments_router)
 app.include_router(requirements_router)

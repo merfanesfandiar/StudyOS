@@ -26,6 +26,7 @@ from app.models import (
     AgentRun,
     Assignment,
     AssignmentRequirement,
+    Deliverable,
     EvaluationCriterion,
     RequirementVerification,
     RubricEvaluation,
@@ -90,10 +91,12 @@ async def build_assignment_snapshot(assignment: Assignment, db: AsyncSession) ->
         )
     )
     deliverables = [
-        DeliverableSnapshot(
-            id=d.id, title=d.title, is_required=d.is_required
+        DeliverableSnapshot(id=d.id, title=d.title, is_required=d.is_required)
+        for d in await db.scalars(
+            select(Deliverable)
+            .where(Deliverable.assignment_id == assignment.id)
+            .order_by(Deliverable.position)
         )
-        for d in assignment.deliverables
     ]
     types, domain = await _classified(assignment, db)
     return AssignmentSnapshot(

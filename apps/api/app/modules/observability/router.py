@@ -11,7 +11,8 @@ from __future__ import annotations
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -85,6 +86,55 @@ async def run_events(
         "items": [_serialize_event(e) for e in rows],
         "next_cursor": next_cursor,
     }
+
+
+@router.get(
+    "/{assignment_id}/agent/runs/{run_id}/events/stream",
+    summary="Server-Sent Events stream of one run's persisted event log",
+)
+async def run_events_stream(
+    assignment_id: UUID,
+    run_id: UUID,
+    request: Request,
+    user: CurrentUser,
+    db: Db,
+) -> StreamingResponse:
+    """Push transport over the persisted event log.
+
+    Same authorization and same source of truth as the cursor endpoint above.
+    The ``Last-Event-ID`` header (or ``last_event_id`` query parameter for
+    clients that cannot set headers) is the run-local sequence to resume from.
+    """
+    from app.modules.observability import streaming
+
+    run = await service.load_owned_run(assignment_id, run_id, user.id, db)
+    if run.status in {"CREATED"}:
+        # Nothing to stream yet; the client keeps polling the run detail.
+        raise AppError(
+            409,
+            "AGENT_RUN_NOT_STARTABLE_STREAM",
+            "The run has not started; there is no event log to stream yet.",
+        )
+    raw_last = request.headers.get("last-event-id")
+    if raw_last is None:
+        raw_last = request.query_params.get("last_event_id")
+    try:
+        last_sequence = int(raw_last) if raw_last is not None else 0
+    except ValueError:
+        raise AppError(422, "INVALID_EVENT_CURSOR", "last-event-id must be an integer.") from None
+
+    session_opener = streaming.session_opener_for(request)
+    iterator = streaming.run_event_stream(
+        session_opener, run_id=run.id, last_sequence=last_sequence
+    )
+    return StreamingResponse(
+        iterator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get(

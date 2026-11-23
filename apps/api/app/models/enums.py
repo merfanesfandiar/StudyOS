@@ -1242,3 +1242,44 @@ class VerificationMethod(StrEnum):
     EXTERNAL_SOURCE = "EXTERNAL_SOURCE"
     AI_ASSESSMENT = "AI_ASSESSMENT"
     HUMAN_REVIEW = "HUMAN_REVIEW"
+
+
+class ConversationStatus(StrEnum):
+    """Lifecycle of a workspace conversation.
+
+    ``DELETED`` is a soft state: rows are kept (never destroyed silently) and
+    simply excluded from every listing; a hard purge is a separate, explicit
+    operation that this module does not perform.
+    """
+
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    DELETED = "DELETED"
+
+
+class ConversationRole(StrEnum):
+    """Who authored a conversation message.
+
+    ``AGENT`` messages are only ever written from real backend outcomes (run
+    completion summaries, persisted notices) — never fabricated chat prose.
+    """
+
+    USER = "USER"
+    AGENT = "AGENT"
+    SYSTEM = "SYSTEM"
+
+
+class MessageKind(StrEnum):
+    """What a conversation message carries.
+
+    ``TEXT`` is plain/markdown content. The reference kinds point at real
+    backend records via ``metadata_json`` (``artifact_id``, ``run_id``,
+    ``verification_run_id``) so the workspace can render them from the source
+    of truth instead of a copy.
+    """
+
+    TEXT = "TEXT"
+    ARTIFACT = "ARTIFACT"
+    VERIFICATION = "VERIFICATION"
+    RUN_SUMMARY = "RUN_SUMMARY"
+    SYSTEM_NOTICE = "SYSTEM_NOTICE"

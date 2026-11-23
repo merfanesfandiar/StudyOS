@@ -563,6 +563,65 @@ class TestVerificationAPI:
         )
         assert response.status_code == 404
 
+    async def test_trigger_from_a_plainly_loaded_assignment(self, db_session) -> None:
+        """The snapshot must not depend on the caller's eager-loading options.
+
+        The agent runtime triggers verification for a run it just completed,
+        and it holds an assignment loaded with ``db.get`` — no deliverables
+        relationship. Reading ``assignment.deliverables`` lazily inside the
+        async snapshot raised ``MissingGreenlet``, so every post-run
+        verification failed while manual (eager-loaded) triggers passed.
+        """
+        from datetime import UTC, datetime
+
+        from app.models import Assignment, Course, Deliverable, User, Workspace, WorkspaceMember
+        from app.models.enums import WorkspaceRole
+        from app.modules.verification import service as verification_service
+
+        user = User(
+            name="Plain", email=f"plain-{uuid4().hex[:8]}@example.com", password_hash="x"
+        )
+        db_session.add(user)
+        await db_session.flush()
+        workspace = Workspace(name=f"WS-{uuid4().hex[:6]}", owner_id=user.id)
+        db_session.add(workspace)
+        await db_session.flush()
+        db_session.add(
+            WorkspaceMember(
+                workspace_id=workspace.id, user_id=user.id, role=WorkspaceRole.OWNER.value
+            )
+        )
+        course = Course(workspace_id=workspace.id, code=f"CS{uuid4().hex[:4]}", name="Intro")
+        db_session.add(course)
+        await db_session.flush()
+        assignment = Assignment(
+            workspace_id=workspace.id,
+            course_id=course.id,
+            title="Plain trigger",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(assignment)
+        await db_session.flush()
+        db_session.add(
+            Deliverable(
+                assignment_id=assignment.id,
+                title="Source archive",
+                is_required=True,
+                position=0,
+            )
+        )
+        await db_session.flush()
+
+        # Re-load columns only: the relationship is deliberately unloaded, as
+        # it is for the agent runtime's db.get(Assignment, ...).
+        await db_session.refresh(assignment)
+        run = await verification_service.trigger_verification(assignment, user, db_session)
+        await db_session.commit()
+
+        assert run.status == "COMPLETED", run.error_message
+        assert run.verdict is not None
+
 
 # ---------------------------------------------------------------------------
 # End-to-end workflow: verification → findings → correction → re-verification

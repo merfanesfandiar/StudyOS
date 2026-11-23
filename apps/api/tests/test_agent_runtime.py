@@ -1188,6 +1188,30 @@ async def test_choosing_keep_revising_extends_the_draft_allowance(
     assert parse_status(run.status) is AgentRunStatus.RUNNING
 
 
+async def test_a_review_option_alone_is_a_complete_decision(
+    db_session: AsyncSession, assignment: Assignment, analysis: AssignmentAnalysis, owner: User
+) -> None:
+    """A chosen REVIEW option resolves without a separate approve boolean.
+
+    The workspace card submits ``selected_option`` only — the options *are* the
+    decision. Rejecting that payload would leave the workspace unable to answer
+    the runtime's own revision-limit question. APPROVAL and PERMISSION remain
+    strict: a bare ``selected_option`` there is not a decision.
+    """
+    run, task = await _review_fixture(db_session, assignment, analysis, owner)
+    checkpoint = await _review_checkpoint(db_session, run, task)
+
+    await service.resolve_checkpoint(
+        checkpoint, run, owner, db_session, selected_option="Move on and leave the draft"
+    )
+    await db_session.commit()
+
+    await db_session.refresh(task)
+    assert task.status == AcademicTaskStatus.COMPLETED.value
+    assert checkpoint.status == AgentCheckpointStatus.RESOLVED.value
+    assert parse_status(run.status) is AgentRunStatus.RUNNING
+
+
 # ---------------------------------------------------------------------------
 # An answer is an input to the next step, not a dead-end record
 # ---------------------------------------------------------------------------

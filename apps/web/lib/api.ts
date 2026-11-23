@@ -72,6 +72,14 @@ import type {
   VerificationRunSummary,
   VerificationTriggerInput,
 } from "./verification-types";
+import type {
+  Conversation,
+  ConversationCreateInput,
+  ConversationMessage,
+  ConversationPage,
+  ConversationUpdateInput,
+  MessagePage,
+} from "./conversations-types";
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1").replace(
   /\/$/,
@@ -624,5 +632,41 @@ export const api = {
     request<ExecutionJob>(`/assignments/${assignmentId}/executions/${jobId}/cancel`, {
       method: "POST",
       ...json({ reason: reason ?? null }),
+    }),
+
+  // -- Agent Workspace: conversations ----------------------------------------
+  //
+  // The conversation layer is the durable thread the workspace renders. It does
+  // not duplicate agent events or artifacts: reference messages carry pointers
+  // (run_id, artifact_id, verification_run_id) and the workspace renders those
+  // from their source of truth.
+
+  createConversation: (input: ConversationCreateInput = {}) =>
+    request<Conversation>("/conversations", { method: "POST", ...json(input) }),
+  conversations: (params: { page?: number; page_size?: number; q?: string; status?: string } = {}) =>
+    request<ConversationPage>(
+      `/conversations${queryString({ ...params, page_size: params.page_size ?? 50 })}`,
+    ),
+  conversation: (id: string) => request<Conversation>(`/conversations/${id}`),
+  updateConversation: (id: string, input: ConversationUpdateInput) =>
+    request<Conversation>(`/conversations/${id}`, { method: "PATCH", ...json(input) }),
+  deleteConversation: (id: string) =>
+    request<Conversation>(`/conversations/${id}`, { method: "DELETE" }),
+  conversationMessages: (
+    id: string,
+    params: { limit?: number; before?: string; after?: string } = {},
+  ) =>
+    request<MessagePage>(
+      `/conversations/${id}/messages${queryString(params as Record<string, string | number>)}`,
+    ),
+  postConversationMessage: (id: string, content: string) =>
+    request<ConversationMessage>(`/conversations/${id}/messages`, {
+      method: "POST",
+      ...json({ content, kind: "TEXT" }),
+    }),
+  editConversationMessage: (id: string, messageId: string, content: string) =>
+    request<ConversationMessage>(`/conversations/${id}/messages/${messageId}`, {
+      method: "PATCH",
+      ...json({ content }),
     }),
 };

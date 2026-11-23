@@ -731,6 +731,13 @@ async def _set_status(
         run.error_code = None
         run.error_message = None
         run.error_category = None
+    # Agent Workspace bridge: a terminal run becomes a factual AGENT message in
+    # any conversation bound to its assignment. Never raises into the state
+    # transition; deduplicates per (run, terminal status).
+    if target in TERMINAL_STATUSES:
+        from app.modules.conversations import service as conversation_service
+
+        await conversation_service.record_run_outcome(db, run)
 
 
 class RunClaimLost(RuntimeError):
@@ -1261,6 +1268,15 @@ async def resolve_checkpoint(
             AgentCheckpointType.PERMISSION.value,
         }
         and approved is None
+        and not (
+            # A REVIEW checkpoint's options *are* the decision ("keep revising",
+            # "move on", "stop"): choosing one of the offered options is a
+            # complete decision on its own, and the resume path acts on it.
+            # APPROVAL and PERMISSION are pure yes/no and still need the
+            # explicit approve/reject.
+            checkpoint.checkpoint_type == AgentCheckpointType.REVIEW.value
+            and bool(selected_option)
+        )
     ):
         raise AppError(
             422,

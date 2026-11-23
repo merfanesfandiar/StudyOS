@@ -544,6 +544,23 @@ export function isAgentRunActive(status: AgentRunStatus): boolean {
 }
 
 /**
+ * True when the run's event log can only stop changing.
+ *
+ * This is the same set the SSE endpoint ends its stream on. `WAITING_FOR_USER`
+ * is deliberately *not* settled: the runtime is parked on a decision, and once
+ * the student answers it keeps writing events to the same log.
+ */
+export function isAgentRunSettled(status: AgentRunStatus): boolean {
+  return (
+    status === "COMPLETED" ||
+    status === "FAILED" ||
+    status === "CANCELLED" ||
+    status === "BLOCKED" ||
+    status === "PAUSED"
+  );
+}
+
+/**
  * The checkpoint the student must answer, if any.
  *
  * Derived from the run's own fields rather than by scanning the list: the API

@@ -53,6 +53,8 @@ from app.models.enums import (
     ClassificationSource,
     ConstraintSeverity,
     ConstraintType,
+    ConversationRole,
+    ConversationStatus,
     DeliverableStatus,
     DeliverableType,
     EffortLevel,
@@ -62,6 +64,7 @@ from app.models.enums import (
     ExecutionJobStatus,
     ExecutionType,
     GuidanceLevel,
+    MessageKind,
     ModelTier,
     NotificationType,
     PlanningRunStatus,
@@ -2519,3 +2522,120 @@ class RubricEvaluation(TimestampMixin, Base):
     improvement: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     run: Mapped[VerificationRun] = relationship(back_populates="rubric_scores")
+
+
+class Conversation(TimestampMixin, Base):
+    """One persistent student↔Agent workspace thread.
+
+    Phase: Agent Workspace. A conversation is the durable container the
+    workspace UI renders; it may be bound to a course and/or an assignment
+    (both nullable — general questions have no binding). Bindings are
+    validated server-side: the caller must already belong to the workspace
+    and, when binding an assignment, to that assignment's workspace.
+
+    Tenant scoping follows the house pattern: ``workspace_id`` is
+    denormalised so authorisation is a single-column comparison. Rows are
+    never hard-deleted by this module — ``DELETED`` is a soft state excluded
+    from listings.
+    """
+
+    __tablename__ = "conversations"
+    __table_args__ = (
+        Index("ix_conversations_workspace_id", "workspace_id"),
+        Index(
+            "ix_conversations_workspace_status_last",
+            "workspace_id",
+            "status",
+            "last_message_at",
+        ),
+        Index("ix_conversations_user_id", "user_id"),
+        Index("ix_conversations_assignment_id", "assignment_id"),
+        CheckConstraint(
+            "status IN ('ACTIVE','ARCHIVED','DELETED')",
+            name="ck_conversations_status",
+        ),
+    )
+
+    # Time-ordered: the sidebar orders by activity, but ties need a stable,
+    # monotonic tiebreaker and the message cursor protocol uses the same idea.
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    course_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("courses.id", ondelete="SET NULL"), nullable=True
+    )
+    assignment_id: Mapped[UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("assignments.id", ondelete="SET NULL"), nullable=True
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="New conversation")
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ConversationStatus.ACTIVE.value
+    )
+    #: Denormalised for the sidebar preview; truncated server-side.
+    last_preview: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_message_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
+    messages: Mapped[list[ConversationMessage]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan", passive_deletes=True
+    )
+
+
+class ConversationMessage(Base):
+    """One immutable-at-rest message in a conversation.
+
+    Ordering is by ``id`` (time-ordered UUID) — no sequence counter to collide
+    under concurrency, and the cursor protocol is simply "everything after id
+    X". User edits never rewrite history in place: the prior content is kept
+    in ``edit_history_json`` and ``edited_revision`` is bumped, so the record
+    is auditable and the workspace can show what changed. ``AGENT`` messages
+    are written exclusively by backend bridge code from real run outcomes.
+    """
+
+    __tablename__ = "conversation_messages"
+    __table_args__ = (
+        Index("ix_conversation_messages_conversation_id", "conversation_id", "id"),
+        Index("ix_conversation_messages_workspace_id", "workspace_id"),
+        CheckConstraint(
+            "role IN ('USER','AGENT','SYSTEM')",
+            name="ck_conversation_messages_role",
+        ),
+        CheckConstraint(
+            "kind IN ('TEXT','ARTIFACT','VERIFICATION','RUN_SUMMARY','SYSTEM_NOTICE')",
+            name="ck_conversation_messages_kind",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), primary_key=True, default=time_ordered_uuid
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    workspace_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    role: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=ConversationRole.USER.value
+    )
+    kind: Mapped[str] = mapped_column(String(30), nullable=False, default=MessageKind.TEXT.value)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Pointers to the source of truth for reference messages (artifact_id,
+    #: run_id, verification_run_id). Redacted like every other metadata field.
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    #: 1 = original; +1 per accepted edit. Prior contents kept in edit history.
+    edited_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    edit_history_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, nullable=False, default=list
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")
