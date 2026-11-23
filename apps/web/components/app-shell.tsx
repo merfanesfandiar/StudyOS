@@ -12,6 +12,7 @@ const navigation: { href: string; label: MessageKey; icon: React.ReactNode }[] =
   { href: "/dashboard", label: "nav.dashboard", icon: <DashboardIcon /> },
   { href: "/courses", label: "nav.courses", icon: <CoursesIcon /> },
   { href: "/assignments", label: "nav.assignments", icon: <AssignmentsIcon /> },
+  { href: "/agent", label: "nav.agent", icon: <AgentWorkspaceIcon /> },
   { href: "/settings", label: "nav.settings", icon: <SettingsIcon /> },
 ];
 
@@ -51,6 +52,15 @@ function AssignmentsIcon() {
     <svg {...iconProps}>
       <path d="M8 4h8a2 2 0 0 1 2 2v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2z" />
       <path d="M9 3h6v3H9zM9 11h6M9 15h4" />
+    </svg>
+  );
+}
+
+function AgentWorkspaceIcon() {
+  return (
+    <svg {...iconProps}>
+      <path d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z" />
+      <path d="M8 21h8M12 17v4M8 8h8M8 11h5" />
     </svg>
   );
 }
