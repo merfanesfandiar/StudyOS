@@ -88,7 +88,20 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(IntegrityError)
     async def handle_integrity_error(_: Request, exc: IntegrityError) -> JSONResponse:
-        logger.warning("database_integrity_error", extra={"error_type": type(exc).__name__})
+        # The client only needs "conflict", but operators need to tell an expected
+        # unique violation from a not-null/FK breach, which is a code defect. The
+        # driver exposes the SQLSTATE and constraint without the statement or the
+        # parameter values, so nothing user-authored reaches the log.
+        origin = getattr(exc, "orig", None)
+        diagnostics = getattr(origin, "diag", None)
+        logger.warning(
+            "database_integrity_error",
+            extra={
+                "error_type": type(exc).__name__,
+                "sqlstate": getattr(origin, "sqlstate", None),
+                "constraint": getattr(diagnostics, "constraint_name", None),
+            },
+        )
         return JSONResponse(
             status_code=409,
             content=error_payload("CONFLICT", "The request conflicts with existing data."),
