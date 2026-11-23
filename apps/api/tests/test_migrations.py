@@ -235,6 +235,32 @@ def test_timestamp_server_defaults_are_functions_not_literals(
     assert offenders == [], f"literal 'now()' server defaults: {offenders}"
 
 
+def test_server_defaults_survive_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ``server_default`` the ORM relies on must exist in the migrated schema.
+
+    The ORM omits any column that has a server default from the INSERT, expecting
+    the database to fill it. A migration that declares such a column ``NOT NULL``
+    but without the default therefore fails on the first write, and only on a
+    database built from migrations: the rest of the suite uses ``create_all``,
+    which reads the default straight off the model. Both dialects fail, but
+    PostgreSQL surfaces it as an ``IntegrityError`` the API maps to a generic 409,
+    so the bug reached CI as "creating a conversation silently did nothing".
+    """
+    database_file = tmp_path / "server-defaults.db"
+    _migrate_to_head(database_file, monkeypatch)
+
+    inspector = inspect(_sync_engine(database_file))
+    offenders: list[str] = []
+    for table_name, table in Base.metadata.tables.items():
+        migrated = {column["name"]: column for column in inspector.get_columns(table_name)}
+        for column in table.columns:
+            if column.server_default is None:
+                continue
+            if migrated[column.name].get("default") in (None, ""):
+                offenders.append(f"{table_name}.{column.name}")
+    assert offenders == [], f"model server defaults missing from the migrated schema: {offenders}"
+
+
 def test_migrated_checks_are_enforced(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

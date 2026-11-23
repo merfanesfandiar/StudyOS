@@ -36,13 +36,16 @@ in `tests/e2e/agent-workspace.spec.ts`.
 
 ## Conversations module (backend)
 
-New module `app/modules/conversations/`, migration `0018_workspace_conversations`:
+New module `app/modules/conversations/`, migration `0018_workspace_conversations` (followed by
+`0019_migrated_timestamp_defaults`, which restores timestamp defaults the 0017/0018 migrations
+omitted — see the defect note under Tests):
 
 - `conversations` — tenant-scoped, user-owned; `status` is `ACTIVE` / `ARCHIVED` / `DELETED`
   (`DELETED` is soft and never listed); `assignment_id` is the binding to a real assignment.
 - `conversation_messages` — time-ordered, user-owned; `role` is `USER` / `AGENT` / `SYSTEM`,
-  `kind` is `TEXT` / `REFERENCE` / `EVENT`; `edit_history_json` keeps every prior revision of an
-  edited message.
+  `kind` is `TEXT` / `ARTIFACT` / `VERIFICATION` / `RUN_SUMMARY` / `SYSTEM_NOTICE` (reference kinds
+  carry the source record's id in `metadata_json`); `edit_history_json` keeps every prior revision
+  of an edited message.
 
 Endpoints live under `/api/v1/conversations`. Rules the module enforces:
 
@@ -139,3 +142,12 @@ own.
   workspace's live one; and a completed run's activity rail loaded only the first page of its
   static log, showing the oldest events and hiding the run's actual ending — after first treating
   `WAITING_FOR_USER` as terminal, which froze the rail at the first checkpoint.
+
+One defect was found by CI rather than by this suite, because this suite's API ran on a database
+built by `create_all` while the deployed stack is built by migrations: `0017` and `0018` declared
+`created_at`/`updated_at` `NOT NULL` without the `now()` server default that `TimestampMixin`
+promises, so every insert into a verification or conversation table violated a not-null constraint
+on a migrated database, and the API surfaced it as a generic 409. "New conversation" therefore did
+nothing in CI's fresh PostgreSQL while all ten scenarios passed locally. `0019` adds the missing
+defaults, and `test_migrations.py::test_server_defaults_survive_migration` now fails if a model's
+server default is absent from the migrated schema.
